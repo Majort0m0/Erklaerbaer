@@ -73,11 +73,15 @@ enum Theme {
 
 extension View {
     /// A card: rounded panel with a hairline and a soft shadow.
+    ///
+    /// The shadow belongs to the background shape only: a shadow on the whole card would make
+    /// macOS render the card's content (live camera, video, hover changes) offscreen again and
+    /// again, which shows as flickering white tiles where the mouse moves.
     func card(_ fill: Color = Theme.panel, radius: CGFloat = Theme.cardRadius) -> some View {
-        background(RoundedRectangle(cornerRadius: radius, style: .continuous).fill(fill))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Theme.stroke, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return clipShape(shape)
+            .background(shape.fill(fill).shadow(color: .black.opacity(0.06), radius: 6, y: 2))
+            .overlay(shape.strokeBorder(Theme.stroke, lineWidth: 1))
     }
 }
 

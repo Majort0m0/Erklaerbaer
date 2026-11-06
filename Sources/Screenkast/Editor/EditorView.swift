@@ -95,7 +95,6 @@ struct EditorWorkspace: View {
                     PreviewArea(editor: editor)
                         .padding(22)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Theme.stage)
                         .card(Theme.stage)
                     TimelineResizeHandle(editor: editor, maxHeight: maxTimeline)
                     VStack(spacing: 0) {
@@ -139,7 +138,10 @@ struct PreviewArea: View {
         PlayerLayerView(player: editor.player)
             .aspectRatio(size.width / max(1, size.height), contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+            // Shadow from a plain shape behind the video (a shadow on the live video itself is
+            // re-rendered with every frame).
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.black)
+                .shadow(color: .black.opacity(0.28), radius: 18, y: 8))
             .overlay { CameraDragOverlay(editor: editor) }
             .overlay { PanelHighlight(editor: editor) }
             .overlay { PreviewContextBar(editor: editor) }

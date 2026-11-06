@@ -157,7 +157,7 @@ struct HomeView: View {
                         .frame(width: 150, height: 150)
                         .clipShape(Circle())
                         .overlay(Circle().strokeBorder(.white.opacity(0.4), lineWidth: 1.5))
-                        .shadow(color: .black.opacity(0.3), radius: 8, y: 3)
+                        .background(Circle().fill(.black).shadow(color: .black.opacity(0.3), radius: 8, y: 3))
                         .frame(maxWidth: .infinity)
                 }
             }
@@ -372,7 +372,8 @@ struct ProjectCard: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(card.hovering ? Theme.brand : Theme.stroke, lineWidth: card.hovering ? 2 : 1))
-            .shadow(color: .black.opacity(card.hovering ? 0.18 : 0.06), radius: card.hovering ? 12 : 4, y: card.hovering ? 6 : 2)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.raised)
+                .shadow(color: .black.opacity(card.hovering ? 0.18 : 0.06), radius: card.hovering ? 12 : 4, y: card.hovering ? 6 : 2))
             .scaleEffect(card.hovering ? 1.015 : 1)
             .animation(.easeOut(duration: 0.15), value: card.hovering)
 

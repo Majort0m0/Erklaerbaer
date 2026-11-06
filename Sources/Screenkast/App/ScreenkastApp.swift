@@ -65,9 +65,6 @@ struct ScreenkastApp: App {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 1000, minHeight: 660)
-                // The canvas color also behind the toolbar: one calm surface with the cards on it.
-                .containerBackground(Theme.canvas, for: .window)
-                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         }
         .defaultSize(width: 1280, height: 820)
         .commands {
