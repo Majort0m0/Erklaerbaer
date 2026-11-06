@@ -35,6 +35,7 @@ struct EditorView: View {
                     Label("KI", systemImage: "sparkles")
                 }
                 .help("KI-Vorschläge: Kapitel, Titel, Beschreibung, Kurzclips")
+                HelpButton(topic: "editor")
                 Button {
                     editor.showPolishSheet = true
                 } label: {
@@ -787,6 +788,11 @@ struct ShortcutHelp: View {
         }
         .padding(16)
         .frame(width: 400)
+        .safeAreaInset(edge: .bottom) {
+            HelpButton(topic: "shortcuts", title: "Alle Tastenkürzel in der Hilfe")
+                .buttonStyle(.link)
+                .padding(.bottom, 12)
+        }
     }
 }
 

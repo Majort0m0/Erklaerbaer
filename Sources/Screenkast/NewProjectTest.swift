@@ -17,6 +17,30 @@ enum NewProjectTest {
         try await ownVideoTest(base, library)
         try await rotatedTest(dir, library)
         try await emptyTest(base, library)
+        try helpTest()
+    }
+
+    // MARK: Help
+
+    private static func helpTest() throws {
+        let topics = HelpContent.topics
+        guard topics.count >= 15, Set(topics.map(\.id)).count == topics.count, topics.allSatisfy({ !$0.blocks.isEmpty }) else {
+            throw fail("help topics")
+        }
+        // Search finds the right pages, every inline Markdown text parses.
+        guard topics.filter({ $0.matches("Atem") }).contains(where: { $0.id == "sound" }),
+              topics.filter({ $0.matches("⌘⇧1") }).contains(where: { $0.id == "screenshots" }),
+              topics.filter({ $0.matches("xyzgibtsnicht") }).isEmpty else { throw fail("help search") }
+        for topic in topics {
+            for block in topic.blocks {
+                for text in [block.searchText] where (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) == nil {
+                    throw fail("help markdown in \(topic.id): \(text.prefix(40))")
+                }
+            }
+        }
+        let md = HelpContent.markdown
+        guard topics.allSatisfy({ md.contains("## \($0.title)") }), md.count > 15_000 else { throw fail("help markdown export") }
+        print("✓ Erklärbär-Hilfe: \(topics.count) Themen, Suche, \(md.count / 1000) kB Anleitung als Markdown")
     }
 
     private static func frame(_ project: Project, at t: Double) async throws -> CGImage {

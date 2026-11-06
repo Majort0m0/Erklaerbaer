@@ -8,6 +8,10 @@ enum UISnapshot {
     static func run(projectPath: String, outputPath: String) -> Int32 {
         _ = NSApplication.shared
         if projectPath == "home" { return home(outputPath: outputPath) }
+        if projectPath.hasPrefix("help") {
+            HelpModel.shared.selection = projectPath.split(separator: ":").dropFirst().first.map(String.init) ?? "start"
+            return (try? write(HelpView().frame(width: 1000, height: 740), width: 1000, height: 740, to: outputPath)) ?? 1
+        }
         do {
             let project = try Project.load(from: URL(fileURLWithPath: projectPath))
             let editor = EditorModel(project: project)

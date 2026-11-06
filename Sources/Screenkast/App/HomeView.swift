@@ -252,6 +252,8 @@ struct HomeView: View {
                 }
                 .buttonStyle(GhostButtonStyle())
                 .help("Projektordner ~/Filme/Erklärbär im Finder öffnen")
+                HelpButton(topic: "start")
+                    .buttonStyle(GhostButtonStyle())
                 NewProjectMenu()
                     .fixedSize()
                     .disabled(model.creatingProject)

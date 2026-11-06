@@ -4,6 +4,8 @@
 
 Native macOS-App (Swift/SwiftUI, macOS 15+, Untertitel ab macOS 26) für Bildschirmaufnahmen mit automatischen Zooms, geglättetem Cursor, Kamerablase und schönem Hintergrund.
 
+**Anleitung:** [ANLEITUNG.md](ANLEITUNG.md) – dieselbe ausführliche Hilfe steckt auch in der App (Menü **Hilfe › Erklärbär-Hilfe**, ⌘?).
+
 ## Installieren
 
 1. Unter [Releases](../../releases) die Datei `Erklaerbaer-<Version>-macOS.zip` laden und entpacken.
@@ -35,6 +37,7 @@ swift build
 .build/debug/Screenkast --voice <projekt>                       # Stimme verbessern: Lautheit vorher/nachher (schreibt die bearbeiteten Dateien)
 .build/debug/Screenkast --breaths <projekt> [<aus.caf>]         # Atemgeräusche im Mikrofon finden (mit Gegenprobe per Spracherkennung)
 .build/debug/Screenkast --newproject <ordner> [video …]        # ein Video → Projekt daraus; keins/mehrere → leeres Projekt mit Clips
+.build/debug/Screenkast --helpmarkdown ANLEITUNG.md             # Erklärbär-Hilfe als Markdown schreiben
 .build/debug/Screenkast --hangtest /tmp/sk-hang                 # prüft den Hänger-Wächter
 .build/debug/Screenkast --uisnapshot <projekt> <bild.png>       # Editor unsichtbar rendern (Layout prüfen)
 SCREENKAST_SNAPSHOT="5 3.5 7" .build/debug/Screenkast --uisnapshot …  # dasselbe gezoomt: 5 s sichtbar ab 3,5 s, Abspielkopf bei 7 s
@@ -70,6 +73,8 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 **Neues Projekt ohne Aufnahme** (Startseite „Neues Projekt“, Menü „Ablage“, oder ein Video auf die Projektliste ziehen):
 - **Aus eigenem Video**: Die Datei wird zur Hauptspur (auf APFS als Klon, ohne doppelten Speicher), ihr Ton zählt als Mikrofon – Stimme verbessern, Untertitel, Pausen und Füllwörter funktionieren wie bei einer Aufnahme. Das Bild füllt das Format ohne Rahmen; Hochkant-Handyvideos werden richtig gedreht und bekommen 9:16.
 - **Leeres Projekt** (16:9, 9:16, 1:1, 4:3): eine schwarze Fläche von 10 s für Clips, Bilder und Texte. Eingefügte Clips reihen sich lückenlos aneinander (auf einen Clip gezogen: dahinter, vor den ersten: davor); die schwarze Fläche drumherum wird automatisch abgeschnitten, solange nichts darauf liegt – die Trimm-Griffe ziehen sie für Titel auf Schwarz wieder auf.
+
+**Erklärbär-Hilfe** (Menü „Hilfe“, ⌘?, Hilfe-Knöpfe auf der Startseite, im Editor und im Menüleisten-Symbol): ausführliche Anleitung in 19 Kapiteln mit Suche, von „Erste Schritte“ bis „Probleme lösen“.
 
 **Screenshots** (`⌘⇧1` für einen Bereich, Menü „Ablage › Screenshot“, Startseite, Steuerleiste): Bereich, Fenster oder ganzer Bildschirm, danach ein eigener Editor mit Pfeil, Rahmen, Ellipse, Marker, Text, Nummern, Weichzeichnen, Verpixeln und Zuschneiden (Tasten V A R O H T N B P C, ⇧ für Quadrat/45°), Hintergrund mit Abstand, Ecken und Schatten, Widerrufen; Kopieren (⌘C), Sichern (⌘S), zum Herausziehen in andere Apps. Auch vorhandene Bilder lassen sich öffnen.
 

@@ -34,6 +34,16 @@ enum Entry {
         if let i = args.firstIndex(of: "--newproject"), i + 1 < args.count {
             exit(MainActor.assumeIsolated { ProjectFactory.commandLine(folder: args[i + 1], files: Array(args[(i + 2)...])) })
         }
+        if let i = args.firstIndex(of: "--helpmarkdown"), i + 1 < args.count {
+            do {
+                try HelpContent.markdown.write(to: URL(fileURLWithPath: args[i + 1]), atomically: true, encoding: .utf8)
+                print("Anleitung → \(args[i + 1])")
+                exit(0)
+            } catch {
+                print("Fehler: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
         if let i = args.firstIndex(of: "--analyze"), i + 1 < args.count {
             exit(Analyze.run(projectPath: args[i + 1]))
         }
@@ -87,6 +97,9 @@ struct ScreenkastApp: App {
                 }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
             }
+            CommandGroup(replacing: .help) {
+                HelpMenuButton()
+            }
             CommandGroup(after: .windowList) {
                 Toggle("Steuerleiste", isOn: $model.showControlBar)
             }
@@ -108,6 +121,12 @@ struct ScreenkastApp: App {
                 }
             }
         }
+
+        Window("Erklärbär-Hilfe", id: "help") {
+            HelpView()
+                .frame(minWidth: 760, minHeight: 520)
+        }
+        .defaultSize(width: 1000, height: 740)
 
         MenuBarExtra(isInserted: Binding(get: { model.isRecording || model.showInMenuBar }, set: { _ in })) {
             Group {
@@ -196,6 +215,10 @@ struct MenuBarPanel: View {
                 NSApp.activate()
                 NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
+            Button("Erklärbär-Hilfe") {
+                openWindow(id: "help")
+                NSApp.activate()
+            }
             Button("Beenden") { NSApp.terminate(nil) }
         }
         .buttonStyle(.borderless)
@@ -277,4 +300,17 @@ func formatTime(_ t: Double, fractional: Bool = true) -> String {
         return String(format: "%d:%02d.%d", m, s, cs)
     }
     return String(format: "%d:%02d", m, s)
+}
+
+/// Menu "Hilfe › Erklärbär-Hilfe" (⌘?).
+struct HelpMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Erklärbär-Hilfe") {
+            openWindow(id: "help")
+            NSApp.activate()
+        }
+        .keyboardShortcut("?", modifiers: .command)
+    }
 }
