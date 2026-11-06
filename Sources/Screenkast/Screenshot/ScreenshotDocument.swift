@@ -6,8 +6,46 @@ import UniformTypeIdentifiers
 // MARK: - Capture
 
 enum ScreenshotCapture {
-    /// A still image of a display, a window or a region (in display points, origin top-left).
+    /// A still image of a display, a window or a region. macOS's capture service sometimes fails
+    /// for a moment ("Error in creating screenshot", e.g. while a window is still moving to the
+    /// front): it is tried three times, then the same part of the screen is taken directly.
     static func capture(_ target: CaptureTarget, excluding apps: [SCRunningApplication]) async throws -> CGImage {
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                return try await captureOnce(target, excluding: apps)
+            } catch {
+                lastError = error
+                try? await Task.sleep(for: .milliseconds(200 * (attempt + 1)))
+            }
+        }
+        if #available(macOS 15.2, *), let rect = screenRect(target),
+           let image = try? await SCScreenshotManager.captureImage(in: rect) {
+            return image
+        }
+        throw lastError ?? CocoaError(.featureUnsupported)
+    }
+
+    /// The target in global screen coordinates (points, origin top-left of the main display).
+    private static func screenRect(_ target: CaptureTarget) -> CGRect? {
+        switch target {
+        case .display(let d): return d.frame
+        case .window(let w): return w.isOnScreen ? w.frame : nil
+        case .region(let d, let r): return r.offsetBy(dx: d.frame.minX, dy: d.frame.minY)
+        }
+    }
+
+    /// A message for the user (the system's text for -3811 talks about a "stream").
+    static func explain(_ error: Error) -> String {
+        let ns = error as NSError
+        if ns.domain == SCStreamErrorDomain {
+            return "macOS konnte das Bildschirmfoto gerade nicht erstellen (Bildschirmaufnahme-Dienst, Fehler \(ns.code)). "
+                + "Bitte noch einmal versuchen – bei einem Fenster hilft es, es vorher einmal anzuklicken. Tritt der Fehler immer wieder auf, hilft meist ein Neustart des Macs."
+        }
+        return "Screenshot fehlgeschlagen: \(error.localizedDescription)"
+    }
+
+    private static func captureOnce(_ target: CaptureTarget, excluding apps: [SCRunningApplication]) async throws -> CGImage {
         let filter: SCContentFilter
         var region: CGRect?
         switch target {

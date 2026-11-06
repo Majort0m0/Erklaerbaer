@@ -104,19 +104,7 @@ struct ScreenkastApp: App {
                 }
                 Divider()
                 Menu("Screenshot") {
-                    Button("Bereich … (\(GlobalHotKey.screenshotDisplay))") { Task { await model.takeScreenshot(.region) } }
-                    Menu("Fenster") {
-                        ForEach(model.windows + model.otherWindows, id: \.windowID) { w in
-                            Button(model.windowName(w)) { Task { await model.takeScreenshot(.window(w)) } }
-                        }
-                    }
-                    Menu("Ganzer Bildschirm") {
-                        ForEach(model.displays, id: \.displayID) { d in
-                            Button(model.displayName(d)) { Task { await model.takeScreenshot(.display(d)) } }
-                        }
-                    }
-                    Divider()
-                    Button("Bild bearbeiten …") { model.openImageInScreenshotEditor() }
+                    ScreenshotMenuItems(model: model)
                 }
             }
         }
@@ -190,12 +178,14 @@ struct MenuBarPanel: View {
             .tint(.red)
             .controlSize(.large)
             .disabled(model.isBusy || model.selection == nil)
-            Button {
-                Task { await model.takeScreenshot(.region) }
+            Menu {
+                ScreenshotMenuItems(model: model)
             } label: {
-                Label("Screenshot eines Bereichs (\(GlobalHotKey.screenshotDisplay))", systemImage: "camera.viewfinder")
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Label("Screenshot", systemImage: "camera.viewfinder")
             }
+            .menuStyle(.button)
+            .fixedSize()
+            .help("Bereich (\(GlobalHotKey.screenshotDisplay)), Fenster oder ganzer Bildschirm")
             Toggle("Steuerleiste auf dem Bildschirm", isOn: $model.showControlBar)
             Divider()
             Button("Erklärbär öffnen") {
@@ -211,6 +201,7 @@ struct MenuBarPanel: View {
         .buttonStyle(.borderless)
         .padding(14)
         .frame(width: 280)
+        .task { await model.refreshSources() }
     }
 }
 

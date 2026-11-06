@@ -155,13 +155,16 @@ private struct ControlBarView: View {
         .buttonStyle(.borderless)
         .help(model.systemAudio ? "Systemton wird aufgenommen" : "Systemton aus")
 
-        Button {
-            Task { await model.takeScreenshot(.region) }
+        Menu {
+            ScreenshotMenuItems(model: model)
         } label: {
             Image(systemName: "camera.viewfinder")
+        } primaryAction: {
+            Task { await model.takeScreenshot(.region) }
         }
-        .buttonStyle(.borderless)
-        .help("Screenshot eines Bereichs (\(GlobalHotKey.screenshotDisplay))")
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Klick: Screenshot eines Bereichs (\(GlobalHotKey.screenshotDisplay)) – Pfeil: Fenster oder ganzer Bildschirm")
 
         Button {
             Task { await model.startRecording() }

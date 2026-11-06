@@ -186,19 +186,7 @@ struct HomeView: View {
 
             HStack {
                 Menu {
-                    Button("Bereich … (\(GlobalHotKey.screenshotDisplay))") { Task { await model.takeScreenshot(.region) } }
-                    Menu("Fenster") {
-                        ForEach(model.windows + model.otherWindows, id: \.windowID) { w in
-                            Button(model.windowName(w)) { Task { await model.takeScreenshot(.window(w)) } }
-                        }
-                    }
-                    Menu("Ganzer Bildschirm") {
-                        ForEach(model.displays, id: \.displayID) { d in
-                            Button(model.displayName(d)) { Task { await model.takeScreenshot(.display(d)) } }
-                        }
-                    }
-                    Divider()
-                    Button("Bild bearbeiten …") { model.openImageInScreenshotEditor() }
+                    ScreenshotMenuItems(model: model)
                 } label: {
                     Label("Screenshot", systemImage: "camera.viewfinder")
                 }

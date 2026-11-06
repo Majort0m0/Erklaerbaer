@@ -36,6 +36,35 @@ enum ScreenshotWindows {
     }
 }
 
+/// Screenshot choices for every menu (app menu, start page, menu bar, control bar): area,
+/// window, whole screen, edit a picture.
+struct ScreenshotMenuItems: View {
+    /// Passed in: menus of the app's command bar don't see environment objects.
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Button("Bereich … (\(GlobalHotKey.screenshotDisplay))") { Task { await model.takeScreenshot(.region) } }
+        Menu("Fenster") {
+            let windows = model.windows + model.otherWindows
+            if windows.isEmpty { Text("Keine Fenster gefunden") }
+            ForEach(windows, id: \.windowID) { w in
+                Button(model.windowName(w)) { Task { await model.takeScreenshot(.window(w)) } }
+            }
+        }
+        if model.displays.count == 1, let d = model.displays.first {
+            Button("Ganzer Bildschirm") { Task { await model.takeScreenshot(.display(d)) } }
+        } else {
+            Menu("Ganzer Bildschirm") {
+                ForEach(model.displays, id: \.displayID) { d in
+                    Button(model.displayName(d)) { Task { await model.takeScreenshot(.display(d)) } }
+                }
+            }
+        }
+        Divider()
+        Button("Bild bearbeiten …") { model.openImageInScreenshotEditor() }
+    }
+}
+
 extension AppModel {
     enum ScreenshotKind { case region, display(SCDisplay), window(SCWindow) }
 
@@ -52,9 +81,17 @@ extension AppModel {
         case .display(let d): target = .display(d)
         case .window(let w):
             WindowFocus.bringToFront(w)
-            try? await Task.sleep(for: .milliseconds(450))
-            let fresh = (try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false))?.windows
-                .first { $0.windowID == w.windowID } ?? w
+            // Stage Manager and other desktops animate the window in: wait until it is visible.
+            var fresh = w
+            for _ in 0..<12 {
+                try? await Task.sleep(for: .milliseconds(150))
+                if let now = (try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false))?.windows
+                    .first(where: { $0.windowID == w.windowID }) {
+                    fresh = now
+                    if now.isOnScreen { break }
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(150))   // the end of the animation
             target = .window(fresh)
         case .region:
             // The display under the mouse; our windows step aside while the area is dragged.
@@ -76,7 +113,7 @@ extension AppModel {
             let image = try await ScreenshotCapture.capture(target, excluding: own)
             ScreenshotWindows.open(image: image)
         } catch {
-            errorMessage = "Screenshot fehlgeschlagen: \(error.localizedDescription)"
+            errorMessage = ScreenshotCapture.explain(error)
         }
     }
 
