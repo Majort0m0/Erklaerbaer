@@ -29,6 +29,7 @@ final class FrameRenderer: @unchecked Sendable {
     private let lock = NSLock()
     private var state: State
     private var backgroundCache: (key: String, image: CIImage)?
+    private var sceneCache: (key: String, image: CIImage)?
     private let rasterContext = CIContext(options: [.cacheIntermediates: false])
     private let fallbackCursor: CursorSprite
     private let ringImage: CIImage
@@ -141,7 +142,11 @@ final class FrameRenderer: @unchecked Sendable {
         let source = applyAnnotations(applyMasks(normalized, time: t, masks: masks), time: T, annotations: annotations, map: st.map)
         let camState = Self.cameraState(at: t, settings: s)
         let regions = camera != nil && !plain ? Self.splitRegions(out: out, split: camState.split) : nil
-        let layout = FrameLayout(out: out, sourceSize: source.extent.size, padding: s.padding, contentY: s.contentY, region: regions?.screen)
+        // In a scene the video fills the screen of the device.
+        let sceneArea = Self.sceneRects(s, info: st.info, out: out)
+        let mockupScreen = sceneArea?.screen
+        let layout = FrameLayout(out: out, sourceSize: source.extent.size, padding: sceneArea == nil ? s.padding : 0, contentY: s.contentY,
+                                 region: sceneArea?.video ?? regions?.screen)
         let ref = layout.ref, pad = layout.pad, fit = layout.fit, content = layout.content
         func toOutput(_ p: CGPoint) -> CGPoint { layout.toOutput(p) }
 
@@ -151,14 +156,16 @@ final class FrameRenderer: @unchecked Sendable {
         let zoomT = view.transform
 
         // 1. Background
-        var image = background(style: s.background, blur: s.backgroundBlur, size: out)
+        var image = mockupScreen.flatMap { scene(s.mockup, size: out, screen: $0) } ?? background(style: s.background, blur: s.backgroundBlur, size: out)
         if z > 1.0001 { image = image.transformed(by: zoomT) }
 
-        let screenRect = content.applying(zoomT)
-        let radius = s.cornerRadius * ref * z
+        // An enlarged video shows only what lies on the screen of the device.
+        let visibleContent = mockupScreen.map { content.intersection($0) } ?? content
+        let screenRect = visibleContent.applying(zoomT)
+        let radius = (mockupScreen.flatMap { s.mockup?.cornerRadius(screen: $0) } ?? s.cornerRadius * ref) * z
 
         // 2. Shadow
-        if s.shadow > 0.01 && pad > 0.5 {
+        if s.shadow > 0.01 && pad > 0.5 && mockupScreen == nil {
             let shape = roundedRect(screenRect, radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35 + 0.5 * s.shadow))
             let sigma = (10 + 30 * s.shadow) * ref * z
             let shadow = shape
@@ -192,7 +199,8 @@ final class FrameRenderer: @unchecked Sendable {
 
         // 4. Click rings (under the cursor)
         if s.clickEffect && !plain {
-            for click in st.track.clicks where t >= click.t && t - click.t < 0.55 && click.isInsideCapture {
+            for click in st.track.clicks where t >= click.t && t - click.t < 0.55 && click.isInsideCapture
+                && (mockupScreen == nil || screenRect.contains(toOutput(CGPoint(x: click.x, y: click.y)).applying(zoomT))) {
                 let age = (t - click.t) / 0.55
                 let eased = 1 - pow(1 - age, 3)
                 let r = (6 + 22 * eased) * pointToOut * max(1, s.cursorScale * 0.75)
@@ -206,8 +214,9 @@ final class FrameRenderer: @unchecked Sendable {
         }
 
         // 5. Cursor
+        // (In a scene not where an enlarged video is cut off by the device.)
         if s.showCursor, !plain, let p = st.motion.cursor(at: t),
-           p.x > -0.01, p.x < 1.01, p.y > -0.01, p.y < 1.01 {
+           p.x > -0.01, p.x < 1.01, p.y > -0.01, p.y < 1.01, mockupScreen == nil || screenRect.contains(toOutput(p).applying(zoomT)) {
             var alpha = 1.0
             if s.hideIdleCursor {
                 let idle = st.track.idleTime(at: t)
@@ -553,7 +562,8 @@ final class FrameRenderer: @unchecked Sendable {
                                                                                kCIInputTimeKey: max(0, toRecording)])
             }
         }
-        return image.cropped(to: CGRect(origin: .zero, size: out))
+        // The logo stays on intro and outro too.
+        return logo(over: image, settings: s, out: out).cropped(to: CGRect(origin: .zero, size: out))
     }
 
     /// Shutter simulation for camera moves: averages copies of the frame placed along the
@@ -733,10 +743,6 @@ final class FrameRenderer: @unchecked Sendable {
 
     private func imageOverlays(over base: CIImage, time T: Double, settings s: EditSettings, map: TimeMap, out: CGSize) -> CIImage {
         var image = base
-        func placed(_ img: CIImage, in rect: CGRect) -> CIImage {
-            img.transformed(by: CGAffineTransform(scaleX: rect.width / img.extent.width, y: rect.height / img.extent.height))
-                .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
-        }
         let short = min(out.width, out.height)
         for o in s.images {
             guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { continue }
@@ -746,10 +752,17 @@ final class FrameRenderer: @unchecked Sendable {
             let framed = framedPicture(img, in: rect, frame: o.frame ?? .none, shadow: o.shadow ?? false, short: short)
             image = Self.withAlpha(framed, fade * o.opacity).composited(over: image)
         }
-        if let w = s.watermark, let img = picture(w.file), let rect = watermarkFrame(w, out: out) {
-            image = Self.withAlpha(placed(img, in: rect), w.opacity).composited(over: image)
-        }
-        return image
+        return logo(over: image, settings: s, out: out)
+    }
+
+    /// The logo in its corner, on every frame of the video.
+    private func logo(over base: CIImage, settings s: EditSettings, out: CGSize) -> CIImage {
+        guard let w = s.watermark, let img = picture(w.file), let rect = watermarkFrame(w, out: out) else { return base }
+        let placed = img
+            .transformed(by: CGAffineTransform(translationX: -img.extent.minX, y: -img.extent.minY))
+            .transformed(by: CGAffineTransform(scaleX: rect.width / img.extent.width, y: rect.height / img.extent.height))
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+        return Self.withAlpha(placed, w.opacity).composited(over: base)
     }
 
     // MARK: Video overlays
@@ -913,7 +926,9 @@ final class FrameRenderer: @unchecked Sendable {
         let insert = st.map.insertID(atSource: t)
         let size = insert.flatMap { sizes[$0] } ?? CGSize(width: st.info.pixelWidth, height: st.info.pixelHeight)
         let regions = hasCamera && insert == nil ? Self.splitRegions(out: out, split: Self.cameraState(at: t, settings: st.settings).split) : nil
-        let layout = FrameLayout(out: out, sourceSize: size, padding: st.settings.padding, contentY: st.settings.contentY, region: regions?.screen)
+        let scene = Self.sceneRects(st.settings, info: st.info, out: out)
+        let layout = FrameLayout(out: out, sourceSize: size, padding: scene == nil ? st.settings.padding : 0, contentY: st.settings.contentY,
+                                 region: scene?.video ?? regions?.screen)
         let cam = Self.camera(at: t, layout: layout, segments: insert == nil ? st.settings.zoomSegments : [], motion: st.motion)
         return (out, layout, cam)
     }
@@ -1099,6 +1114,30 @@ final class FrameRenderer: @unchecked Sendable {
         f.radius = Float(min(radius, min(rect.width, rect.height) / 2))
         f.color = color
         return f.outputImage ?? CIImage.empty()
+    }
+
+    /// Screen of the chosen scene and the area the video is fitted into.
+    static func sceneRects(_ s: EditSettings, info: RecordingInfo, out: CGSize) -> (screen: CGRect, video: CGRect)? {
+        guard let kind = s.mockup else { return nil }
+        let video = CGFloat(info.pixelWidth) / CGFloat(max(1, info.pixelHeight))
+        let placement = s.mockupPlacement
+        let screen = kind.screen(out: out, aspect: video, placement: placement)
+        return (screen, kind.videoRegion(screen: screen, placement: placement))
+    }
+
+    /// The scene around the video, drawn once for this size.
+    private func scene(_ kind: MockupKind?, size: CGSize, screen: CGRect) -> CIImage? {
+        guard let kind else { return nil }
+        let key = "\(kind.rawValue)|\(Int(size.width))x\(Int(size.height))|\(screen)"
+        lock.lock()
+        if let cache = sceneCache, cache.key == key { lock.unlock(); return cache.image }
+        lock.unlock()
+        guard let cg = MockupScene.image(kind, size: size, screen: screen) else { return nil }
+        let image = CIImage(cgImage: cg)
+        lock.lock()
+        sceneCache = (key, image)
+        lock.unlock()
+        return image
     }
 
     private func background(style: BackgroundStyle, blur: Double, size: CGSize) -> CIImage {

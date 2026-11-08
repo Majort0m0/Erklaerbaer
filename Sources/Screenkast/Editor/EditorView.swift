@@ -685,6 +685,9 @@ struct TransportBar: View {
                 Button { editor.showSensitiveSheet = true } label: { Label("Sensible Daten verpixeln …", systemImage: "eye.slash") }
                 Button { editor.showGuideSheet = true } label: { Label("Anleitung aus Klicks …", systemImage: "list.number") }
                 Button { editor.addImage() } label: { Label("Bild …", systemImage: "photo") }
+                Button { editor.chooseWatermark(); editor.inspectorTab = .media; editor.selection = nil } label: {
+                    Label("Logo als Wasserzeichen …", systemImage: "seal")
+                }
                 Button { editor.chooseMusic() } label: { Label(editor.settings.music == nil ? "Hintergrundmusik …" : "Andere Musik …", systemImage: "music.note") }
                 Button { editor.addChapter() } label: { Label("Kapitelmarke (M)", systemImage: "bookmark") }
                 Divider()

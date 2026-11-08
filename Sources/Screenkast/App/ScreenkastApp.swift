@@ -34,6 +34,9 @@ enum Entry {
         if let i = args.firstIndex(of: "--newproject"), i + 1 < args.count {
             exit(MainActor.assumeIsolated { ProjectFactory.commandLine(folder: args[i + 1], files: Array(args[(i + 2)...])) })
         }
+        if let i = args.firstIndex(of: "--mockups"), i + 2 < args.count {
+            exit(Analyze.mockups(projectPath: args[i + 1], outputFolder: args[i + 2]))
+        }
         if let i = args.firstIndex(of: "--helpmarkdown"), i + 1 < args.count {
             do {
                 try HelpContent.markdown.write(to: URL(fileURLWithPath: args[i + 1]), atomically: true, encoding: .utf8)

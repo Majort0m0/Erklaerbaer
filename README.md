@@ -123,6 +123,7 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 - **Auto-Zoom** auf Klicks mit stetiger Kamerafahrt, die sich weich an den Rändern abbremst. Zoom-Bereiche lassen sich in der Timeline verschieben, in der Länge ändern und in der Stärke einstellen.
 - **Bewegungsunschärfe** für Cursor und Kamera als echte Verschlusszeit-Simulation.
 - Cursor geglättet, skalierbar, mit Klick-Ring; optional bei Stillstand ausblenden.
+- **Szenen** statt eines Hintergrunds (Stil-Tab): Laptop auf dem Schreibtisch, Tablet auf dem Tisch, Fernseher, Theater, Kino, Bilderrahmen. Selbst gezeichnet, passend zu jedem Format; Position und Größe des Bildschirms und der Ausschnitt des Videos sind einstellbar (je Szene und Format).
 - Hintergrund: Verläufe, Einfarbig, eigenes Bild oder Schreibtischbild. Dazu Abstand, Ecken und Schatten, Formate 16:9, 9:16, 1:1, 4:3, Original sowie 720p bis 4K.
 - **Kamerablase**: Kreis, abgerundet oder Rechteck; Größe einstellbar, frei verschiebbar (im Vorschaubild ziehen) oder in einer Ecke; Spiegeln und Schatten.
 - **Trimmen** und **entfernte Bereiche**: Rote Blöcke in der Timeline, die beim Abspielen übersprungen werden; anklicken und ⌫ stellt sie wieder her. **Überblendung** an einem Schnitt: Schnitt auswählen und die runden Griffe oben vom Schnitt wegziehen (oder Regler im Inspektor, Rechtsklick-Menü). Die Teile davor und danach werden übereinandergeschoben, Bild und Ton blenden weich über; Kurven auf beiden Seiten zeigen den Verlauf.

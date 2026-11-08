@@ -535,6 +535,10 @@ enum EditorFeatureTest {
 
         // Snapping: an edge near the playhead lands on it; off, nothing changes.
         editor.seek(to: 2.0)
+        // The switch is remembered for the app: leave it as the user set it.
+        let userSnapping = editor.snapping
+        defer { editor.snapping = userSnapping }
+        editor.snapping = true
         let snappedDelta = editor.snapDelta(.move, dt: 0.97, start: 0, end: 1.0, tolerance: 0.05, excluding: nil)
         editor.snapping = false
         let free = editor.snapDelta(.move, dt: 0.97, start: 0, end: 1.0, tolerance: 0.05, excluding: nil)

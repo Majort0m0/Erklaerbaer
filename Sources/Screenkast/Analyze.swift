@@ -186,6 +186,47 @@ extension Analyze {
         return code
     }
 
+    /// `--mockups <project> <folder>`: a picture of the project in every scene, landscape and portrait.
+    static func mockups(projectPath: String, outputFolder: String) -> Int32 {
+        do {
+            let base = try Project.load(from: URL(fileURLWithPath: projectPath))
+            let folder = URL(fileURLWithPath: outputFolder, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: base.videoURL))
+            gen.appliesPreferredTrackTransform = true
+            var frame: CGImage?
+            let sem = DispatchSemaphore(value: 0)
+            gen.generateCGImageAsynchronously(for: CMTime(seconds: min(5, base.info.duration / 2), preferredTimescale: 600)) { img, _, _ in
+                frame = img
+                sem.signal()
+            }
+            sem.wait()
+            guard let frame else { return 1 }
+            let context = CIContext()
+            let space = CGColorSpace(name: CGColorSpace.sRGB)!
+            for kind in MockupKind.allCases {
+                for aspect in [OutputAspect.wide, .vertical] {
+                    var s = base.settings
+                    s.mockup = kind
+                    s.aspect = aspect
+                    s.exportShortSide = 720
+                    s.zoomSegments = []
+                    s.texts = []
+                    let p = Project(url: base.url, info: base.info, cursor: base.cursor, settings: s)
+                    let r = FrameRenderer(project: p)
+                    let image = r.render(source: CIImage(cgImage: frame), camera: nil, time: min(5, base.info.duration / 2))
+                    let url = folder.appendingPathComponent("\(kind.rawValue)-\(aspect == .wide ? "quer" : "hoch").png")
+                    try context.writePNGRepresentation(of: image, to: url, format: .RGBA8, colorSpace: space)
+                }
+            }
+            print("Szenen → \(outputFolder)")
+            return 0
+        } catch {
+            print("Fehler: \(error)")
+            return 1
+        }
+    }
+
     /// `--breaths <project> [<output.caf>]`: finds breath sounds in the microphone (echo-free when
     /// available) and lists them; with an output file, writes the track with breaths lowered by 18 dB.
     static func breaths(projectPath: String, outputPath: String?) -> Int32 {

@@ -298,6 +298,12 @@ struct EditSettings: Codable, Equatable {
     var lockedLanes: [String] = []
     /// Transitions where two parts meet without a cut between them (after a split or a move).
     var joinTransitions: [JoinTransition] = []
+    /// A scene (laptop, cinema …) around the video instead of the background.
+    var mockup: MockupKind? = nil
+    /// Placement per scene and format ("cinema|16:9").
+    var mockupPlacements: [String: MockupPlacement] = [:]
+    var mockupPlacementKey: String? { mockup.map { "\($0.rawValue)|\(aspect.rawValue)" } }
+    var mockupPlacement: MockupPlacement { mockupPlacementKey.flatMap { mockupPlacements[$0] } ?? MockupPlacement() }
     /// Short "whoosh" at zooms and transitions.
     var soundEffects: Bool = false
     var soundEffectVolume: Double = 0.35
@@ -576,6 +582,8 @@ extension EditSettings {
         freeLanes = try v(.freeLanes, freeLanes)
         lockedLanes = try v(.lockedLanes, lockedLanes)
         joinTransitions = try v(.joinTransitions, joinTransitions)
+        mockup = try c.decodeIfPresent(MockupKind.self, forKey: .mockup)
+        mockupPlacements = try v(.mockupPlacements, mockupPlacements)
         soundEffects = try v(.soundEffects, soundEffects)
         soundEffectVolume = try v(.soundEffectVolume, soundEffectVolume)
         exportShortSide = try v(.exportShortSide, exportShortSide)

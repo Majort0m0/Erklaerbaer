@@ -559,3 +559,80 @@ struct LinkSymbol: View {
             }
     }
 }
+
+/// Choice of a scene around the video instead of the background.
+struct MockupSection: View {
+    @ObservedObject var editor: EditorModel
+
+    var body: some View {
+        Section("Szene") {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                tile(nil, label: "Ohne")
+                ForEach(MockupKind.allCases) { tile($0, label: $0.label) }
+            }
+            if editor.settings.mockup != nil {
+                Text("Das Video läuft auf dem Bildschirm der Szene. Zooms fahren in die ganze Szene hinein.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        if let kind = editor.settings.mockup {
+            let p = editor.settings.mockupPlacement
+            Section("Position in der Szene") {
+                slider("Links / Rechts", \.x, -0.5...0.5, percent: true)
+                slider("Unten / Oben", \.y, -0.5...0.5, percent: true)
+                slider("Größe", \.scale, 0.4...1.3, percent: false)
+                Text("Verschiebt den Bildschirm samt Gerät. Gespeichert je Szene und Format.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Video im Bildschirm") {
+                slider("Vergrößern", \.videoScale, 1...3, percent: false)
+                if p.videoScale > 1.001 {
+                    slider("Ausschnitt links / rechts", \.videoX, -1...1, percent: true)
+                    slider("Ausschnitt unten / oben", \.videoY, -1...1, percent: true)
+                }
+                let video = CGFloat(editor.project.info.pixelWidth) / CGFloat(max(1, editor.project.info.pixelHeight))
+                if kind.fillScale(video: video) > 1.001 {
+                    Button("Bildschirm ganz ausfüllen") { editor.updateMockupPlacement { $0.videoScale = kind.fillScale(video: video) } }
+                        .help("Vergrößert das Video, bis keine Balken mehr zu sehen sind – an den Rändern fehlt dann etwas")
+                }
+                Button("Position zurücksetzen") { editor.updateMockupPlacement { $0 = MockupPlacement() } }
+                    .disabled(p == MockupPlacement())
+            }
+        }
+    }
+
+    private func slider(_ title: String, _ key: WritableKeyPath<MockupPlacement, Double>, _ range: ClosedRange<Double>, percent signed: Bool) -> some View {
+        LabeledSlider(title: title,
+                      value: Binding(get: { editor.settings.mockupPlacement[keyPath: key] },
+                                     set: { v in editor.updateMockupPlacement { $0[keyPath: key] = v } }),
+                      range: range,
+                      format: { v in signed ? (abs(v) < 0.005 ? "Mitte" : String(format: "%+.0f %%", v * 100)) : "\(Int((v * 100).rounded())) %" })
+    }
+
+    private func tile(_ kind: MockupKind?, label: String) -> some View {
+        let selected = editor.settings.mockup == kind
+        return Button {
+            editor.settings.mockup = kind
+        } label: {
+            VStack(spacing: 3) {
+                Group {
+                    if let kind, let image = MockupScene.thumbnail(kind) {
+                        Image(nsImage: image).resizable().aspectRatio(16 / 9, contentMode: .fit)
+                    } else {
+                        RoundedRectangle(cornerRadius: 5).fill(Theme.raised)
+                            .aspectRatio(16 / 9, contentMode: .fit)
+                            .overlay(Image(systemName: "circle.slash").foregroundStyle(.secondary))
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(selected ? Theme.brand : Theme.stroke, lineWidth: selected ? 2.5 : 1))
+                Text(label).font(.system(size: 10.5, weight: selected ? .semibold : .regular)).lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(kind == nil ? "Keine Szene: normaler Hintergrund" : "Das Video in dieser Szene zeigen")
+    }
+}

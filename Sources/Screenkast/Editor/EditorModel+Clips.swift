@@ -725,4 +725,13 @@ extension EditorModel {
         if !isPlaying { play() }
         player.rate = shuttleRate
     }
+
+    // MARK: Scene
+
+    func updateMockupPlacement(_ change: (inout MockupPlacement) -> Void) {
+        guard let key = settings.mockupPlacementKey else { return }
+        var p = settings.mockupPlacement
+        change(&p)
+        settings.mockupPlacements[key] = p == MockupPlacement() ? nil : p
+    }
 }

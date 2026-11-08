@@ -248,7 +248,7 @@ In der Kamera-Spur legst du fest, wie die Kamera in einem Abschnitt erscheint: *
 - **Drag & Drop** aus dem Finder: auf die Medien-Spur oder ins Vorschaubild = darüberlegen; auf die Video-Spur = in die Aufnahme einfügen (die Aufnahme wartet so lange); auf eine Tonspur = Hintergrundmusik.
 - Bilder bekommen auf Wunsch einen **Rahmen** (Pur, Abgerundet, Rahmen, Foto, Kreis) und Schatten.
 - **Video als Bild im Bild:** mit eigenem Ton, Länge an den Kanten ändern, mit **S** teilen.
-- **Logo:** Inspektor › Medien – erscheint dauerhaft in einer Ecke.
+- **Logo als Wasserzeichen:** **Hinzufügen › Logo als Wasserzeichen …** oder Inspektor › Medien. Es liegt im ganzen Video, auch auf Vorspann und Abspann; Ecke, Größe und Deckkraft sind einstellbar. Am besten ein PNG mit transparentem Hintergrund.
 
 > 💡 **Tipp:** Ein Klick auf ein Bild oder einen Text im Vorschaubild öffnet sofort seine Einstellungen.
 
@@ -369,6 +369,8 @@ Aus einem Kurzclip-Vorschlag entsteht mit einem Klick ein eigenes Hochformat-Pro
 
 *Hintergrund, Rahmen, Formate für YouTube und Reels, Farbkorrektur und Vorlagen.*
 
+- **Szene:** Statt eines Hintergrunds läuft das Video auf dem Bildschirm eines Laptops, Tablets oder Fernsehers, auf der Bühne eines Theaters, auf der Kinoleinwand oder in einem Bilderrahmen. Die Szenen passen sich an Format und Video an, Zooms fahren in die ganze Szene hinein.
+- **Position in der Szene:** Mit den Reglern unter der Szene verschiebst du den Bildschirm samt Gerät und änderst die Größe. **Video im Bildschirm** vergrößert das Video darauf und wählt den Ausschnitt; **Bildschirm ganz ausfüllen** entfernt schwarze Balken, etwa beim 4:3-Tablet.
 - **Hintergrund:** Verläufe, einfarbig, eigenes Bild oder das Schreibtischbild.
 - **Rahmen:** Abstand, Ecken und Schatten um die Aufnahme.
 - **Formate:** 16:9, 9:16, 1:1, 4:3 oder Original. Jedes Format merkt sich sein eigenes Layout (Abstand, Höhe der Aufnahme, Kamera, Untertitel-Position). **Layout zurücksetzen** stellt den Vorschlag wieder her.

@@ -86,7 +86,8 @@ struct InspectorView: View {
         switch editor.inspectorTab {
         case .style:
             presetSection
-            backgroundSection
+            MockupSection(editor: editor)
+            if editor.settings.mockup == nil { backgroundSection }
             frameSection
             ColorGradeSection(editor: editor)
             fadeSection
@@ -485,7 +486,7 @@ struct InspectorView: View {
     }
 
     private var logoSection: some View {
-        Section("Logo") {
+        Section("Logo / Wasserzeichen") {
             if let w = editor.settings.watermark {
                 Picker("Ecke", selection: Binding(get: { w.corner }, set: { v in editor.settings.watermark?.corner = v })) {
                     ForEach(CameraCorner.allCases) { Text($0.label).tag($0) }
@@ -504,7 +505,7 @@ struct InspectorView: View {
                 } label: {
                     Label("Logo wählen …", systemImage: "seal")
                 }
-                Text("Erscheint in einer Ecke des ganzen Videos.")
+                Text("Erscheint in einer Ecke des ganzen Videos, auch auf Vorspann und Abspann. Am besten ein PNG mit transparentem Hintergrund.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -860,6 +861,7 @@ struct InspectorView: View {
             }
             .pickerStyle(.segmented)
             .help("Jedes Format behält sein eigenes Layout – im Hochformat steht die Aufnahme oben, die Kamera groß darunter")
+            if editor.settings.mockup == nil {
             HStack {
                 Toggle("Aufnahme mittig", isOn: Binding(get: { editor.settings.contentY == nil },
                                                          set: { editor.settings.contentY = $0 ? nil : 0.3 }))
@@ -868,13 +870,16 @@ struct InspectorView: View {
                     .buttonStyle(.link)
                     .help("Standard-Layout dieses Formats für Aufnahme, Kamera und Untertitel")
             }
-            if let y = editor.settings.contentY {
+            }
+            if let y = editor.settings.contentY, editor.settings.mockup == nil {
                 LabeledSlider(title: "Höhe der Aufnahme", value: Binding(get: { y }, set: { editor.settings.contentY = $0 }),
                               range: 0.05...0.95, format: { $0 < 0.4 ? "oben" : $0 > 0.6 ? "unten" : "Mitte" })
             }
+            if editor.settings.mockup == nil {
             LabeledSlider(title: "Abstand", value: $editor.settings.padding, range: 0...0.2, format: { "\(Int($0 * 500)) %" })
             LabeledSlider(title: "Ecken", value: $editor.settings.cornerRadius, range: 0...48, format: { "\(Int($0))" })
             LabeledSlider(title: "Schatten", value: $editor.settings.shadow, range: 0...1, format: { "\(Int($0 * 100)) %" })
+            }
         }
     }
 

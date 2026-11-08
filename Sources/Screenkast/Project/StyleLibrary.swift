@@ -13,7 +13,7 @@ struct StylePreset: Codable, Identifiable, Equatable {
 extension EditSettings {
     /// Takes over the look of `s`; content (cuts, texts, zooms …) stays.
     mutating func applyStyle(from s: EditSettings) {
-        background = s.background; backgroundBlur = s.backgroundBlur; aspect = s.aspect
+        background = s.background; backgroundBlur = s.backgroundBlur; aspect = s.aspect; mockup = s.mockup; mockupPlacements = s.mockupPlacements
         padding = s.padding; cornerRadius = s.cornerRadius; shadow = s.shadow
         showCursor = s.showCursor; cursorScale = s.cursorScale; cursorSmoothing = s.cursorSmoothing
         clickEffect = s.clickEffect; hideIdleCursor = s.hideIdleCursor; clickSound = s.clickSound; clickVolume = s.clickVolume

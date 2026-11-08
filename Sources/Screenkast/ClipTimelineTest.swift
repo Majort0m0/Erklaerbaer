@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CoreImage
 
 /// Selftests for the clip timeline (closed gaps, moved parts, ripple trim), clips tied to the
 /// video or free, music across joins, and moving projects.
@@ -11,6 +12,7 @@ enum ClipTimelineTest {
     static func run(base: Project, dir: URL) async throws {
         try await MainActor.run { try modelTest(base) }
         try await compositionTest(base, dir)
+        try mockupTest(base)
         try locationTest(base, dir)
     }
 
@@ -302,6 +304,106 @@ enum ClipTimelineTest {
         let (c, frame) = try await midFrame(clips, at: 1.25)
         guard c.dissolves.count == 1, c.dissolves[0].bSlices.first?.insertID == clipB.id, near(c.totalDuration, 2.5, 0.03), frame.width > 0 else {
             throw fail("transition between clips: \(c.dissolves.count), \(c.totalDuration)")
+        }
+    }
+
+    /// Every scene: the video lies on the screen, the scene around it, in landscape and portrait.
+    private static func mockupTest(_ base: Project) throws {
+        let aspect = CGFloat(base.info.pixelWidth) / CGFloat(base.info.pixelHeight)
+        let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: base.info.pixelWidth, height: base.info.pixelHeight))
+        let context = CIContext()
+        func pixel(_ image: CIImage, _ p: CGPoint) -> (Float, Float, Float) {
+            var px = [Float](repeating: 0, count: 4)
+            context.render(image, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: p.x, y: p.y, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+            return (px[0], px[1], px[2])
+        }
+        for kind in MockupKind.allCases {
+            for format in [OutputAspect.wide, .vertical, .square] {
+                let p = project(base) { s in
+                    s.mockup = kind
+                    s.aspect = format
+                    s.exportShortSide = 720
+                    s.showCursor = false
+                    s.clickEffect = false
+                }
+                let r = FrameRenderer(project: p)
+                let out = r.outputSize
+                let screen = kind.screen(out: out, aspect: aspect)
+                let inside = CGRect(origin: .zero, size: out).contains(screen)
+                let shape = kind == .tablet ? (aspect >= 1 ? 4.0 / 3.0 : 3.0 / 4.0) : Double(aspect)
+                let centered = abs(screen.midY / out.height - 0.5) < 0.09 && abs(screen.midX / out.width - 0.5) < 0.01
+                let large = screen.width > out.width * 0.6 || screen.height > out.height * 0.6
+                guard inside, near(Double(screen.width / screen.height), shape, 0.01), centered, large else {
+                    throw fail("scene \(kind) \(format): screen \(screen) in \(out)")
+                }
+                let image = r.render(source: red, camera: nil, time: 1)
+                let center = pixel(image, CGPoint(x: screen.midX, y: screen.midY))
+                let above = pixel(image, CGPoint(x: screen.midX, y: min(out.height - 2, screen.maxY + 3 + out.height * 0.02)))
+                guard center.0 > 0.6, center.1 < 0.25, !(above.0 > 0.6 && above.1 < 0.25 && kind != .theater) else {
+                    throw fail("scene \(kind) \(format): center \(center), above \(above)")
+                }
+                // Handles and clicks in the preview use the same place.
+                let q = r.outputPoint(CGPoint(x: 0.5, y: 0.5), at: 1)
+                guard near(Double(q.x), Double(screen.midX), 1), near(Double(q.y), Double(out.height - screen.midY), 1) else {
+                    throw fail("scene \(kind) \(format): preview point \(q) for \(screen)")
+                }
+            }
+        }
+        // Placed by hand: the screen moves and shrinks; an enlarged video stays on the screen.
+        let p = project(base) { s in
+            s.mockup = .laptop
+            s.aspect = .wide
+            s.exportShortSide = 720
+            s.showCursor = false
+            s.clickEffect = false
+            s.mockupPlacements["laptop|16:9"] = MockupPlacement(x: 0.1, y: -0.05, scale: 0.7, videoScale: 2, videoX: 1, videoY: 0)
+        }
+        let r = FrameRenderer(project: p)
+        let out = r.outputSize
+        let base0 = MockupKind.laptop.screen(out: out, aspect: aspect)
+        let moved = MockupKind.laptop.screen(out: out, aspect: aspect, placement: p.settings.mockupPlacement)
+        guard near(Double(moved.width), Double(base0.width * 0.7), 1), near(Double(moved.midX), Double(base0.midX + out.width * 0.1), 1),
+              near(Double(moved.midY), Double(base0.midY - out.height * 0.05), 1) else { throw fail("scene placement: \(moved) from \(base0)") }
+        let image = r.render(source: red, camera: nil, time: 1)
+        let on = pixel(image, CGPoint(x: moved.midX, y: moved.midY)), bezel = pixel(image, CGPoint(x: moved.maxX + 3, y: moved.midY))
+        guard on.0 > 0.6, on.1 < 0.25, bezel.0 < 0.4 else { throw fail("enlarged video: on \(on), bezel \(bezel)") }
+        // Far off to one side, the screen stays in the picture.
+        let far = MockupKind.cinema.screen(out: out, aspect: aspect, placement: MockupPlacement(x: 0.5, y: 0.5, scale: 1.3))
+        guard CGRect(origin: .zero, size: out).contains(far) else { throw fail("screen left the picture: \(far)") }
+        try logoTest(base, red: red, pixel: pixel)
+        print("✓ scenes: laptop, tablet, television, theater, cinema and picture frame in landscape, portrait and square, the video on their screen")
+    }
+
+    /// The logo: in the chosen corner, on the recording and on the title cards.
+    private static func logoTest(_ base: Project, red: CIImage, pixel: (CIImage, CGPoint) -> (Float, Float, Float)) throws {
+        let file = "media/selftest-logo.png"
+        let url = base.url.appendingPathComponent(file)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let green = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100))
+        try CIContext().writePNGRepresentation(of: green, to: url, format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        for corner in CameraCorner.allCases {
+            var card = TextOverlay(kind: .titleCard, start: 0, end: 3, title: "Titel")
+            card.placement = .intro
+            let p = project(base) { s in
+                s.exportShortSide = 720
+                s.showCursor = false
+                s.watermark = Watermark(file: file, corner: corner, size: 0.2, opacity: 1)
+                s.texts = [card]
+            }
+            let r = FrameRenderer(project: p)
+            let out = r.outputSize
+            guard let frame = r.watermarkFrame(p.settings.watermark!, out: out) else { throw fail("logo not loaded") }
+            let middle = CGPoint(x: frame.midX, y: frame.midY)
+            let onLeft: Bool = frame.midX < out.width / 2
+            let onBottom: Bool = frame.midY < out.height / 2
+            let wantLeft: Bool = corner == .topLeft || corner == .bottomLeft
+            let wantBottom: Bool = corner == .bottomLeft || corner == .bottomRight
+            let wanted: CGFloat = min(out.width, out.height) * 0.2
+            guard onLeft == wantLeft, onBottom == wantBottom, abs(frame.width - wanted) < 1 else { throw fail("logo \(corner): \(frame)") }
+            let video = pixel(r.render(source: red, camera: nil, time: 1), middle)
+            let title = pixel(r.renderCard(card, localTime: 1), middle)
+            guard video.1 > 0.7, video.0 < 0.3, title.1 > 0.7, title.0 < 0.3 else { throw fail("logo \(corner): video \(video), title card \(title)") }
         }
     }
 
