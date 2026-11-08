@@ -83,7 +83,7 @@ struct TimelineScale {
 /// the playhead and, below, zoom controls with an overview of the visible part.
 struct EditorTimeline: View {
     @ObservedObject var editor: EditorModel
-    static let headerWidth: CGFloat = 176
+    static let headerWidth: CGFloat = 186
     static let footerHeight: CGFloat = 24
 
     var body: some View {
@@ -512,13 +512,16 @@ private struct TimelineContent: View {
                     .allowsHitTesting(false)
             }
         }
-        if let seg = editor.selectedSegment, let v = vis(seg.lowerBound, seg.upperBound) {
-            BlockShape(visible: v, radius: 7)
-                .fill(TimelineSelection.color.opacity(0.12))
-                .timelineSelection(true, shape: BlockShape(visible: v, radius: 7))
-                .frame(width: v.width, height: h)
-                .allowsHitTesting(false)
-                .offset(x: v.x + (drag?.key == editor.clipParts.first { $0.range == seg }?.key ? CGFloat(drag?.dt ?? 0) * scale.pps : 0), y: y)
+        let moving = drag.map { editor.clipDragKeys($0.key) } ?? []
+        ForEach(parts.filter { editor.selection == .segment($0.range.lowerBound) || editor.isInGroup(.segment($0.range.lowerBound)) }, id: \.key) { part in
+            if let v = vis(part.range.lowerBound, part.range.upperBound) {
+                BlockShape(visible: v, radius: 7)
+                    .fill(TimelineSelection.color.opacity(0.12))
+                    .timelineSelection(true, shape: BlockShape(visible: v, radius: 7))
+                    .frame(width: v.width, height: h)
+                    .allowsHitTesting(false)
+                    .offset(x: v.x + (moving.contains(part.key) ? CGFloat(drag?.dt ?? 0) * scale.pps : 0), y: y)
+            }
         }
 
         // Where something was cut out, with its transition
@@ -532,6 +535,18 @@ private struct TimelineContent: View {
             if let dissolve = dissolves[cut.id] {
                 dissolveCurves(dissolve, y: y, height: h)
             }
+        }
+
+        // Where two parts meet without a cut: a transition can be set there
+        ForEach(parts.indices.dropFirst(), id: \.self) { i in
+            if i < parts.count, !editor.joinHasCut(after: parts[i - 1], before: parts[i]), let run = editor.clipRun(parts[i]),
+               case let x = scale.x(run.lowerBound), x >= -9, x <= scale.width + 9 {
+                JoinMark(editor: editor, key: parts[i].key, height: h)
+                    .offset(x: x - JoinMark.width / 2, y: y)
+            }
+        }
+        ForEach(editor.settings.joinTransitions) { t in
+            if let dissolve = dissolves[t.id] { dissolveCurves(dissolve, y: y, height: h) }
         }
 
         // Intro / outro title cards, and the part pushed over the recording
@@ -638,9 +653,9 @@ private struct TimelineContent: View {
                     if editor.isPlaying { editor.pause() }
                     editor.seek(to: S(editor.snapTime(scale.time(v.location.x), tolerance: snapTolerance, includePlayhead: false)))
                     if let clip = editor.settings.inserts.first(where: { abs($0.sourceRange.lowerBound - part.range.lowerBound) < 1e-6 }) {
-                        editor.selection = .insert(clip.id)
+                        editor.click(.insert(clip.id))
                     } else {
-                        editor.selection = .segment(part.range.lowerBound)
+                        editor.click(.segment(part.range.lowerBound))
                     }
                 }
             }
@@ -649,7 +664,7 @@ private struct TimelineContent: View {
     /// One part of the video in the lane.
     private func clipBlock(_ part: EditSettings.ClipPart, visible v: TimelineScale.Visible, height h: CGFloat) -> some View {
         let shape = BlockShape(visible: v, radius: Theme.laneRadius + 2)
-        let dragged = editor.clipDrag?.key == part.key
+        let dragged = editor.clipDrag.map { editor.clipDragKeys($0.key).contains(part.key) } ?? false
         let width = max(2, v.width - 1.5)
         return ZStack(alignment: .topLeading) {
             shape.fill(Theme.color(.video).opacity(dragged ? 0.4 : 0.16))
@@ -858,9 +873,10 @@ private struct TimelineContent: View {
             if let v = vis(seg.start, seg.end) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.zoomH, color: .purple, icon: "plus.magnifyingglass",
                            label: String(format: "%.1f×", seg.scale), centered: true,
-                           selected: editor.selectedZoomID == seg.id,
-                           onSelect: { editor.selectedZoomID = seg.id },
+                           selected: editor.selectedZoomID == seg.id || editor.isInGroup(.zoom(seg.id)),
+                           onSelect: { editor.click(.zoom(seg.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .zoom(seg.id)) { return }
                                if editor.zoomDragOrigin?.id != seg.id {
                                    editor.zoomDragOrigin = seg; editor.selectedZoomID = seg.id; editor.beginInteraction()
                                }
@@ -888,9 +904,10 @@ private struct TimelineContent: View {
             if let v = vis(range.start, range.end) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.cursorH, color: range.effect == .hidden ? .gray : .yellow,
                            icon: range.effect.icon, label: range.effect.label,
-                           selected: editor.selection == .cursorRange(range.id),
-                           onSelect: { editor.selection = .cursorRange(range.id) },
+                           selected: editor.selection == .cursorRange(range.id) || editor.isInGroup(.cursorRange(range.id)),
+                           onSelect: { editor.click(.cursorRange(range.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .cursorRange(range.id)) { return }
                                if editor.cursorRangeDragOrigin?.id != range.id {
                                    editor.cursorRangeDragOrigin = range; editor.selection = .cursorRange(range.id); editor.beginInteraction()
                                }
@@ -914,9 +931,10 @@ private struct TimelineContent: View {
             if let v = vis(mask.start, mask.end) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.maskH,
                            color: .orange, icon: mask.style == .pixelate ? "square.grid.3x3.fill" : "drop.fill",
-                           selected: editor.selectedMaskID == mask.id,
-                           onSelect: { editor.selectedMaskID = mask.id },
+                           selected: editor.selectedMaskID == mask.id || editor.isInGroup(.mask(mask.id)),
+                           onSelect: { editor.click(.mask(mask.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .mask(mask.id)) { return }
                                if editor.maskDragOrigin?.id != mask.id {
                                    editor.maskDragOrigin = mask; editor.selectedMaskID = mask.id; editor.beginInteraction()
                                }
@@ -939,9 +957,10 @@ private struct TimelineContent: View {
             if let v = vis(range.start, range.end) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.cameraH, color: .cyan, icon: range.layout.icon,
                            label: range.layout.label,
-                           selected: editor.selection == .cameraLayout(range.id),
-                           onSelect: { editor.selection = .cameraLayout(range.id) },
+                           selected: editor.selection == .cameraLayout(range.id) || editor.isInGroup(.cameraLayout(range.id)),
+                           onSelect: { editor.click(.cameraLayout(range.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .cameraLayout(range.id)) { return }
                                if editor.cameraLayoutDragOrigin?.id != range.id {
                                    editor.cameraLayoutDragOrigin = range; editor.selection = .cameraLayout(range.id); editor.beginInteraction()
                                }
@@ -966,9 +985,10 @@ private struct TimelineContent: View {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.annotationH,
                            color: a.kind == .spotlight ? .gray : Color(red: r, green: g, blue: b), icon: a.kind.icon,
                            label: a.kind.label,
-                           selected: editor.selection == .annotation(a.id),
-                           onSelect: { editor.selection = .annotation(a.id) },
+                           selected: editor.selection == .annotation(a.id) || editor.isInGroup(.annotation(a.id)),
+                           onSelect: { editor.click(.annotation(a.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .annotation(a.id)) { return }
                                if editor.annotationDragOrigin?.id != a.id {
                                    editor.annotationDragOrigin = a; editor.selection = .annotation(a.id); editor.beginInteraction()
                                }
@@ -1035,9 +1055,10 @@ private struct TimelineContent: View {
                            color: text.kind == .lowerThird ? .teal : .indigo,
                            icon: text.kind == .lowerThird ? "text.below.photo" : "rectangle.inset.filled",
                            label: text.title,
-                           selected: editor.selectedTextID == text.id,
-                           onSelect: { editor.selectedTextID = text.id },
+                           selected: editor.selectedTextID == text.id || editor.isInGroup(.text(text.id)),
+                           onSelect: { editor.click(.text(text.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .text(text.id)) { return }
                                if editor.textDragOrigin?.id != text.id {
                                    editor.textDragOrigin = text; editor.selectedTextID = text.id; editor.beginInteraction()
                                }
@@ -1063,9 +1084,10 @@ private struct TimelineContent: View {
             if let v = scale.visible(shown.lowerBound, shown.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.mediaH, color: o.synced ? .orange : .yellow,
                            icon: o.synced ? "macwindow.on.rectangle" : "pip", label: o.name,
-                           selected: editor.selection == .videoOverlay(o.id),
-                           onSelect: { editor.selection = .videoOverlay(o.id) },
+                           selected: editor.selection == .videoOverlay(o.id) || editor.isInGroup(.videoOverlay(o.id)),
+                           onSelect: { editor.click(.videoOverlay(o.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .videoOverlay(o.id)) { return }
                                if editor.videoOverlayDragOrigin?.id != o.id {
                                    editor.videoOverlayDragOrigin = o; editor.selection = .videoOverlay(o.id); editor.beginInteraction()
                                }
@@ -1097,9 +1119,10 @@ private struct TimelineContent: View {
             if let run = editor.displayRange(start: o.start, end: o.end, free: o.isFree), let v = scale.visible(run.lowerBound, run.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.mediaH, color: .mint, icon: "photo",
                            label: URL(fileURLWithPath: o.file).deletingPathExtension().lastPathComponent,
-                           selected: editor.selection == .image(o.id),
-                           onSelect: { editor.selection = .image(o.id) },
+                           selected: editor.selection == .image(o.id) || editor.isInGroup(.image(o.id)),
+                           onSelect: { editor.click(.image(o.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .image(o.id)) { return }
                                if editor.imageDragOrigin?.id != o.id {
                                    editor.imageDragOrigin = o; editor.selection = .image(o.id); editor.beginInteraction()
                                }
@@ -1172,9 +1195,10 @@ private struct TimelineContent: View {
                            icon: mute.kind == .breath ? "wind" : mute.isMute ? "speaker.slash.fill" : mute.enhance != nil ? "wand.and.stars" : "speaker.wave.1.fill",
                            label: mute.kind == .breath ? "Atem" : mute.isMute ? nil
                                : mute.enhance.map { "Stimme \(Int($0 * 100)) %" } ?? "\(Int(mute.level * 100)) %",
-                           selected: editor.selectedMuteID == mute.id,
-                           onSelect: { editor.selectedMuteID = mute.id },
+                           selected: editor.selectedMuteID == mute.id || editor.isInGroup(.mute(mute.id)),
+                           onSelect: { editor.click(.mute(mute.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .mute(mute.id)) { return }
                                if editor.muteDragOrigin?.id != mute.id {
                                    editor.muteDragOrigin = mute; editor.selectedMuteID = mute.id; editor.beginInteraction()
                                }
@@ -1216,9 +1240,10 @@ private struct TimelineContent: View {
                            waveform: waveform,
                            fadeIn: fade.0 > 0 ? clip.start...(clip.start + fade.0) : nil,
                            fadeOut: fade.1 > 0 ? (clip.end - fade.1)...clip.end : nil,
-                           selected: editor.selectedVoiceOverID == clip.id,
-                           onSelect: { editor.selectedVoiceOverID = clip.id },
+                           selected: editor.selectedVoiceOverID == clip.id || editor.isInGroup(.voiceOver(clip.id)),
+                           onSelect: { editor.click(.voiceOver(clip.id)) },
                            onDrag: { kind, dt in
+                               if editor.dragGroup(kind, dt: dt, item: .voiceOver(clip.id)) { return }
                                if editor.voiceOverDragOrigin?.id != clip.id {
                                    editor.voiceOverDragOrigin = editor.settings.voiceOvers.first { $0.id == clip.id }
                                    editor.selectedVoiceOverID = clip.id
@@ -1655,6 +1680,33 @@ struct RangeBlock: View {
     }
 }
 
+/// Mark where two parts of the video meet: a click opens the transition between them.
+private struct JoinMark: View {
+    static let width: CGFloat = 14
+    @ObservedObject var editor: EditorModel
+    let key: Double
+    let height: CGFloat
+
+    var body: some View {
+        let selected = editor.selection == .join(key)
+        let active = editor.joinTransition(key: key) != nil
+        ZStack(alignment: .bottom) {
+            Color.clear
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(selected ? TimelineSelection.color : active ? Theme.brand : Color.white)
+                .overlay(RoundedRectangle(cornerRadius: 1.5).strokeBorder(active || selected ? Color.clear : Color.secondary.opacity(0.7), lineWidth: 1))
+                .frame(width: 8, height: 8)
+                .rotationEffect(.degrees(45))
+                .padding(.bottom, 5)
+        }
+        .frame(width: Self.width, height: height)
+        // Only the mark itself: above it the edges of the two parts can be grabbed.
+        .contentShape(Rectangle().size(width: Self.width, height: 18).offset(y: height - 18))
+        .onTapGesture { editor.selection = .join(key) }
+        .help(active ? "Übergang zwischen den Teilen – anklicken zum Einstellen" : "Hier treffen sich zwei Teile – anklicken, um einen Übergang einzustellen")
+    }
+}
+
 /// Mark where something was cut out and the timeline closed up. Automatic cuts (filler words,
 /// pauses, transcript) are orange and labelled.
 private struct CutSeam: View {
@@ -1685,7 +1737,8 @@ private struct CutSeam: View {
             .offset(y: 1)
         }
         .frame(width: Self.width, height: height)
-        .contentShape(Rectangle())
+        // Only the tab at the top: below it the edges of the two parts can be grabbed.
+        .contentShape(Rectangle().size(width: Self.width, height: 16))
         .onTapGesture { editor.selectedCutID = cut.id }
         .contextMenu {
             Button("Entferntes wiederherstellen") {
@@ -2025,7 +2078,7 @@ private struct InsertBlock: View {
     let snap: (Double) -> Double
 
     var body: some View {
-        let selected = editor.selection == .insert(clip.id)
+        let selected = editor.selection == .insert(clip.id) || editor.isInGroup(.insert(clip.id))
         let shape = BlockShape(visible: visible, radius: 6)
         shape
             .fill(Color.green.opacity(selected ? 0.65 : 0.45))
@@ -2064,8 +2117,8 @@ private struct InsertBlock: View {
             .frame(width: max(8, visible.width), height: height)
             .contentShape(Rectangle())
             .onTapGesture {
-                editor.selection = .insert(clip.id)
-                editor.seek(to: clip.sourceRange.lowerBound + FreezeFrame.span / 2)
+                editor.click(.insert(clip.id))
+                if !NSEvent.modifierFlags.contains(.shift) { editor.seek(to: clip.sourceRange.lowerBound + FreezeFrame.span / 2) }
             }
             .help("Eingefügter Clip „\(clip.name)“: rechte Kante ändert die Länge, ⌫ entfernt ihn")
     }

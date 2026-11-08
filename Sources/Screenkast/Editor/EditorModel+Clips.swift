@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import AVFoundation
 
 /// Editing the video's parts on the timeline: moving them, and ripple trimming at their edges.
@@ -21,7 +21,8 @@ extension EditorModel {
         let parts = clipParts
         guard let part = parts.first(where: { $0.key == drag.key }), let run = clipRun(part) else { return nil }
         let center = (run.lowerBound + run.upperBound) / 2 + drag.dt
-        let others = parts.filter { $0.key != drag.key }
+        let moving = clipDragKeys(drag.key)
+        let others = parts.filter { !moving.contains($0.key) }
         return others.filter { other in
             guard let r = clipRun(other) else { return false }
             return (r.lowerBound + r.upperBound) / 2 < center
@@ -31,15 +32,28 @@ extension EditorModel {
     /// Timeline position of the gap a dragged part would land in (for the marker).
     func clipDropPosition(_ drag: ClipDrag) -> Double? {
         guard let index = clipDropIndex(drag) else { return nil }
-        let others = clipParts.filter { $0.key != drag.key }
+        let moving = clipDragKeys(drag.key)
+        let others = clipParts.filter { !moving.contains($0.key) }
         if index < others.count { return clipRun(others[index])?.lowerBound }
         return others.last.flatMap { clipRun($0)?.upperBound }
+    }
+
+    /// The parts that move with the dragged one (all selected parts if it is among them).
+    func clipDragKeys(_ key: Double) -> [Double] {
+        let parts = clipParts
+        guard let part = parts.first(where: { $0.key == key }), multiSelection.contains(.segment(part.range.lowerBound)) else { return [key] }
+        return parts.filter { multiSelection.contains(.segment($0.range.lowerBound)) }.map(\.key)
     }
 
     /// Moves a part to position `index` among the other parts. Everything anchored to it comes along.
     func moveClip(key: Double, to index: Int) {
         var parts = clipParts
         guard let from = parts.firstIndex(where: { $0.key == key }) else { return }
+        let keys = clipDragKeys(key)
+        if keys.count > 1 {
+            moveClips(keys: keys, to: index)
+            return
+        }
         let part = parts.remove(at: from)
         let target = min(max(0, index), parts.count)
         guard target != from else { return }
@@ -56,6 +70,21 @@ extension EditorModel {
             selection = .segment(part.range.lowerBound)
         }
         seek(to: part.range.lowerBound + 1e-4)
+    }
+
+    /// Moves several parts together, in their current order, to position `index` among the others.
+    func moveClips(keys: [Double], to index: Int) {
+        let parts = clipParts
+        let group = parts.filter { keys.contains($0.key) }
+        var others = parts.filter { !keys.contains($0.key) }
+        commitUndoStep(); defer { commitUndoStep() }
+        for part in group {
+            splitItems(at: part.range.lowerBound)
+            splitItems(at: part.range.upperBound)
+        }
+        others.insert(contentsOf: group, at: min(max(0, index), others.count))
+        let natural = zip(others, others.dropFirst()).allSatisfy { $0.range.lowerBound < $1.range.lowerBound }
+        settings.clipOrder = natural ? nil : others.map(\.key)
     }
 
     /// Splits the items that run across source time `t`, so that each side can go its own way.
@@ -138,6 +167,8 @@ extension EditorModel {
             } else if let dissolved = settings.dissolves(duration: duration).first(where: { isStart && abs($0.resume - edge) < 1e-3 }),
                       let cut = settings.cuts.first(where: { $0.id == dissolved.cutID }) {
                 edgeDrag = .cut(id: cut.id, isStart: false, origin: cut.end, created: false)
+            } else if isStart, settings.joinTransitions.contains(where: { abs($0.key - part.key) < 1e-4 }) {
+                return   // the transition uses these seconds: change it in the inspector
             } else {
                 // Between two parts that simply follow each other: shortening creates a cut.
                 let shortens = isStart ? dt > 0 : dt < 0
@@ -385,69 +416,281 @@ extension EditorModel {
         case overlay(VideoOverlay), voice(VoiceOverClip)
     }
 
-    func copySelection() {
-        switch selection {
-        case .text(let id): if let t = settings.texts.first(where: { $0.id == id }), t.placement == .overlay || t.kind == .lowerThird { clipboard = .text(t) }
-        case .image(let id): clipboard = settings.images.first { $0.id == id }.map { .image($0) }
-        case .mask(let id): clipboard = settings.masks.first { $0.id == id }.map { .mask($0) }
-        case .annotation(let id): clipboard = settings.annotations.first { $0.id == id }.map { .annotation($0) }
-        case .zoom(let id): clipboard = settings.zoomSegments.first { $0.id == id }.map { .zoom($0) }
-        case .videoOverlay(let id): clipboard = settings.videoOverlays.first { $0.id == id && !$0.synced }.map { .overlay($0) }
-        case .voiceOver(let id): clipboard = settings.voiceOvers.first { $0.id == id }.map { .voice($0) }
-        default: break
+    /// Where a clipboard item begins on the timeline.
+    private func timelineStart(_ item: ClipboardItem) -> Double {
+        switch item {
+        case .text(let t): return displayRange(start: t.start, end: t.end, free: t.isFree)?.lowerBound ?? 0
+        case .image(let o): return displayRange(start: o.start, end: o.end, free: o.isFree)?.lowerBound ?? 0
+        case .mask(let m): return displayRun(m.start, m.end)?.lowerBound ?? 0
+        case .annotation(let a): return displayRun(a.start, a.end)?.lowerBound ?? 0
+        case .zoom(let z): return displayRun(z.start, z.end)?.lowerBound ?? 0
+        case .overlay(let o): return displayRange(o).lowerBound
+        case .voice(let c): return displayRange(c).lowerBound
         }
     }
 
-    /// Source range of a copy that begins at the playhead and is as long as the original.
-    private func pasted(start: Double, end: Double) -> (start: Double, end: Double) {
-        let run = displayRun(start, end)
-        let length = (run?.upperBound ?? display(end)) - (run?.lowerBound ?? display(start))
-        let T = min(display(currentTime), max(0, timeMap.total - length))
-        return (sourceTime(T), timeMap.sourceEnd(min(timeMap.total, T + max(0.1, length))))
+    private func clipboardItem(_ selection: EditorSelection) -> ClipboardItem? {
+        switch selection {
+        case .text(let id): return settings.texts.first { $0.id == id && ($0.placement == .overlay || $0.kind == .lowerThird) }.map { .text($0) }
+        case .image(let id): return settings.images.first { $0.id == id }.map { .image($0) }
+        case .mask(let id): return settings.masks.first { $0.id == id }.map { .mask($0) }
+        case .annotation(let id): return settings.annotations.first { $0.id == id }.map { .annotation($0) }
+        case .zoom(let id): return settings.zoomSegments.first { $0.id == id }.map { .zoom($0) }
+        case .videoOverlay(let id): return settings.videoOverlays.first { $0.id == id && !$0.synced }.map { .overlay($0) }
+        case .voiceOver(let id): return settings.voiceOvers.first { $0.id == id }.map { .voice($0) }
+        default: return nil
+        }
     }
 
-    /// Puts a copy of what was copied at the playhead.
+    /// Copies the selection (several things keep their distance to each other).
+    func copySelection() {
+        let selected = multiSelection.count > 1 ? multiSelection : selection.map { [$0] } ?? []
+        let items = selected.compactMap(clipboardItem)
+        guard !items.isEmpty else { return }
+        let first = items.map(timelineStart).min() ?? 0
+        clipboard = items.map { ($0, timelineStart($0) - first) }
+    }
+
+    /// Source range of a copy that begins at timeline time `T` and is as long as the original.
+    private func pasted(start: Double, end: Double, at T: Double) -> (start: Double, end: Double) {
+        let run = displayRun(start, end)
+        let length = (run?.upperBound ?? display(end)) - (run?.lowerBound ?? display(start))
+        let a = min(T, max(0, timeMap.total - length))
+        return (sourceTime(a), timeMap.sourceEnd(min(timeMap.total, a + max(0.1, length))))
+    }
+
+    /// Puts copies of what was copied at the playhead.
     func pasteClipboard() {
-        guard let clipboard, currentTime >= 0, currentTime <= duration else { return }
+        guard !clipboard.isEmpty, currentTime >= 0, currentTime <= duration else { return }
         commitUndoStep(); defer { commitUndoStep() }
-        let T = display(currentTime)
-        switch clipboard {
-        case .text(var t):
-            t.id = UUID()
-            if t.isFree { let l = t.end - t.start; t.start = T; t.end = min(timeMap.total, T + l) } else { (t.start, t.end) = pasted(start: t.start, end: t.end) }
-            settings.texts.append(t)
-            selection = .text(t.id)
-        case .image(var o):
-            o.id = UUID()
-            if o.isFree { let l = o.end - o.start; o.start = T; o.end = min(timeMap.total, T + l) } else { (o.start, o.end) = pasted(start: o.start, end: o.end) }
-            settings.images.append(o)
-            selection = .image(o.id)
-        case .mask(var m):
-            m.id = UUID()
-            (m.start, m.end) = pasted(start: m.start, end: m.end)
-            settings.masks.append(m)
-            selection = .mask(m.id)
-        case .annotation(var a):
-            a.id = UUID()
-            (a.start, a.end) = pasted(start: a.start, end: a.end)
-            settings.annotations.append(a)
-            selection = .annotation(a.id)
-        case .zoom(var z):
-            z.id = UUID()
-            z.isAuto = false
-            (z.start, z.end) = pasted(start: z.start, end: z.end)
-            settings.zoomSegments.append(z)
-            selection = .zoom(z.id)
-        case .overlay(var o):
-            o.id = UUID()
-            o.start = o.isFree ? T : currentTime
-            settings.videoOverlays.append(o)
-            selection = .videoOverlay(o.id)
-        case .voice(var c):
-            c.id = UUID()
-            c.start = c.isFree ? T : currentTime
-            settings.voiceOvers.append(c)
-            selection = .voiceOver(c.id)
+        let playhead = display(currentTime)
+        var added: [EditorSelection] = []
+        for (item, offset) in clipboard {
+            let T = playhead + offset
+            switch item {
+            case .text(var t):
+                t.id = UUID()
+                if t.isFree { let l = t.end - t.start; t.start = T; t.end = min(timeMap.total, T + l) } else { (t.start, t.end) = pasted(start: t.start, end: t.end, at: T) }
+                settings.texts.append(t)
+                added.append(.text(t.id))
+            case .image(var o):
+                o.id = UUID()
+                if o.isFree { let l = o.end - o.start; o.start = T; o.end = min(timeMap.total, T + l) } else { (o.start, o.end) = pasted(start: o.start, end: o.end, at: T) }
+                settings.images.append(o)
+                added.append(.image(o.id))
+            case .mask(var m):
+                m.id = UUID()
+                (m.start, m.end) = pasted(start: m.start, end: m.end, at: T)
+                settings.masks.append(m)
+                added.append(.mask(m.id))
+            case .annotation(var a):
+                a.id = UUID()
+                (a.start, a.end) = pasted(start: a.start, end: a.end, at: T)
+                settings.annotations.append(a)
+                added.append(.annotation(a.id))
+            case .zoom(var z):
+                z.id = UUID()
+                z.isAuto = false
+                (z.start, z.end) = pasted(start: z.start, end: z.end, at: T)
+                settings.zoomSegments.append(z)
+                added.append(.zoom(z.id))
+            case .overlay(var o):
+                o.id = UUID()
+                o.start = o.isFree ? T : sourceTime(T)
+                settings.videoOverlays.append(o)
+                added.append(.videoOverlay(o.id))
+            case .voice(var c):
+                c.id = UUID()
+                c.start = c.isFree ? T : sourceTime(T)
+                settings.voiceOvers.append(c)
+                added.append(.voiceOver(c.id))
+            }
+        }
+        if added.count > 1 {
+            multiSelection = added
+            selection = added.last
+        } else {
+            selection = added.first
+        }
+    }
+
+    // MARK: Several things selected
+
+    func isInGroup(_ item: EditorSelection) -> Bool { multiSelection.contains(item) }
+
+    /// A click on `item`; with ⇧ it joins the selection or leaves it again.
+    func click(_ item: EditorSelection, adding: Bool = NSEvent.modifierFlags.contains(.shift)) {
+        guard adding else {
+            selection = item
+            return
+        }
+        if multiSelection.isEmpty {
+            guard let current = selection, current != item else {
+                selection = item
+                return
+            }
+            multiSelection = [current, item]
+            selection = item
+            return
+        }
+        if multiSelection.contains(item) {
+            multiSelection.removeAll { $0 == item }
+            if multiSelection.count == 1 {
+                let last = multiSelection[0]
+                multiSelection = []
+                selection = last
+            } else {
+                selection = multiSelection.last
+            }
+        } else {
+            multiSelection.append(item)
+            selection = item
+        }
+    }
+
+    /// Removes everything selected as one undo step.
+    func deleteGroup() {
+        let items = multiSelection
+        multiSelection = []
+        selection = nil
+        for item in items {
+            if case .segment(let start) = item {
+                // Directly: `removeSegment` would make an undo step of each.
+                guard let part = videoSegments.first(where: { abs($0.lowerBound - start) < 1e-6 }) else { continue }
+                var probe = settings
+                probe.cuts.append(CutRange(start: part.lowerBound, end: part.upperBound))
+                guard !probe.keptSegments(duration: duration).isEmpty else { continue }
+                settings.cuts.append(CutRange(start: part.lowerBound, end: part.upperBound))
+                settings.cuts.sort { $0.start < $1.start }
+            } else {
+                removeItem(item)
+            }
+        }
+    }
+
+    /// Timeline range of a selected item in the given settings (nil: not movable with the group).
+    private func groupRange(_ item: EditorSelection, in s: EditSettings) -> ClosedRange<Double>? {
+        switch item {
+        case .zoom(let id): return s.zoomSegments.first { $0.id == id }.flatMap { displayRun($0.start, $0.end) }
+        case .mask(let id): return s.masks.first { $0.id == id }.flatMap { displayRun($0.start, $0.end) }
+        case .annotation(let id): return s.annotations.first { $0.id == id }.flatMap { displayRun($0.start, $0.end) }
+        case .cameraLayout(let id): return s.cameraLayouts.first { $0.id == id }.flatMap { displayRun($0.start, $0.end) }
+        case .cursorRange(let id): return s.cursorRanges.first { $0.id == id }.flatMap { displayRun($0.start, $0.end) }
+        case .mute(let id): return s.audioMutes.first { $0.id == id }.flatMap { displayRun($0.start, $0.end) }
+        case .text(let id): return s.texts.first { $0.id == id }.flatMap { displayRange(start: $0.start, end: $0.end, free: $0.isFree) }
+        case .image(let id): return s.images.first { $0.id == id }.flatMap { displayRange(start: $0.start, end: $0.end, free: $0.isFree) }
+        case .videoOverlay(let id): return s.videoOverlays.first { $0.id == id }.map { displayRange($0) }
+        case .voiceOver(let id): return s.voiceOvers.first { $0.id == id }.map { displayRange($0) }
+        default: return nil
+        }
+    }
+
+    /// Moves the whole selected group by `dt` timeline seconds, if `item` belongs to it.
+    /// Returns false if this drag concerns only the item itself.
+    func dragGroup(_ kind: RangeBlock.DragKind, dt: Double, item: EditorSelection) -> Bool {
+        guard kind == .move, multiSelection.count > 1, multiSelection.contains(item) else { return false }
+        if groupOrigin == nil {
+            groupOrigin = settings
+            beginInteraction()
+        }
+        guard let origin = groupOrigin else { return true }
+        // The group stays together at the ends of the timeline.
+        var low = -Double.infinity, high = Double.infinity
+        for member in multiSelection {
+            guard let r = groupRange(member, in: origin) else { continue }
+            low = max(low, -r.lowerBound)
+            high = min(high, timeMap.total - r.upperBound)
+        }
+        let d = min(max(dt, low), max(low, high))
+        func moved(_ start: Double, _ end: Double) -> (Double, Double) {
+            guard let r = displayRun(start, end) else { return (start, end) }
+            return (sourceTime(r.lowerBound + d), timeMap.sourceEnd(r.upperBound + d))
+        }
+        var s = settings
+        for member in multiSelection {
+            switch member {
+            case .zoom(let id):
+                if let i = origin.zoomSegments.firstIndex(where: { $0.id == id }), let n = s.zoomSegments.firstIndex(where: { $0.id == id }) {
+                    (s.zoomSegments[n].start, s.zoomSegments[n].end) = moved(origin.zoomSegments[i].start, origin.zoomSegments[i].end)
+                }
+            case .mask(let id):
+                if let i = origin.masks.firstIndex(where: { $0.id == id }), let n = s.masks.firstIndex(where: { $0.id == id }) {
+                    (s.masks[n].start, s.masks[n].end) = moved(origin.masks[i].start, origin.masks[i].end)
+                }
+            case .annotation(let id):
+                if let i = origin.annotations.firstIndex(where: { $0.id == id }), let n = s.annotations.firstIndex(where: { $0.id == id }) {
+                    (s.annotations[n].start, s.annotations[n].end) = moved(origin.annotations[i].start, origin.annotations[i].end)
+                }
+            case .cameraLayout(let id):
+                if let i = origin.cameraLayouts.firstIndex(where: { $0.id == id }), let n = s.cameraLayouts.firstIndex(where: { $0.id == id }) {
+                    (s.cameraLayouts[n].start, s.cameraLayouts[n].end) = moved(origin.cameraLayouts[i].start, origin.cameraLayouts[i].end)
+                }
+            case .cursorRange(let id):
+                if let i = origin.cursorRanges.firstIndex(where: { $0.id == id }), let n = s.cursorRanges.firstIndex(where: { $0.id == id }) {
+                    (s.cursorRanges[n].start, s.cursorRanges[n].end) = moved(origin.cursorRanges[i].start, origin.cursorRanges[i].end)
+                }
+            case .mute(let id):
+                if let i = origin.audioMutes.firstIndex(where: { $0.id == id }), let n = s.audioMutes.firstIndex(where: { $0.id == id }) {
+                    (s.audioMutes[n].start, s.audioMutes[n].end) = moved(origin.audioMutes[i].start, origin.audioMutes[i].end)
+                }
+            case .text(let id):
+                if let i = origin.texts.firstIndex(where: { $0.id == id }), let n = s.texts.firstIndex(where: { $0.id == id }) {
+                    let o = origin.texts[i]
+                    (s.texts[n].start, s.texts[n].end) = o.isFree ? (o.start + d, o.end + d) : moved(o.start, o.end)
+                }
+            case .image(let id):
+                if let i = origin.images.firstIndex(where: { $0.id == id }), let n = s.images.firstIndex(where: { $0.id == id }) {
+                    let o = origin.images[i]
+                    (s.images[n].start, s.images[n].end) = o.isFree ? (o.start + d, o.end + d) : moved(o.start, o.end)
+                }
+            case .videoOverlay(let id):
+                if let i = origin.videoOverlays.firstIndex(where: { $0.id == id }), let n = s.videoOverlays.firstIndex(where: { $0.id == id }) {
+                    let o = origin.videoOverlays[i]
+                    s.videoOverlays[n].start = o.isFree ? o.start + d : sourceTime(display(o.start) + d)
+                }
+            case .voiceOver(let id):
+                if let i = origin.voiceOvers.firstIndex(where: { $0.id == id }), let n = s.voiceOvers.firstIndex(where: { $0.id == id }) {
+                    let o = origin.voiceOvers[i]
+                    s.voiceOvers[n].start = o.isFree ? o.start + d : sourceTime(display(o.start) + d)
+                }
+            default: break
+            }
+        }
+        settings = s
+        return true
+    }
+
+    // MARK: Transitions where parts meet
+
+    /// Which part the selected join leads into.
+    var selectedJoinKey: Double? {
+        if case .join(let key) = selection { return key }
+        return nil
+    }
+
+    func joinTransition(key: Double) -> JoinTransition? { settings.joinTransitions.first { abs($0.key - key) < 1e-4 } }
+
+    /// True if a cut between these two parts already offers the transition.
+    func joinHasCut(after a: EditSettings.ClipPart, before b: EditSettings.ClipPart) -> Bool {
+        settings.cuts.contains { abs($0.start - a.range.upperBound) < 1e-3 && (abs($0.end - b.range.lowerBound) < 1e-3 || abs($0.end - b.key) < 1e-3) }
+    }
+
+    func setJoinTransition(key: Double, length: Double) {
+        let length = min(EditSettings.maxDissolve, max(0, length))
+        if length < 0.05 {
+            settings.joinTransitions.removeAll { abs($0.key - key) < 1e-4 }
+        } else if let i = settings.joinTransitions.firstIndex(where: { abs($0.key - key) < 1e-4 }) {
+            settings.joinTransitions[i].length = length
+        } else {
+            settings.joinTransitions.append(JoinTransition(key: key, length: length))
+        }
+    }
+
+    func setJoinStyle(key: Double, _ style: TransitionStyle) {
+        if let i = settings.joinTransitions.firstIndex(where: { abs($0.key - key) < 1e-4 }) {
+            settings.joinTransitions[i].style = style
+        } else {
+            settings.joinTransitions.append(JoinTransition(key: key, length: 0.5, style: style))
         }
     }
 

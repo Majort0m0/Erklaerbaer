@@ -88,7 +88,63 @@ enum ClipTimelineTest {
         editor.setLane(.texts, free: false)
         guard let tied2 = editor.settings.texts.first, !tied2.isFree, near(tied2.start, 3.5, 1e-3) else { throw fail("tied again: \(editor.settings.texts)") }
         try editingTest(base)
+        try groupTest(base)
         print("✓ clip timeline: gaps close, parts move with what is anchored to them, ripple trim, undo; free clips stay put")
+    }
+
+    /// Several things selected: moved, copied and removed together.
+    @MainActor
+    private static func groupTest(_ base: Project) throws {
+        let d = base.info.duration
+        let editor = EditorModel(project: project(base) { s in
+            s.masks = [BlurMask(start: 0.5, end: 1.0)]
+            s.annotations = []
+            s.zoomSegments = [ZoomSegment(start: 2.0, end: 3.0, scale: 1.5)]
+            s.splits = [1, 2]
+        })
+        let mask = EditorSelection.mask(editor.settings.masks[0].id), zoom = EditorSelection.zoom(editor.settings.zoomSegments[0].id)
+        editor.click(mask, adding: false)
+        editor.click(zoom, adding: true)
+        guard editor.multiSelection.count == 2, editor.isInGroup(mask), editor.isInGroup(zoom), editor.selection == zoom else {
+            throw fail("group: \(editor.multiSelection)")
+        }
+        // Dragged together, kept on the timeline.
+        guard editor.dragGroup(.move, dt: 0.5, item: mask) else { throw fail("group drag not taken") }
+        guard near(editor.settings.masks[0].start, 1.0, 1e-3), near(editor.settings.zoomSegments[0].start, 2.5, 1e-3) else {
+            throw fail("group drag: \(editor.settings.masks[0].start) \(editor.settings.zoomSegments[0].start)")
+        }
+        _ = editor.dragGroup(.move, dt: 100, item: mask)
+        guard near(editor.settings.zoomSegments[0].end, d, 1e-3), near(editor.settings.masks[0].end - editor.settings.masks[0].start, 0.5, 1e-3) else {
+            throw fail("group drag at the end: \(editor.settings.zoomSegments[0].end)")
+        }
+        editor.endInteraction()
+        // Copied with their distance, removed in one step.
+        editor.copySelection()
+        editor.seek(to: 0.2)
+        editor.pasteClipboard()
+        guard editor.settings.masks.count == 2, editor.settings.zoomSegments.count == 2, editor.multiSelection.count == 2 else { throw fail("group paste") }
+        let before = editor.settings.masks.count + editor.settings.zoomSegments.count
+        editor.deleteSelection()
+        guard editor.settings.masks.count + editor.settings.zoomSegments.count == before - 2, editor.multiSelection.isEmpty, editor.selection == nil else { throw fail("group delete") }
+        editor.undo()
+        guard editor.settings.masks.count + editor.settings.zoomSegments.count == before else { throw fail("group undo") }
+        // ⇧-click takes one out again; a normal click on something else ends the group.
+        editor.selection = nil
+        editor.click(mask, adding: true)
+        editor.click(zoom, adding: true)
+        guard editor.multiSelection.count == 2 else { throw fail("group again: \(editor.multiSelection)") }
+        editor.click(zoom, adding: true)
+        guard editor.multiSelection.isEmpty, editor.selection == mask else { throw fail("group: taking out") }
+        editor.click(zoom, adding: true)
+        editor.click(.segment(0), adding: false)
+        guard editor.multiSelection.isEmpty else { throw fail("group: ended by a click") }
+        // Parts moved together keep their order.
+        editor.selection = nil
+        editor.click(.segment(0), adding: true)
+        editor.click(.segment(1), adding: true)
+        editor.moveClip(key: 0, to: 1)
+        guard editor.clipParts.map(\.key) == [2, 0, 1] else { throw fail("parts moved together: \(editor.clipParts.map(\.key))") }
+        print("✓ several things selected: moved, copied and removed together, ⇧-click adds and takes out, parts move as a group")
     }
 
     /// Music as clips, sound separated from the video, copy and paste.
@@ -183,6 +239,7 @@ enum ClipTimelineTest {
         guard let first = segments.first, near(first.timeMapping.target.start.seconds, 0, 0.002), near(first.timeMapping.source.start.seconds, 0, 0.002) else {
             throw fail("music start")
         }
+        try await transitionTest(base)
         // Music as clips goes to its own lane, not the voice-over lane; the running file is off.
         var cutMusic = VoiceOverClip(file: music, fileOffset: 0, start: 0.5, duration: 1.0)
         cutMusic.free = true
@@ -199,6 +256,53 @@ enum ClipTimelineTest {
             throw fail("music clip placed: \(placedMusic.map(\.timeMapping.target.start.seconds))")
         }
         print("✓ preview and export hold the edited timeline; the music runs through the joins; tied voice-overs are cut and move along, free ones stay")
+    }
+
+    /// Transitions at any join: between parts, after a move, and between inserted clips.
+    private static func transitionTest(_ base: Project) async throws {
+        let d = base.info.duration
+        func midFrame(_ p: Project, at t: Double) async throws -> (MediaComposition, CGImage) {
+            let media = try await MediaBuilder.make(project: p, renderer: FrameRenderer(project: p), fps: 30)
+            let gen = AVAssetImageGenerator(asset: media.asset)
+            gen.videoComposition = media.videoComposition
+            gen.requestedTimeToleranceBefore = .zero; gen.requestedTimeToleranceAfter = .zero
+            return (media, try await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image)
+        }
+        // A join without a cut: the video gets shorter by the transition.
+        let split = project(base) { s in
+            s.splits = [2]
+            s.joinTransitions = [JoinTransition(key: 2, length: 0.4)]
+        }
+        let (a, _) = try await midFrame(split, at: 1.8)
+        guard a.dissolves.count == 1, near(a.dissolves[0].start, 1.6, 0.01), near(a.totalDuration, d - 0.4, 0.03),
+              split.settings.clipParts(duration: d).map(\.key) == [0, 2] else {
+            throw fail("join transition: \(a.dissolves.count), \(a.totalDuration)")
+        }
+        // Moved parts: a transition at their new join; the one at the old cut is gone and gives back its seconds.
+        let moved = project(base) { s in
+            s.cuts = [CutRange(start: 1, end: 1.5, dissolve: 0.3)]
+            s.splits = [3]
+            s.clipOrder = [3, 1.5, 0]
+            s.joinTransitions = [JoinTransition(key: 0, length: 0.25, style: .push)]
+        }
+        let (b, _) = try await midFrame(moved, at: (d - 3) - 0.1)
+        let parts = moved.settings.clipParts(duration: d)
+        guard b.dissolves.count == 1, b.dissolves[0].style == .push, near(parts[1].range.lowerBound, 1.5, 1e-6), near(b.totalDuration, d - 0.5 - 0.25, 0.03) else {
+            throw fail("transition after a move: \(b.dissolves.count), \(parts.map(\.range)), \(b.totalDuration)")
+        }
+        // Between two inserted clips.
+        let clipA = InsertClip(file: base.info.videoFile, name: "A", at: 1.0, duration: 1.5, fileDuration: d)
+        let clipB = InsertClip(file: base.info.videoFile, name: "B", at: 1.001, duration: 1.5, fileDuration: d)
+        let clips = project(base) { s in
+            s.inserts = [clipA, clipB]
+            s.trimStart = 0.999
+            s.trimEnd = 1.001
+            s.joinTransitions = [JoinTransition(key: 1.0, length: 0.5)]
+        }
+        let (c, frame) = try await midFrame(clips, at: 1.25)
+        guard c.dissolves.count == 1, c.dissolves[0].bSlices.first?.insertID == clipB.id, near(c.totalDuration, 2.5, 0.03), frame.width > 0 else {
+            throw fail("transition between clips: \(c.dissolves.count), \(c.totalDuration)")
+        }
     }
 
     private static func locationTest(_ base: Project, _ dir: URL) throws {

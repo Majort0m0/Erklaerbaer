@@ -5,7 +5,7 @@ import CoreImage
 /// What is selected in the timeline (one thing at a time). `segment`: the part of the recording
 /// between two split points that starts at this source time.
 enum EditorSelection: Equatable {
-    case zoom(UUID), cut(UUID), mask(UUID), mute(UUID), voiceOver(UUID), text(UUID), segment(Double), freeze(UUID)
+    case zoom(UUID), cut(UUID), mask(UUID), mute(UUID), voiceOver(UUID), text(UUID), segment(Double), join(Double), freeze(UUID)
     case cameraLayout(UUID), annotation(UUID), image(UUID), insert(UUID), chapter(UUID), videoOverlay(UUID), cursorRange(UUID)
     /// A whole audio lane (volume, enhancement, cutting it into ranges).
     case audioLane(AudioLane)
@@ -116,7 +116,11 @@ final class EditorModel: ObservableObject {
     @Published var currentTime: Double = 0
     @Published var isPlaying = false
     @Published var selection: EditorSelection? {
-        didSet { if selection != oldValue { revealSelection() } }
+        didSet {
+            // A click on anything outside the group ends the group.
+            if !multiSelection.isEmpty, selection.map({ !multiSelection.contains($0) }) ?? true { multiSelection = [] }
+            if selection != oldValue, multiSelection.isEmpty { revealSelection() }
+        }
     }
     @Published var inspectorTab: InspectorTab = .style
 
@@ -517,6 +521,7 @@ final class EditorModel: ObservableObject {
         annotationDragOrigin = nil; imageDragOrigin = nil; cameraLayoutDragOrigin = nil; chapterDragOrigin = nil
         videoOverlayDragOrigin = nil; cursorRangeDragOrigin = nil
         finishEdgeDrag()
+        groupOrigin = nil
         if snapGuide != nil { snapGuide = nil }
         frozenViewport = nil
         if textCenterGuide { textCenterGuide = false }
@@ -530,10 +535,14 @@ final class EditorModel: ObservableObject {
         if wasInteracting || undoBurstStart != nil { commitUndoStep() }
     }
 
-    var clipboard: ClipboardItem?
+    var clipboard: [(item: ClipboardItem, offset: Double)] = []
     var shuttleRate: Float = 0
     /// A part of the video being dragged to another place.
     @Published var clipDrag: ClipDrag?
+    /// Several things selected together (⇧-click); empty: only `selection`.
+    @Published var multiSelection: [EditorSelection] = []
+    /// The settings when a group drag began.
+    var groupOrigin: EditSettings?
     var edgeDrag: EdgeDrag?
     var edgeDragRate = 1.0
     /// Overlap of an intro/outro or dissolve length at the start of a drag.
@@ -745,7 +754,21 @@ final class EditorModel: ObservableObject {
             cutWords(words)
             return
         }
-        switch selection {
+        if multiSelection.count > 1 {
+            deleteGroup()
+            return
+        }
+        guard let selection else { return }
+        if case .audioLane = selection { return }   // lanes and panels can't be deleted
+        if case .panel = selection { return }
+        removeItem(selection)
+        self.selection = nil
+    }
+
+    /// Removes one selected thing (without an undo step of its own).
+    func removeItem(_ item: EditorSelection) {
+        switch item {
+        case .join(let key): settings.joinTransitions.removeAll { abs($0.key - key) < 1e-4 }
         case .mask(let id): settings.masks.removeAll { $0.id == id }
         case .cut(let id): settings.cuts.removeAll { $0.id == id }
         case .zoom(let id): settings.zoomSegments.removeAll { $0.id == id }
@@ -756,8 +779,8 @@ final class EditorModel: ObservableObject {
         case .text(let id):
             settings.texts.removeAll { $0.id == id }
             forgetUnusedOverlaps()
-        case .segment:
-            guard let segment = selectedSegment else { return }
+        case .segment(let start):
+            guard let segment = videoSegments.first(where: { abs($0.lowerBound - start) < 1e-6 }) else { return }
             removeSegment(segment)
         case .freeze(let id): settings.freezes.removeAll { $0.id == id }
         case .cameraLayout(let id): settings.cameraLayouts.removeAll { $0.id == id }
@@ -772,9 +795,7 @@ final class EditorModel: ObservableObject {
             if settings.videoOverlays.contains(where: { $0.id == id && $0.synced }),
                settings.videoOverlays.filter(\.synced).count == 1 { settings.dismissedSyncedOverlay = true }
             settings.videoOverlays.removeAll { $0.id == id }
-        case nil: return
         }
-        selection = nil
     }
 
     /// A new intro/outro starts without the overlap of a deleted one.
@@ -1539,8 +1560,9 @@ extension EditorModel {
     /// Cuts between two kept parts: these can get a cross dissolve.
     func canDissolve(_ cut: CutRange) -> Bool {
         if dissolvesByCut[cut.id] != nil { return true }
-        let kept = settings.keptSegments(duration: duration)
-        return kept.count > 1 && kept.dropFirst().contains { abs($0.lowerBound - cut.end) < 1e-3 }
+        // Only where the parts on both sides of the cut still follow each other.
+        let parts = clipParts
+        return zip(parts, parts.dropFirst()).contains { abs($0.range.upperBound - cut.start) < 1e-3 && abs($1.range.lowerBound - cut.end) < 1e-3 }
     }
 
     func setTransition(cutID: UUID, _ style: TransitionStyle) {
@@ -1659,6 +1681,7 @@ extension EditorModel {
         switch selection {
         case .zoom(let id): exists = settings.zoomSegments.contains { $0.id == id }
         case .cut(let id): exists = settings.cuts.contains { $0.id == id }
+        case .join(let key): exists = clipParts.contains { abs($0.key - key) < 1e-4 }
         case .mask(let id): exists = settings.masks.contains { $0.id == id }
         case .mute(let id): exists = settings.audioMutes.contains { $0.id == id }
         case .voiceOver(let id): exists = settings.voiceOvers.contains { $0.id == id }

@@ -176,6 +176,9 @@ struct MediaComposition {
             var dips: [VolumeEnvelope.Dip] = []
             var curves: [VolumeEnvelope.Curve] = []
             if entry.role == "insert" {
+                for d in dissolves {
+                    curves.append(.init(start: d.start, end: d.end, shape: entry.isDissolveB ? .equalPowerIn : .equalPowerOut))
+                }
                 for v in insertVolumes where v.volume < 0.999 {
                     dips.append(.init(start: v.range.lowerBound, end: v.range.upperBound, level: v.volume, rampIn: 0.01, rampOut: 0.01))
                 }
@@ -649,19 +652,20 @@ enum MediaBuilder {
         /// time `at` onto the given video/camera/audio tracks. Freeze frames are silent.
         func placeRecording(_ r: ClosedRange<Double>, at: Double, video: AVMutableCompositionTrack,
                             camera: AVMutableCompositionTrack?, audio: [(AVAssetTrack, CMTimeRange, AVMutableCompositionTrack)],
-                            audioExtra: Double = 0, inserts: Bool = false, synced: AVMutableCompositionTrack? = nil) -> [TimeSlice] {
+                            audioExtra: Double = 0, inserts: Bool = false, synced: AVMutableCompositionTrack? = nil,
+                            insertTargets: (video: AVMutableCompositionTrack, audio: AVMutableCompositionTrack?)? = nil) -> [TimeSlice] {
             var cursor = at
             var slices: [TimeSlice] = []
             for piece in map.pieces(in: r) {
                 let length = piece.timeline.upperBound - piece.timeline.lowerBound
-                if inserts, let id = piece.insertID, let ins = insertSources[id], let insertVideo {
+                if inserts, let id = piece.insertID, let ins = insertSources[id], let videoTarget = insertTargets?.video ?? insertVideo {
                     // The inserted clip plays at its own speed; the recording waits.
                     let fraction = (piece.timeline.lowerBound - map.timeline(ins.clip.sourceRange.lowerBound))
                     let from = time(ins.clip.fileOffset + fraction)
                     let clipRange = CMTimeRange(start: from, duration: time(length))
-                    place(ins.video, CMTimeRangeGetIntersection(clipRange, otherRange: ins.videoRange), into: insertVideo, at: time(cursor))
-                    if let (track, range) = ins.audio, let insertAudio {
-                        place(track, CMTimeRangeGetIntersection(clipRange, otherRange: range), into: insertAudio, at: time(cursor))
+                    place(ins.video, CMTimeRangeGetIntersection(clipRange, otherRange: ins.videoRange), into: videoTarget, at: time(cursor))
+                    if let (track, range) = ins.audio, let audioTarget = insertTargets == nil ? insertAudio : insertTargets?.audio {
+                        place(track, CMTimeRangeGetIntersection(clipRange, otherRange: range), into: audioTarget, at: time(cursor))
                         insertVolumes.append((cursor...(cursor + length), ins.clip.volume))
                     }
                     slices.append(TimeSlice(source: piece.source, timeline: (cursor - timelineZero)...(cursor - timelineZero + length),
@@ -814,7 +818,9 @@ enum MediaBuilder {
         var dissolves: [MediaComposition.DissolveRange] = []
         var screenB: AVMutableCompositionTrack?
         var cameraB: AVMutableCompositionTrack?
-        for d in layout.dissolves {
+        var insertAudioB: AVMutableCompositionTrack?
+        // In playing order: the B tracks are filled from front to back.
+        for d in layout.dissolves.sorted(by: { (compTime(ofSource: $0.aStart) ?? 0) < (compTime(ofSource: $1.aStart) ?? 0) }) {
             guard let c0 = compTime(ofSource: d.aStart), let c1 = compTime(ofSource: d.aEnd - 1e-9),
                   abs(c1 - c0 - d.length) < 0.01 else { continue }
             if screenB == nil { screenB = composition.addMutableTrack(withMediaType: .video, preferredTrackID: screenBTrackID) }
@@ -824,8 +830,11 @@ enum MediaBuilder {
                 audioSources[i].bTarget = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
             }
             let bAudio = audioSources.compactMap { a in a.bTarget.map { (a.source, a.range, $0) } }
+            if insertAudioB == nil, insertSources.values.contains(where: { $0.audio != nil }) {
+                insertAudioB = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            }
             let bSlices = placeRecording(d.bStart...d.resume, at: c0, video: screenB, camera: cameraB, audio: bAudio,
-                                         audioExtra: dissolveTail)
+                                         audioExtra: dissolveTail, inserts: true, insertTargets: (screenB, insertAudioB))
             guard !bSlices.isEmpty else { continue }
             dissolves.append(.init(start: c0, end: c0 + d.length, bSlices: bSlices, style: d.style))
         }
@@ -926,22 +935,30 @@ enum MediaBuilder {
             }
             bounds.sort()
             let mapping = RenderInstruction.Mapping(compStart: slice.compStart, sourceStart: slice.source.lowerBound, rate: slice.rate)
+            func rotation(_ id: UUID?) -> Int { id.flatMap { id in settings.inserts.first { $0.id == id }?.rotation } ?? 0 }
+            func dissolveInfo(at mid: Double) -> RenderInstruction.DissolveInfo? {
+                dissolveTracks.flatMap { tracks in
+                    dissolves.first { mid > $0.start && mid < $0.end }.map {
+                        let insert = $0.bSlices.first?.insertID
+                        return RenderInstruction.DissolveInfo(start: $0.start, end: $0.end,
+                                                              bMappings: $0.bSlices.map { .init(compStart: $0.compStart, sourceStart: $0.source.lowerBound, rate: $0.rate) },
+                                                              style: $0.style, screenTrackID: tracks.screen, cameraTrackID: tracks.camera,
+                                                              bIsInsert: insert != nil, bRotation: rotation(insert))
+                    }
+                }
+            }
             if slice.insertID != nil, let insertVideo {
-                instructions.append(RenderInstruction(timeRange: CMTimeRange(start: start, end: end), renderer: renderer,
-                                                      insertTrackID: insertVideo.trackID, mapping: mapping, globalFade: globalFade,
-                                                      overlayTracks: overlayTracks, overlayRotations: overlayRotations,
-                                                      insertRotation: slice.insertID.flatMap { id in settings.inserts.first { $0.id == id }?.rotation } ?? 0))
+                for (a, b) in zip(bounds, bounds.dropFirst()) {
+                    instructions.append(RenderInstruction(timeRange: CMTimeRange(start: a, end: b), renderer: renderer,
+                                                          insertTrackID: insertVideo.trackID, mapping: mapping, globalFade: globalFade,
+                                                          overlayTracks: overlayTracks, overlayRotations: overlayRotations,
+                                                          insertRotation: rotation(slice.insertID), dissolve: dissolveInfo(at: (a.seconds + b.seconds) / 2)))
+                }
                 continue
             }
             for (a, b) in zip(bounds, bounds.dropFirst()) {
                 let mid = (a.seconds + b.seconds) / 2
-                let dissolve = dissolveTracks.flatMap { tracks in
-                    dissolves.first { mid > $0.start && mid < $0.end }.map {
-                        RenderInstruction.DissolveInfo(start: $0.start, end: $0.end,
-                                                       bMappings: $0.bSlices.map { .init(compStart: $0.compStart, sourceStart: $0.source.lowerBound, rate: $0.rate) },
-                                                       style: $0.style, screenTrackID: tracks.screen, cameraTrackID: tracks.camera)
-                    }
-                }
+                let dissolve = dissolveInfo(at: mid)
                 instructions.append(RenderInstruction(timeRange: CMTimeRange(start: a, end: b), renderer: renderer,
                                                       screenTrackID: screenTrackID,
                                                       cameraTrackID: camTrack == nil ? nil : cameraTrackID,
@@ -976,6 +993,7 @@ enum MediaBuilder {
         if let effectsTrack { audioTracks.append(.init(track: effectsTrack, role: "effects")) }
         if let musicTrack { audioTracks.append(.init(track: musicTrack, role: AudioLane.music.role)) }
         if let insertAudio { audioTracks.append(.init(track: insertAudio, role: "insert")) }
+        if let insertAudioB { audioTracks.append(.init(track: insertAudioB, role: "insert", isDissolveB: true)) }
         audioTracks += overlayAudioTracks.values.map { MediaComposition.AudioTrack(track: $0, role: "overlay") }
         return MediaComposition(asset: composition, videoComposition: video, audioTracks: audioTracks, joins: joins,
                                 dissolves: dissolves, slices: slices, totalDuration: cursor,
@@ -1005,6 +1023,9 @@ final class RenderInstruction: NSObject, AVVideoCompositionInstructionProtocol, 
         let style: TransitionStyle
         let screenTrackID: CMPersistentTrackID
         let cameraTrackID: CMPersistentTrackID?
+        /// The incoming part is an inserted clip.
+        var bIsInsert = false
+        var bRotation = 0
 
         func bSource(_ t: Double) -> Double {
             (bMappings.last { t >= $0.compStart - 1e-9 } ?? bMappings[0]).source(t)
@@ -1127,7 +1148,8 @@ final class RenderInstruction: NSObject, AVVideoCompositionInstructionProtocol, 
 
     /// An inserted clip (its frames take the place of the recording).
     init(timeRange: CMTimeRange, renderer: FrameRenderer, insertTrackID: CMPersistentTrackID, mapping: Mapping, globalFade: GlobalFade?,
-         overlayTracks: [UUID: CMPersistentTrackID] = [:], overlayRotations: [UUID: Int] = [:], insertRotation: Int = 0) {
+         overlayTracks: [UUID: CMPersistentTrackID] = [:], overlayRotations: [UUID: Int] = [:], insertRotation: Int = 0,
+         dissolve: DissolveInfo? = nil) {
         self.overlayTracks = overlayTracks
         self.overlayRotations = overlayRotations
         self.insertRotation = insertRotation
@@ -1141,11 +1163,12 @@ final class RenderInstruction: NSObject, AVVideoCompositionInstructionProtocol, 
         self.cardFadesToRecording = true
         self.fadeInStart = nil
         self.fadeOutEnd = nil
-        self.dissolve = nil
+        self.dissolve = dissolve
         self.cardOverlay = nil
         self.globalFade = globalFade
         self.insertTrackID = insertTrackID
-        requiredSourceTrackIDs = ([insertTrackID] + Set(overlayTracks.values).sorted()).map { NSNumber(value: $0) }
+        let bTracks = dissolve.map { [$0.screenTrackID] } ?? []
+        requiredSourceTrackIDs = ([insertTrackID] + bTracks + Set(overlayTracks.values).sorted()).map { NSNumber(value: $0) }
     }
 
     /// Opacity of the recording at composition time `t` (fades next to intro/outro).
@@ -1218,6 +1241,19 @@ final class ScreenkastCompositor: NSObject, AVVideoCompositing, @unchecked Senda
         let t = request.compositionTime.seconds
         let renderer = instruction.renderer
         var image: CIImage
+        let turn = renderer.sourceRotation
+        func upright(_ i: CIImage) -> CIImage { turn == 0 ? i : i.oriented(VideoRotation.orientation(turn)) }
+        /// The part coming in during a transition.
+        func incoming(_ d: RenderInstruction.DissolveInfo) -> CIImage? {
+            guard let bFrame = request.sourceFrame(byTrackID: d.screenTrackID) else { return nil }
+            if d.bIsInsert {
+                var frame = CIImage(cvPixelBuffer: bFrame)
+                if d.bRotation != 0 { frame = frame.oriented(VideoRotation.orientation(d.bRotation)) }
+                return renderer.render(source: frame, camera: nil, time: d.bSource(t), plain: true)
+            }
+            let bCamera = d.cameraTrackID.flatMap { request.sourceFrame(byTrackID: $0) }.map { CIImage(cvPixelBuffer: $0) }
+            return renderer.render(source: upright(CIImage(cvPixelBuffer: bFrame)), camera: bCamera, time: d.bSource(t))
+        }
         func blend(_ a: CIImage, _ b: CIImage, _ p: Double) -> CIImage {
             a.applyingFilter("CIDissolveTransition", parameters: [kCIInputTargetImageKey: b, kCIInputTimeKey: p]).cropped(to: rect)
         }
@@ -1229,16 +1265,15 @@ final class ScreenkastCompositor: NSObject, AVVideoCompositing, @unchecked Senda
             if instruction.insertRotation != 0 { frame = frame?.oriented(VideoRotation.orientation(instruction.insertRotation)) }
             image = renderer.render(source: frame, camera: nil, time: instruction.mapping.source(t), plain: true,
                                     overlays: instruction.overlayFrames(request))
+            if let d = instruction.dissolve, let b = incoming(d) {
+                image = Self.transition(image, b, progress: (t - d.start) / max(1e-6, d.end - d.start), style: d.style, rect: rect)
+            }
         } else {
-            let turn = renderer.sourceRotation
-            func upright(_ i: CIImage) -> CIImage { turn == 0 ? i : i.oriented(VideoRotation.orientation(turn)) }
             let screen = request.sourceFrame(byTrackID: instruction.screenTrackID).map { upright(CIImage(cvPixelBuffer: $0)) }
             let camera = instruction.cameraTrackID.flatMap { request.sourceFrame(byTrackID: $0) }.map { CIImage(cvPixelBuffer: $0) }
             image = renderer.render(source: screen, camera: camera, time: instruction.mapping.source(t),
                                     contentAlpha: instruction.contentAlpha(at: t), overlays: instruction.overlayFrames(request))
-            if let d = instruction.dissolve, let bFrame = request.sourceFrame(byTrackID: d.screenTrackID) {
-                let bCamera = d.cameraTrackID.flatMap { request.sourceFrame(byTrackID: $0) }.map { CIImage(cvPixelBuffer: $0) }
-                let b = renderer.render(source: upright(CIImage(cvPixelBuffer: bFrame)), camera: bCamera, time: d.bSource(t))
+            if let d = instruction.dissolve, let b = incoming(d) {
                 image = Self.transition(image, b, progress: (t - d.start) / max(1e-6, d.end - d.start), style: d.style, rect: rect)
             }
             if let o = instruction.cardOverlay {

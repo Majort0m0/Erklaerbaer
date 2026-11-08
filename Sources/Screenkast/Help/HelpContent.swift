@@ -192,7 +192,7 @@ enum HelpContent {
             .bullets([
                 "Die Schnitt-Markierung anklicken und die runden Griffe wegziehen – oder den Regler im Inspektor benutzen. Die Teile davor und danach werden übereinandergeschoben und blenden weich über.",
                 "Stile: **Überblenden**, **Über Schwarz** oder **Schieben**.",
-                "Übergänge gibt es an Schnitten, deren Teile direkt aufeinanderfolgen. Stellst du die Teile um, entfällt der Übergang an der getrennten Stelle.",
+                "**Überall, wo zwei Teile sich treffen:** Die kleine Raute unten an der Stelle anklicken und im Inspektor Stil und Länge einstellen – auch nach dem Umstellen und zwischen eingefügten Clips.",
                 "**Ein- und Ausblenden** des ganzen Videos aus und nach Schwarz: Inspektor › Stil.",
             ]),
             .heading("Tempo und Standbild"),
@@ -200,6 +200,8 @@ enum HelpContent {
                 "**Geschwindigkeit:** einen Teil anklicken und im Inspektor 0,25× bis 8× wählen. Der Ton behält seine Tonhöhe; in der Timeline zeigt ein Hasen- oder Schildkröten-Symbol das Tempo.",
                 "**Standbild** (⌥F): hält das letzte Bild des ausgewählten Teils (sonst am Abspielkopf) an – Zeit zum Erklären. Die Länge änderst du an der rechten Kante des gestreiften Blocks.",
             ]),
+            .heading("Mehrere Elemente auf einmal"),
+            .text("**⇧-Klick** nimmt weitere Elemente zur Auswahl dazu, auch aus verschiedenen Spuren; ein zweiter ⇧-Klick nimmt eines wieder heraus. Ziehen bewegt alle gemeinsam, **⌫** entfernt sie, **⌘C** und **⌘V** kopieren sie mit ihrem Abstand zueinander. Mit ⇧ ausgewählte Teile der Video-Spur lassen sich gemeinsam umstellen."),
             .tip("Elemente kopierst du mit **⌘C** und fügst sie mit **⌘V** am Abspielkopf wieder ein."),
             .tip("Automatisch geschnittene Stellen (Füllwörter, Pausen, Schnitte aus dem Transkript) sind **orange** und beschriftet. Wie du sie prüfst und zurücknimmst, steht unter **Ton**."),
         ])

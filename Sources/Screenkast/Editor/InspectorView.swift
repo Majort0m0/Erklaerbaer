@@ -10,7 +10,11 @@ struct InspectorView: View {
         VStack(spacing: 0) {
             tabBar
             Divider()
-            if let info = selectionInfo {
+            if editor.multiSelection.count > 1 {
+                Form { multiSection }
+                    .formStyle(.grouped)
+                    .scrollContentBackground(.hidden)
+            } else if let info = selectionInfo {
                 selectionHeader(info)
                 Divider()
                 Form { selectionContent }
@@ -21,6 +25,23 @@ struct InspectorView: View {
                     .formStyle(.grouped)
                     .scrollContentBackground(.hidden)
             }
+        }
+    }
+
+    /// Several things selected with ⇧-click.
+    private var multiSection: some View {
+        Section("\(editor.multiSelection.count) Elemente ausgewählt") {
+            Button(role: .destructive) {
+                editor.deleteSelection()
+            } label: {
+                Label("Alle entfernen", systemImage: "trash")
+            }
+            Button { editor.selection = nil } label: {
+                Label("Auswahl aufheben", systemImage: "xmark.circle")
+            }
+            Text("⇧-Klick nimmt weitere Elemente dazu oder wieder heraus. Ziehen bewegt alle gemeinsam, ⌘C und ⌘V kopieren sie.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -112,6 +133,10 @@ struct InspectorView: View {
             guard let i = editor.selectedZoomIndex else { return nil }
             let z = editor.settings.zoomSegments[i]
             return SelectionInfo(icon: "plus.magnifyingglass", title: "Zoom", subtitle: shown(z.start, z.end), delete: "Zoom löschen")
+        case .join(let key):
+            let t = editor.joinTransition(key: key)
+            return SelectionInfo(icon: "arrow.left.arrow.right", title: "Übergang", subtitle: t.map { String(format: "%@ · %.1f s", $0.style.label, $0.length) } ?? "Harter Schnitt",
+                                 delete: t == nil ? "" : "Übergang entfernen")
         case .cut:
             guard let c = editor.selectedCut else { return nil }
             return SelectionInfo(icon: "scissors", title: "Entfernter Bereich", subtitle: String(format: "%.1f s entfernt", c.end - c.start), delete: "Wiederherstellen")
@@ -222,6 +247,7 @@ struct InspectorView: View {
         switch editor.selection {
         case .zoom: selectedZoomSection
         case .cut: if let cut = editor.selectedCut { cutSection(cut) }
+        case .join(let key): joinSection(key)
         case .mask: maskSection
         case .mute: muteSection
         case .voiceOver: if let clip = editor.selectedVoiceOver { voiceOverClipSection(clip) }
@@ -1180,6 +1206,24 @@ struct InspectorView: View {
             }
             Text("In der Timeline verschieben, an den Kanten kürzen, mit S am Abspielkopf teilen. "
                  + "Über einen anderen Clip geschoben, blenden beide ineinander über.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The transition where two parts meet without a cut.
+    private func joinSection(_ key: Double) -> some View {
+        Section {
+            Picker("Übergang", selection: Binding(get: { editor.joinTransition(key: key)?.style ?? .dissolve },
+                                                  set: { editor.setJoinStyle(key: key, $0) })) {
+                ForEach(TransitionStyle.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            LabeledSlider(title: "Länge",
+                          value: Binding(get: { editor.joinTransition(key: key)?.length ?? 0 }, set: { editor.setJoinTransition(key: key, length: $0) }),
+                          range: 0...3,
+                          format: { $0 < 0.05 ? "harter Schnitt" : String(format: "%.1f s", $0) })
+            Text("Schiebt die beiden Teile übereinander; Bild und Ton blenden weich über. Das Video wird dadurch um die Länge des Übergangs kürzer.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

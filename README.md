@@ -105,6 +105,7 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 - **Automatische Änderungen prüfen** (Skript- und Audio-Tab): Füllwörter, Pausen, Transkript-Schnitte und Atem-Bereiche gezählt, „Prüfen“ springt von Stelle zu Stelle, jede Kategorie mit einem Klick zurücknehmen. Automatische Schnitte sind orange mit Kennzeichnung („äh“, „Pause“, „Text“) und blenden den Ton über 60 ms weich über, damit nichts abgehackt klingt. Ältere Projekte werden beim Öffnen nachträglich gekennzeichnet.
 - **Clip-Timeline**: Die Timeline zeigt das fertige Video. Entfernte Teile verschwinden, die Lücke schließt sich (eine kleine Marke mit Schere holt sie zurück). Teile lassen sich **per Maus umstellen**, ihre Kanten kürzen sie mit Nachrücken. Vorschau und Export spielen dasselbe, ohne Sprünge.
 - **Gekoppelt oder frei**: Kettensymbol im Spurkopf (Text, Medien, Voice-over) und Schalter je Clip. Gekoppelte Clips werden mitgeschnitten und wandern mit, freie bleiben an ihrer Stelle. Musik ist immer frei.
+- **Übergänge an jeder Stelle**, an der sich zwei Teile treffen (Raute unten am Übergang), auch nach dem Umstellen und zwischen eingefügten Clips. **Mehrfachauswahl** mit ⇧-Klick: gemeinsam verschieben, kopieren, entfernen.
 - **Musik als Clips** (S auf der Musikspur, weitere Titel per Drag & Drop), **Ton vom Video lösen**, Ein-/Ausblenden je Clip, **⌘C/⌘V** für Elemente, **J/K/L**, Spuren sperren (Rechtsklick auf den Spurkopf).
 - **Cursor-Spur**: Cursor-Effekte (Leuchtkreis, Spotlight, Lupe, Ausblenden) nur für einen Zeitraum; Klick in die Spur legt einen Bereich an, Kanten ziehen, Effekt und Größe im Inspektor.
 - **Hintergrundmusik** (Audio oder „Hinzufügen“): läuft in Ausgabezeit über Schnitte hinweg, Schleife, Ein-/Ausblenden, wird unter Sprache (Mikrofon, Voice-over) automatisch leiser; eigene Spur mit Wellenform.
@@ -176,8 +177,6 @@ Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton etwa 40 ms v
 ## Noch nicht enthalten
 
 - Masken, die dem Inhalt automatisch folgen; bisher folgen Masken dem Zoom, aber nicht scrollendem Inhalt.
-- Mehrfachauswahl mehrerer Clips.
-- Übergänge an umgestellten Teilen (bisher nur an Schnitten, deren Teile direkt aufeinanderfolgen).
 - Atem-Bereiche und eigene Stärke der Stimmverbesserung für Voice-over-Spuren (bisher nur Mikrofon).
 - Bei der Fensteraufnahme wird ein Verschieben des Fensters während der Aufnahme nicht nachverfolgt.
 

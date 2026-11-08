@@ -135,6 +135,14 @@ extension CutRange {
 /// Transition at a cut: the last `length` timeline seconds before `aEnd` (from `aStart`) blend
 /// into the first ones from `bStart`; the output then continues with the recording from `resume`
 /// (the two parts are pushed over each other, the output gets shorter by `length`).
+/// A transition into the part with this key from the part that plays before it.
+struct JoinTransition: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var key: Double
+    var length: Double
+    var style: TransitionStyle = .dissolve
+}
+
 struct Dissolve: Equatable {
     var cutID: UUID
     var aStart: Double
@@ -288,6 +296,8 @@ struct EditSettings: Codable, Equatable {
     var freeLanes: [String] = []
     /// Lanes locked against changes with the mouse.
     var lockedLanes: [String] = []
+    /// Transitions where two parts meet without a cut between them (after a split or a move).
+    var joinTransitions: [JoinTransition] = []
     /// Short "whoosh" at zooms and transitions.
     var soundEffects: Bool = false
     var soundEffectVolume: Double = 0.35
@@ -307,14 +317,9 @@ extension EditSettings {
     /// its first seconds are shown during the dissolve.
     func cutLayout(duration: Double) -> (segments: [ClosedRange<Double>], dissolves: [Dissolve]) {
         let natural = naturalCutLayout(duration: duration)
-        guard clipOrder != nil else { return natural }
-        let parts = clipParts(duration: duration, natural: natural)
-        // A transition needs the two parts it joins next to each other.
-        let dissolves = natural.dissolves.filter { d in
-            guard let i = parts.firstIndex(where: { abs($0.range.upperBound - d.aEnd) < 1e-6 }), i + 1 < parts.count else { return false }
-            return abs(parts[i + 1].range.lowerBound - d.resume) < 1e-6
-        }
-        return (parts.map(\.range), dissolves)
+        guard clipOrder != nil || !joinTransitions.isEmpty else { return natural }
+        let arranged = arrangedParts(duration: duration, natural: natural)
+        return (arranged.parts.map(\.range), arranged.dissolves)
     }
 
     /// A stretch of the video on the timeline (between cuts, split points and inserted clips).
@@ -325,7 +330,38 @@ extension EditSettings {
     }
 
     /// The parts of the video in the order they play.
-    func clipParts(duration: Double) -> [ClipPart] { clipParts(duration: duration, natural: naturalCutLayout(duration: duration)) }
+    func clipParts(duration: Double) -> [ClipPart] { arrangedParts(duration: duration, natural: naturalCutLayout(duration: duration)).parts }
+
+    /// The parts in playing order with the transitions between them: those at cuts whose two
+    /// sides still follow each other, and those set on any other join.
+    private func arrangedParts(duration: Double, natural: (segments: [ClosedRange<Double>], dissolves: [Dissolve]))
+        -> (parts: [ClipPart], dissolves: [Dissolve]) {
+        var parts = clipParts(duration: duration, natural: natural)
+        var dissolves: [Dissolve] = []
+        for d in natural.dissolves {
+            let i = parts.firstIndex { abs($0.range.upperBound - d.aEnd) < 1e-6 }
+            if let i, i + 1 < parts.count, abs(parts[i + 1].range.lowerBound - d.resume) < 1e-6 {
+                dissolves.append(d)
+            } else if let b = parts.firstIndex(where: { abs($0.range.lowerBound - d.resume) < 1e-6 }) {
+                // The parts no longer meet: the part gets back what the transition had taken.
+                parts[b] = ClipPart(key: parts[b].key, range: d.bStart...parts[b].range.upperBound)
+            }
+        }
+        let map = timeMap(duration: duration)
+        for t in joinTransitions {
+            guard let i = parts.firstIndex(where: { abs($0.key - t.key) < 1e-4 }), i > 0 else { continue }
+            let a = parts[i - 1], b = parts[i]
+            guard !dissolves.contains(where: { abs($0.aEnd - a.range.upperBound) < 1e-6 && abs($0.resume - b.range.lowerBound) < 1e-6 }) else { continue }
+            let length = min(t.length, Self.maxDissolve, map.length(a.range) - 0.05, map.length(b.range) / 2)
+            guard length > 0.03 else { continue }
+            let aStart = map.source(map.timeline(a.range.upperBound) - length)
+            let resume = map.source(map.timeline(b.range.lowerBound) + length)
+            dissolves.append(Dissolve(cutID: t.id, aStart: aStart, aEnd: a.range.upperBound, bStart: b.range.lowerBound,
+                                      resume: resume, length: length, style: t.style))
+            parts[i] = ClipPart(key: b.key, range: resume...b.range.upperBound)
+        }
+        return (parts, dissolves)
+    }
 
     private func clipParts(duration: Double, natural: (segments: [ClosedRange<Double>], dissolves: [Dissolve])) -> [ClipPart] {
         let map = timeMap(duration: duration)
@@ -539,6 +575,7 @@ extension EditSettings {
         clipOrder = try c.decodeIfPresent([Double].self, forKey: .clipOrder)
         freeLanes = try v(.freeLanes, freeLanes)
         lockedLanes = try v(.lockedLanes, lockedLanes)
+        joinTransitions = try v(.joinTransitions, joinTransitions)
         soundEffects = try v(.soundEffects, soundEffects)
         soundEffectVolume = try v(.soundEffectVolume, soundEffectVolume)
         exportShortSide = try v(.exportShortSide, exportShortSide)

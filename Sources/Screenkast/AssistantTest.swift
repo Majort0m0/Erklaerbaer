@@ -104,7 +104,14 @@ enum AssistantTest {
             print("– Apple Intelligence skipped: \(problem)")
             return
         }
-        let answer = try await AIAssistant.apple("Antworte nur mit diesem JSON und sonst nichts: {\"titles\":[\"Test\"]}")
+        let answer: String
+        do {
+            answer = try await AIAssistant.apple("Antworte nur mit diesem JSON und sonst nichts: {\"titles\":[\"Test\"]}")
+        } catch {
+            // The model on the Mac can fail for reasons of its own; that says nothing about the app.
+            print("– Apple Intelligence skipped: \(error.localizedDescription)")
+            return
+        }
         let parsed = try AIAssistant.parse(answer)
         guard !parsed.titles.isEmpty else { throw fail("Apple Intelligence answer: \(answer)") }
         print("✓ Apple Intelligence on the Mac answers with readable JSON")
