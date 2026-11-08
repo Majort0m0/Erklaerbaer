@@ -11,7 +11,7 @@ import SwiftUI
 /// the edited field ends the editing, so Space plays again afterwards.
 enum EditorKeyCommand: Equatable {
     case step(frames: Int), stepSeconds(Double), home, end, zoomIn, zoomOut, zoomFit
-    case split, undo, redo, toggleSnapping, deselect, freeze, chapter
+    case split, undo, redo, toggleSnapping, deselect, freeze, chapter, copy, paste, shuttle(Int)
 }
 
 struct EditorKeyHandler: NSViewRepresentable {
@@ -93,6 +93,8 @@ final class EditorKeyHandlerView: NSView {
             case "0": onCommand(.zoomFit)
             case "z": onCommand(.undo)
             case "b": onCommand(.split)
+            case "c": onCommand(.copy)
+            case "v": onCommand(.paste)
             default: return event
             }
             return nil
@@ -131,6 +133,9 @@ final class EditorKeyHandlerView: NSView {
             case "s": onCommand(.split)
             case "n": onCommand(.toggleSnapping)
             case "m": onCommand(.chapter)
+            case "j": onCommand(.shuttle(-1))
+            case "k": onCommand(.shuttle(0))
+            case "l": onCommand(.shuttle(1))
             default: return event
             }
         }

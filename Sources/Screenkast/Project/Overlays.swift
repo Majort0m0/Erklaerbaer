@@ -59,6 +59,12 @@ enum AudioRangeKind: String, Codable {
 
 /// Narration recorded in the editor. Placed on the source timeline; several clips can share
 /// one file (the recording is split where playback skipped a cut).
+/// See `EditSettings.linkedPieces`.
+struct LinkedPiece: Equatable {
+    let timeline: ClosedRange<Double>
+    let fileShift: Double
+}
+
 struct VoiceOverClip: Codable, Identifiable, Equatable {
     var id = UUID()
     /// Relative to the project folder, e.g. "voiceover/<uuid>.m4a".
@@ -70,6 +76,18 @@ struct VoiceOverClip: Codable, Identifiable, Equatable {
     var duration: Double
     /// Volume factor of this clip (nil: 1).
     var volume: Double? = nil
+    /// Not tied to the video: `start` is a timeline position and stays put when parts of the video
+    /// are cut or moved (nil: follows the moment of the video it was placed on).
+    var free: Bool? = nil
+    var isFree: Bool { free == true }
+    /// A stretch of this clip in the composition belongs to the clip with this id.
+    var parent: UUID? = nil
+    /// On the music lane (mixed like music) instead of the voice-over lane.
+    var music: Bool? = nil
+    var isMusic: Bool { music == true }
+    /// Fade in/out of this clip in seconds.
+    var fadeIn: Double? = nil
+    var fadeOut: Double? = nil
     var end: Double { start + duration }
     var gain: Double { max(0, volume ?? 1) }
 }
@@ -170,6 +188,10 @@ struct TextOverlay: Codable, Identifiable, Equatable {
     var design: TextDesign? = nil
     /// Picture or logo shown in the box next to the text (project file).
     var image: String? = nil
+    /// Not tied to the video: `start` is a timeline position and stays put when parts of the video
+    /// are cut or moved (nil: follows the moment of the video it was placed on).
+    var free: Bool? = nil
+    var isFree: Bool { free == true }
 
     var length: Double { end - start }
     /// The look used for rendering.
@@ -186,6 +208,23 @@ extension EditSettings {
 
     /// Texts shown on top of the recording (lower thirds and covering title cards).
     var overlayTexts: [TextOverlay] { texts.filter { $0.placement == .overlay || $0.kind == .lowerThird } }
+
+    /// What remains on the edited timeline of something that plays in real time from source time
+    /// `start`, tied to the video: the parts lying over removed material are gone, and each
+    /// remaining piece goes wherever its part of the video goes. `fileShift`: seconds from the
+    /// beginning of the thing to this piece.
+    func linkedPieces(start: Double, duration seconds: Double, map: TimeMap, kept: [ClosedRange<Double>]) -> [LinkedPiece] {
+        let b0 = map.timeline(start), b1 = b0 + seconds
+        var result: [LinkedPiece] = []
+        var cursor = 0.0
+        for seg in kept {
+            let t0 = map.timeline(seg.lowerBound), t1 = t0 + map.length(seg)
+            let lo = max(b0, t0), hi = min(b1, t1)
+            if hi - lo > 0.001 { result.append(LinkedPiece(timeline: (cursor + lo - t0)...(cursor + hi - t0), fileShift: lo - b0)) }
+            cursor += t1 - t0
+        }
+        return result
+    }
 
     /// Source ranges of `range` that are kept, mapped to output time (intro, trim and cuts applied).
     func outputRanges(ofSource range: ClosedRange<Double>, duration: Double) -> [ClosedRange<Double>] {

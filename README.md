@@ -72,7 +72,7 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 
 **Neues Projekt ohne Aufnahme** (Startseite „Neues Projekt“, Menü „Ablage“, oder ein Video auf die Projektliste ziehen):
 - **Aus eigenem Video**: Die Datei wird zur Hauptspur (auf APFS als Klon, ohne doppelten Speicher), ihr Ton zählt als Mikrofon – Stimme verbessern, Untertitel, Pausen und Füllwörter funktionieren wie bei einer Aufnahme. Das Bild füllt das Format ohne Rahmen; Hochkant-Handyvideos werden richtig gedreht und bekommen 9:16.
-- **Leeres Projekt** (16:9, 9:16, 1:1, 4:3): eine schwarze Fläche von 10 s für Clips, Bilder und Texte. Eingefügte Clips reihen sich lückenlos aneinander (auf einen Clip gezogen: dahinter, vor den ersten: davor); die schwarze Fläche drumherum wird automatisch abgeschnitten, solange nichts darauf liegt – die Trimm-Griffe ziehen sie für Titel auf Schwarz wieder auf.
+- **Leeres Projekt** (16:9, 9:16, 1:1, 4:3): eine schwarze Fläche von 10 s für Clips, Bilder und Texte. Eingefügte Clips reihen sich lückenlos aneinander (auf einen Clip gezogen: dahinter; umstellen per Maus); die schwarze Fläche drumherum wird automatisch abgeschnitten, solange nichts darauf liegt – die Trimm-Griffe ziehen sie für Titel auf Schwarz wieder auf.
 
 **Erklärbär-Hilfe** (Menü „Hilfe“, ⌘?, Hilfe-Knöpfe auf der Startseite, im Editor und im Menüleisten-Symbol): ausführliche Anleitung in 19 Kapiteln mit Suche, von „Erste Schritte“ bis „Probleme lösen“.
 
@@ -103,7 +103,9 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 - **Stimme verbessern** (Audio): Hochpass, sanfte spektrale Rauschunterdrückung, Lautheit nach ITU BS.1770 auf −14/−16/−19 LUFS, sanfter Limiter – für Mikrofon und Voice-over, als bearbeitete Kopie (Original bleibt). Die **Stärke** ist sofort hörbar regelbar (Mischung aus bearbeiteter und unbearbeiteter, gleich lauter Spur); ein Bereich der Mikrofonspur (Spur wählen, S) kann seine **eigene Stärke** bekommen.
 - **Atemgeräusche dämpfen** (optional): rauschig, ohne Tonhöhe, leiser als die Sprache, nie auf erkannten Wörtern; Empfindlichkeit einstellbar. Jeder Atemzug wird ein eigener **Bereich „Atem“** in der Mikrofonspur – anhören, Dämpfung pro Stelle ändern oder mit ⌫ entfernen.
 - **Automatische Änderungen prüfen** (Skript- und Audio-Tab): Füllwörter, Pausen, Transkript-Schnitte und Atem-Bereiche gezählt, „Prüfen“ springt von Stelle zu Stelle, jede Kategorie mit einem Klick zurücknehmen. Automatische Schnitte sind orange mit Kennzeichnung („äh“, „Pause“, „Text“) und blenden den Ton über 60 ms weich über, damit nichts abgehackt klingt. Ältere Projekte werden beim Öffnen nachträglich gekennzeichnet.
-- **Entfernte Bereiche über alle Spuren**: Schnitte und Trimmungen sind in jeder Spur schraffiert, Teilungen als gestrichelte Linie – alles, was an der Aufnahme hängt (Ton, Texte, Masken, Overlays), bleibt an seiner Stelle verankert.
+- **Clip-Timeline**: Die Timeline zeigt das fertige Video. Entfernte Teile verschwinden, die Lücke schließt sich (eine kleine Marke mit Schere holt sie zurück). Teile lassen sich **per Maus umstellen**, ihre Kanten kürzen sie mit Nachrücken. Vorschau und Export spielen dasselbe, ohne Sprünge.
+- **Gekoppelt oder frei**: Kettensymbol im Spurkopf (Text, Medien, Voice-over) und Schalter je Clip. Gekoppelte Clips werden mitgeschnitten und wandern mit, freie bleiben an ihrer Stelle. Musik ist immer frei.
+- **Musik als Clips** (S auf der Musikspur, weitere Titel per Drag & Drop), **Ton vom Video lösen**, Ein-/Ausblenden je Clip, **⌘C/⌘V** für Elemente, **J/K/L**, Spuren sperren (Rechtsklick auf den Spurkopf).
 - **Cursor-Spur**: Cursor-Effekte (Leuchtkreis, Spotlight, Lupe, Ausblenden) nur für einen Zeitraum; Klick in die Spur legt einen Bereich an, Kanten ziehen, Effekt und Größe im Inspektor.
 - **Hintergrundmusik** (Audio oder „Hinzufügen“): läuft in Ausgabezeit über Schnitte hinweg, Schleife, Ein-/Ausblenden, wird unter Sprache (Mikrofon, Voice-over) automatisch leiser; eigene Spur mit Wellenform.
 - **Kamera-Layouts** pro Abschnitt (Kamera-Spur): Normal, Groß, Nur Kamera, Aus – mit weichen Übergängen.
@@ -139,7 +141,7 @@ Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton etwa 40 ms v
 
 ### Projektordner
 
-`~/Filme/Erklärbär/*.screenkast` enthält (ein vorhandener Ordner `~/Filme/Screenkast` wird beim ersten Start umbenannt):
+`~/Filme/Erklärbär/*.screenkast` (der Speicherort ist wählbar, auch Laufwerke und Freigaben; Projekte lassen sich per Rechtsklick verschieben) enthält (ein vorhandener Ordner `~/Filme/Screenkast` wird beim ersten Start umbenannt):
 - `screen.mov`: Video mit getaggten Audiospuren „system“ und „mic“
 - `camera.mov`: Kameravideo (optional)
 - `recording.json`, `cursor.json`, `edit.json`, `cursors/*.png`
@@ -174,7 +176,8 @@ Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton etwa 40 ms v
 ## Noch nicht enthalten
 
 - Masken, die dem Inhalt automatisch folgen; bisher folgen Masken dem Zoom, aber nicht scrollendem Inhalt.
-- Teile der Aufnahme frei umsortieren (magnetische Timeline).
+- Mehrfachauswahl mehrerer Clips.
+- Übergänge an umgestellten Teilen (bisher nur an Schnitten, deren Teile direkt aufeinanderfolgen).
 - Atem-Bereiche und eigene Stärke der Stimmverbesserung für Voice-over-Spuren (bisher nur Mikrofon).
 - Bei der Fensteraufnahme wird ein Verschieben des Fensters während der Aufnahme nicht nachverfolgt.
 

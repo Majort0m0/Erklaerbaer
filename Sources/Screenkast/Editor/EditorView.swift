@@ -503,7 +503,7 @@ struct ImageHandle: View {
 
     var body: some View {
         GeometryReader { geo in
-            if let o = editor.selectedImage, editor.isVisibleNow(start: o.start, end: o.end),
+            if let o = editor.selectedImage, editor.isVisibleNow(image: o),
                let r = editor.renderer.imageFrame(o, out: editor.renderer.outputSize) {
                 let out = editor.renderer.outputSize
                 let s = geo.size.width / max(1, out.width)
@@ -762,10 +762,12 @@ struct ToolButton: View {
 struct ShortcutHelp: View {
     private let groups: [(String, [(String, String)])] = [
         ("Abspielen", [("Leertaste", "Abspielen / Pause"), ("← →", "Ein Bild zurück / vor"), ("⇧← ⇧→", "Eine Sekunde"),
-                       ("Pos1 / Ende", "Zum Anfang / Ende")]),
+                       ("Pos1 / Ende", "Zum Anfang / Ende"),
+                       ("J  /  K  /  L", "Rückwärts / Stopp / Vorwärts (mehrfach: schneller)")]),
         ("Bearbeiten", [("S  oder  ⌘B", "Am Abspielkopf teilen"), ("⌥F", "Standbild (Ende des ausgewählten Teils)"),
                         ("M", "Kapitelmarke am Abspielkopf"), ("⌫", "Auswahl löschen / Teil entfernen"),
-                        ("⌘Z  /  ⇧⌘Z", "Widerrufen / Wiederholen"), ("Esc", "Auswahl aufheben"), ("N", "Einrasten an/aus")]),
+                        ("⌘Z  /  ⇧⌘Z", "Widerrufen / Wiederholen"), ("⌘C  /  ⌘V", "Element kopieren / am Abspielkopf einfügen"),
+                        ("Esc", "Auswahl aufheben"), ("N", "Einrasten an/aus")]),
         ("Timeline", [("⌘+  /  ⌘−", "Hinein- / Herauszoomen"), ("⇧Z", "Alles zeigen"),
                       ("⌥ + Scrollen, Zwei-Finger-Zoom", "Zoomen um den Mauszeiger"), ("Seitlich wischen", "Verschieben")]),
         ("Export", [("⌘E", "Exportieren")]),

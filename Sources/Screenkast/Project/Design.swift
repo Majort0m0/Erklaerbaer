@@ -299,6 +299,10 @@ struct VideoOverlay: Codable, Identifiable, Equatable {
     var shadow: Bool = true
     /// Rotation of the video in degrees (portrait phone videos: 90).
     var rotation: Int = 0
+    /// Not tied to the video: `start` is a timeline position and stays put when parts of the video
+    /// are cut or moved (nil: follows the moment of the video it was placed on).
+    var free: Bool? = nil
+    var isFree: Bool { free == true }
 }
 
 /// Rotation (degrees) of a video track's preferred transform, and the matching orientation.
@@ -339,6 +343,7 @@ extension VideoOverlay {
         frame = try c.decodeIfPresent(PictureFrame.self, forKey: .frame) ?? .rounded
         shadow = try c.decodeIfPresent(Bool.self, forKey: .shadow) ?? true
         rotation = try c.decodeIfPresent(Int.self, forKey: .rotation) ?? 0
+        free = try c.decodeIfPresent(Bool.self, forKey: .free)
     }
 
     /// Layer of each overlay: overlays that overlap in time play on separate tracks (timeline time).

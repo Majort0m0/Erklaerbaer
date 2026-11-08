@@ -90,6 +90,10 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     /// A new project from an own video or an empty one is being created.
     @Published var creatingProject = false
+    /// Projects being moved to another folder or drive.
+    @Published var movingProjects: Set<URL> = []
+    /// Bumped when the folder for new projects changes (redraws the folder menu).
+    @Published var projectFolderChanged = 0
 
     // Library / editor
     @Published var library: [URL] = []
@@ -157,7 +161,14 @@ final class AppModel: ObservableObject {
 
     /// Turns recordings that were interrupted by a crash or force quit into normal projects.
     private func recoverInterruptedRecordings() async {
-        let result = await RecordingRecovery.recoverAll()
+        var result = await RecordingRecovery.recoverAll()
+        // Also in a folder chosen on another drive.
+        let chosen = ProjectLocations.recordingFolder
+        if chosen.standardizedFileURL != Project.libraryURL.standardizedFileURL {
+            let more = await RecordingRecovery.recoverAll(in: chosen)
+            result.recovered += more.recovered
+            result.failed += more.failed
+        }
         guard !result.recovered.isEmpty || !result.failed.isEmpty else { return }
         reloadLibrary()
         var lines: [String] = []
@@ -327,7 +338,7 @@ final class AppModel: ObservableObject {
             await Countdown.run(on: display)
         }
 
-        let url = Project.makeNewProjectURL()
+        let url = Project.makeNewProjectURL(in: ProjectLocations.recordingFolder)
         pauseGate.reset()
         pauseMarks = []
         isPaused = false
@@ -500,11 +511,23 @@ final class AppModel: ObservableObject {
             try project.saveAll()
             progressWriter?.finish()
             progressWriter = nil
+            ProjectLocations.remember(url)
             reloadLibrary()
             showMainWindow()
-            open(project: project)
-            // Start assistant: what to make, polish in one go.
-            if UserDefaults.standard.object(forKey: "showAssistant") as? Bool ?? true { editor?.showPolishSheet = true }
+            let showAssistant = UserDefaults.standard.object(forKey: "showAssistant") as? Bool ?? true
+            // Recorded locally for a network share: now it goes there.
+            let destination = ProjectLocations.current
+            if destination.standardizedFileURL != url.deletingLastPathComponent().standardizedFileURL {
+                moveProject(url, to: destination) { [weak self] moved in
+                    guard let self else { return }
+                    self.open(url: moved)
+                    if showAssistant { self.editor?.showPolishSheet = true }
+                }
+            } else {
+                open(project: project)
+                // Start assistant: what to make, polish in one go.
+                if showAssistant { editor?.showPolishSheet = true }
+            }
         } catch {
             errorMessage = error.localizedDescription
             progressWriter = nil
@@ -541,10 +564,21 @@ final class AppModel: ObservableObject {
     // MARK: Library
 
     func reloadLibrary() {
-        library = Project.listLibrary()
+        if Self.snapshotMode {
+            library = ProjectLocations.allProjects()
+            return
+        }
+        // In the background: a share that doesn't answer must not block the app.
+        Task {
+            library = await Task.detached(priority: .userInitiated) { ProjectLocations.allProjects() }.value
+        }
     }
 
     func open(url: URL) {
+        guard !ProjectLocations.isOffline(url) else {
+            errorMessage = "„\(url.deletingPathExtension().lastPathComponent)“ liegt auf „\(ProjectLocations.volumeName(url) ?? "einem Laufwerk")“. Bitte das Laufwerk oder die Freigabe verbinden."
+            return
+        }
         do {
             open(project: try Project.load(from: url))
         } catch {
@@ -567,7 +601,12 @@ final class AppModel: ObservableObject {
     }
 
     func delete(url: URL) {
-        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            ProjectLocations.forget(url)
+        } catch {
+            errorMessage = "Das Projekt ließ sich nicht in den Papierkorb legen: \(error.localizedDescription)"
+        }
         reloadLibrary()
     }
 

@@ -9,13 +9,8 @@ extension EditorModel {
 
     /// Source time of a moment in the exported video (inverse of `outputTime(ofSource:)`).
     func sourceTime(ofOutput o: Double) -> Double? {
-        var out = introLead
-        for seg in settings.keptSegments(duration: duration) {
-            let length = timeMap.length(seg)
-            if o <= out + length + 1e-6 { return sourceTime(display(seg.lowerBound) + max(0, o - out)) }
-            out += length
-        }
-        return nil
+        let t = o - introLead
+        return t >= 0 && t <= timeMap.total + 1e-6 ? sourceTime(min(t, timeMap.total - 1e-6)) : nil
     }
 
     /// The transcript with times in the finished video ("[12.3] Text"), from the captions.
@@ -189,7 +184,7 @@ extension EditorModel {
             guard length > 0.1 else { return }
             commitUndoStep(); defer { commitUndoStep() }
             let clip = VoiceOverClip(file: file, fileOffset: 0, start: min(max(0, currentTime), duration), duration: length)
-            settings.voiceOvers.append(clip)
+            settings.voiceOvers.append(adopted(clip))
             selectedVoiceOverID = clip.id
             loadVoiceOverWaveform(file)
         } catch {

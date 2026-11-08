@@ -83,7 +83,7 @@ struct TimelineScale {
 /// the playhead and, below, zoom controls with an overview of the visible part.
 struct EditorTimeline: View {
     @ObservedObject var editor: EditorModel
-    static let headerWidth: CGFloat = 156
+    static let headerWidth: CGFloat = 176
     static let footerHeight: CGFloat = 24
 
     var body: some View {
@@ -134,15 +134,15 @@ private struct LaneHeaders: View {
                 .contentShape(Rectangle())
                 .onTapGesture { editor.selection = nil }
             row("Video", icon: "film", panel: .video, y: layout.clipY, height: layout.clipH)
-            if layout.cameraH > 0 { row("Kamera", icon: "web.camera", panel: .camera, y: layout.cameraY, height: layout.cameraH) }
-            row("Zoom", icon: "plus.magnifyingglass", panel: .zoom, y: layout.zoomY, height: layout.zoomH)
-            if layout.cursorH > 0 { row("Cursor", icon: "cursorarrow.rays", panel: .cursor, y: layout.cursorY, height: layout.cursorH) }
-            if layout.maskH > 0 { row("Masken", icon: "square.grid.3x3", panel: .masks, y: layout.maskY, height: layout.maskH) }
+            if layout.cameraH > 0 { row("Kamera", icon: "web.camera", panel: .camera, y: layout.cameraY, height: layout.cameraH, lock: "camera") }
+            row("Zoom", icon: "plus.magnifyingglass", panel: .zoom, y: layout.zoomY, height: layout.zoomH, lock: "zoom")
+            if layout.cursorH > 0 { row("Cursor", icon: "cursorarrow.rays", panel: .cursor, y: layout.cursorY, height: layout.cursorH, lock: "cursor") }
+            if layout.maskH > 0 { row("Masken", icon: "square.grid.3x3", panel: .masks, y: layout.maskY, height: layout.maskH, lock: "masks") }
             if layout.annotationH > 0 {
-                row("Markierung", icon: "arrow.up.right", panel: .annotations, y: layout.annotationY, height: layout.annotationH)
+                row("Markierung", icon: "arrow.up.right", panel: .annotations, y: layout.annotationY, height: layout.annotationH, lock: "annotations")
             }
-            row("Text", icon: "textformat", panel: .texts, y: layout.textY, height: layout.textH)
-            row("Medien", icon: "photo.on.rectangle.angled", panel: .media, y: layout.mediaY, height: layout.mediaH)
+            row("Text", icon: "textformat", panel: .texts, y: layout.textY, height: layout.textH, link: .texts, lock: "texts")
+            row("Medien", icon: "photo.on.rectangle.angled", panel: .media, y: layout.mediaY, height: layout.mediaH, link: .media, lock: "media")
             ForEach(Array(lanes.enumerated()), id: \.element) { i, lane in
                 audioHeader(lane)
                     .frame(height: layout.audioH)
@@ -153,11 +153,46 @@ private struct LaneHeaders: View {
     }
 
     /// Lane name; a click selects the lane and opens its settings.
-    private func row(_ title: String, icon: String, panel: EditorPanel, y: CGFloat, height: CGFloat) -> some View {
+    private func row(_ title: String, icon: String, panel: EditorPanel, y: CGFloat, height: CGFloat,
+                     link: EditorModel.LinkableLane? = nil, lock: String? = nil) -> some View {
         LaneHeaderRow(title: title, icon: icon, color: Theme.color(panel), height: height, selected: editor.selection == .panel(panel),
-                      select: { editor.selection = .panel(panel) }) { EmptyView() }
-            .help("\(title)-Spur auswählen – ihre Einstellungen erscheinen rechts")
-            .offset(y: y)
+                      select: { editor.selection = .panel(panel) }) {
+            HStack(spacing: 0) {
+                if let lock, editor.isLocked(lock) { lockMark(lock) }
+                if let link { linkButton(link) }
+            }
+        }
+        .contextMenu { if let lock { lockMenu(lock) } }
+        .help("\(title)-Spur auswählen – ihre Einstellungen erscheinen rechts. Rechtsklick: Spur sperren")
+        .offset(y: y)
+    }
+
+    private func lockMark(_ lane: String) -> some View {
+        Button { editor.toggleLock(lane) } label: {
+            Image(systemName: "lock.fill").font(.system(size: 9.5)).foregroundStyle(.secondary).frame(width: 18, height: 20).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Spur ist gesperrt – klicken entsperrt sie")
+    }
+
+    @ViewBuilder
+    private func lockMenu(_ lane: String) -> some View {
+        Button(editor.isLocked(lane) ? "Spur entsperren" : "Spur sperren") { editor.toggleLock(lane) }
+    }
+
+    /// Chain symbol: is this lane tied to the video?
+    private func linkButton(_ lane: EditorModel.LinkableLane) -> some View {
+        let free = editor.isFree(lane)
+        return Button {
+            editor.setLane(lane, free: !free)
+        } label: {
+            LinkSymbol(free: free)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(free ? "Frei: Clips dieser Spur bleiben stehen, wenn das Video geschnitten oder umgestellt wird. Klicken koppelt die Spur ans Video."
+                   : "Ans Video gekoppelt: Clips dieser Spur werden mitgeschnitten und wandern mit. Klicken macht die Spur frei.")
     }
 
     private func audioHeader(_ lane: AudioLane) -> some View {
@@ -166,6 +201,8 @@ private struct LaneHeaders: View {
                              selected: editor.selection == .audioLane(lane), dimmed: muted,
                              select: { editor.selection = .audioLane(lane) }) {
             HStack(spacing: 0) {
+                if editor.isLocked(lane.role) { lockMark(lane.role) }
+                if lane == .voiceOver { linkButton(.voiceOver) }
                 Button {
                     editor.toggleMute(lane)
                 } label: {
@@ -179,6 +216,8 @@ private struct LaneHeaders: View {
                 .help(muted ? "\(lane.label) wieder einschalten" : "\(lane.label) stummschalten")
                 Menu {
                     if lane == .music {
+                        Button("Am Abspielkopf schneiden") { editor.splitLane(.music, at: editor.currentTime) }
+                        Button("Weiteren Clip einfügen …") { editor.chooseMusicClip() }
                         Button("Andere Musik …") { editor.chooseMusic() }
                         Button("Musik entfernen", role: .destructive) { editor.removeMusic() }
                     } else {
@@ -191,6 +230,11 @@ private struct LaneHeaders: View {
                         Button("Voice-over einsprechen") { editor.toggleVoiceOver() }
                         Button("Audiodatei einfügen …") { editor.addNarrationFile() }
                     }
+                    if editor.canDetachSound(lane) {
+                        Button("Ton vom Video lösen") { editor.detachSound(lane) }
+                    }
+                    Divider()
+                    lockMenu(lane.role)
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 11, weight: .semibold))
@@ -260,15 +304,15 @@ private struct TimelineContent: View {
                 .onTapGesture { editor.selection = nil }
             laneHighlight
             videoLane
-            if layout.cameraH > 0 { cameraLane }
-            zoomLane
-            if layout.cursorH > 0 { cursorLane }
-            if layout.maskH > 0 { maskLane }
-            if layout.annotationH > 0 { annotationLane }
-            textLane
-            mediaLane
+            if layout.cameraH > 0 { locked("camera") { cameraLane } }
+            locked("zoom") { zoomLane }
+            if layout.cursorH > 0 { locked("cursor") { cursorLane } }
+            if layout.maskH > 0 { locked("masks") { maskLane } }
+            if layout.annotationH > 0 { locked("annotations") { annotationLane } }
+            locked("texts") { textLane }
+            locked("media") { mediaLane }
             ForEach(Array(lanes.enumerated()), id: \.element) { i, lane in
-                audioLane(lane, y: layout.audioY(i))
+                locked(lane.role) { audioLane(lane, y: layout.audioY(i)) }
             }
             removedBands
             ruler
@@ -284,35 +328,29 @@ private struct TimelineContent: View {
         .overlay(alignment: .topLeading) { DropHighlightView(highlight: dropHighlight, width: scale.width) }
     }
 
+    /// A locked lane can't be changed with the mouse.
+    private func locked<Content: View>(_ lane: String, @ViewBuilder content: () -> Content) -> some View {
+        let isLocked = editor.isLocked(lane)
+        return content().allowsHitTesting(!isLocked).opacity(isLocked ? 0.5 : 1)
+    }
+
     /// Lane that files are dragged over (drawn as a highlight).
     @StateObject private var dropHighlight = DropHighlight()
 
-    /// Removed parts affect every lane (all are skipped there): a hatched band below the video lane.
-    /// Split points are thin lines through all lanes.
+    /// Where something was cut out the timeline has closed up: a thin line through all lanes.
     @ViewBuilder
     private var removedBands: some View {
         let top = layout.clipY + layout.clipH
         let height = layout.total - top
         ForEach(editor.settings.cuts) { cut in
-            if let v = vis(cut.start, cut.end) {
-                RemovedBand(color: cut.origin == nil ? .red : .orange)
-                    .frame(width: max(2, v.width), height: height)
-                    .offset(x: v.x, y: top)
+            let x = scale.x(T(cut.start))
+            if x > 0, x < scale.width {
+                Path { p in p.move(to: CGPoint(x: 0.5, y: 0)); p.addLine(to: CGPoint(x: 0.5, y: height)) }
+                    .stroke((cut.origin == nil ? Color.red : Color.orange).opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .frame(width: 1, height: height)
+                    .offset(x: x, y: top)
                     .allowsHitTesting(false)
             }
-        }
-        if let v = vis(0, editor.settings.trimStart), v.width > 1 {
-            RemovedBand(color: .gray).frame(width: v.width, height: height).offset(x: v.x, y: top).allowsHitTesting(false)
-        }
-        if let v = vis(editor.trimEnd, editor.duration), v.width > 1 {
-            RemovedBand(color: .gray).frame(width: v.width, height: height).offset(x: v.x, y: top).allowsHitTesting(false)
-        }
-        ForEach(editor.settings.splits.filter { T($0) > scale.start && T($0) < scale.end }, id: \.self) { t in
-            Path { p in p.move(to: CGPoint(x: 0, y: 0)); p.addLine(to: CGPoint(x: 0, y: height)) }
-                .stroke(Color.primary.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                .frame(width: 1, height: height)
-                .offset(x: scale.x(T(t)), y: top)
-                .allowsHitTesting(false)
         }
     }
 
@@ -380,15 +418,28 @@ private struct TimelineContent: View {
     private func T(_ source: Double) -> Double { editor.display(source) }
     private func S(_ timeline: Double) -> Double { editor.sourceTime(timeline) }
     /// Visible part of a source range.
-    private func vis(_ lo: Double, _ hi: Double) -> TimelineScale.Visible? { scale.visible(T(lo), T(hi)) }
+    private func vis(_ lo: Double, _ hi: Double) -> TimelineScale.Visible? {
+        editor.displayRun(lo, hi).flatMap { scale.visible($0.lowerBound, $0.upperBound) }
+    }
+    /// The whole length of the edited timeline.
+    private var laneVisible: TimelineScale.Visible? { scale.visible(0, editor.timeMap.total) }
 
     /// New source range of an item dragged by `dt` timeline seconds (snapped, kept on the recording).
     private func dragged(_ kind: RangeBlock.DragKind, _ dt: Double, start: Double, end: Double, minLength: Double,
                          id: UUID) -> (start: Double, end: Double) {
-        let a = T(start), b = T(end)
+        let run = editor.displayRun(start, end)
+        let a = run?.lowerBound ?? T(start), b = run?.upperBound ?? T(end)
         let dt = snapped(kind, dt, a, b, id)
         let r = RangeBlock.apply(kind, dt: dt, start: a, end: b, duration: editor.timeMap.total, minLength: minLength)
-        return (S(r.start), S(r.end))
+        return (S(r.start), editor.timeMap.sourceEnd(r.end))
+    }
+
+    /// The same for an item that is not tied to the video (its times are timeline times).
+    private func draggedFree(_ kind: RangeBlock.DragKind, _ dt: Double, start: Double, end: Double, minLength: Double,
+                             id: UUID) -> (start: Double, end: Double) {
+        let dt = snapped(kind, dt, start, end, id)
+        let r = RangeBlock.apply(kind, dt: dt, start: start, end: end, duration: editor.timeMap.total, minLength: minLength)
+        return (r.start, r.end)
     }
 
     /// `dt` of a block drag adjusted for snapping.
@@ -434,43 +485,25 @@ private struct TimelineContent: View {
 
     @ViewBuilder
     private var videoLane: some View {
-        let d = editor.duration
         let h = layout.clipH
         let y = layout.clipY
-        if let v = vis(0, d) {
-            let shape = BlockShape(visible: v, radius: Theme.laneRadius + 2)
-            ZStack(alignment: .topLeading) {
-                shape.fill(Theme.color(.video).opacity(0.16))
-                shape.strokeBorder(Theme.color(.video).opacity(0.45), lineWidth: 1)
-                ClickDots(clicks: editor.project.cursor.clicks, scale: scale, map: editor.timeMap, left: v.x)
-                    .padding(.bottom, 6)
-                if v.width > 90 && !v.clippedLeft {
-                    Text(editor.project.info.sourceName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .padding(.leading, 10)
-                        .padding(.top, 6)
-                }
+        let parts = editor.clipParts
+        let drag = editor.clipDrag
+
+        // The parts of the video: move by dragging, edges trim and the gap closes.
+        ForEach(parts, id: \.key) { part in
+            if !isInsert(part), let run = editor.clipRun(part), let v = scale.visible(run.lowerBound, run.upperBound) {
+                clipBlock(part, visible: v, height: h)
+                    .offset(x: v.x, y: y)
             }
-            .frame(width: v.width, height: h)
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline"))
-                .onChanged { v in scrub(to: v.location.x) }
-                .onEnded { v in
-                    // A click (no drag) selects the part of the recording.
-                    guard abs(v.translation.width) < 3 else { return }
-                    if let seg = editor.segment(at: S(scale.time(v.location.x))) {
-                        editor.selection = .segment(seg.lowerBound)
-                    } else {
-                        editor.selection = nil
-                    }
-                })
-            .help("Klicken setzt den Abspielkopf und wählt den Teil aus (Geschwindigkeit, Standbild). Mit S am Abspielkopf teilen.")
-            .offset(x: v.x, y: y)
+        }
+        if let v = laneVisible {
+            ClickDots(clicks: editor.project.cursor.clicks, scale: scale, map: editor.timeMap, left: v.x)
+                .padding(.bottom, 6)
+                .frame(width: v.width, height: h)
+                .offset(x: v.x, y: y)
         }
 
-        // Parts between split points: split lines and the selected part
         // Faster/slower parts: tint and badge
         ForEach(editor.settings.speeds) { speed in
             if let v = vis(speed.start, speed.end) {
@@ -479,42 +512,22 @@ private struct TimelineContent: View {
                     .allowsHitTesting(false)
             }
         }
-        ForEach(editor.settings.splits.filter { $0 > 0 && $0 < d && T($0) > scale.start && T($0) < scale.end }, id: \.self) { t in
-            Rectangle()
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .frame(width: 3, height: h)
-                .offset(x: scale.x(T(t)) - 1.5, y: y)
-                .allowsHitTesting(false)
-        }
         if let seg = editor.selectedSegment, let v = vis(seg.lowerBound, seg.upperBound) {
             BlockShape(visible: v, radius: 7)
                 .fill(TimelineSelection.color.opacity(0.12))
                 .timelineSelection(true, shape: BlockShape(visible: v, radius: 7))
                 .frame(width: v.width, height: h)
                 .allowsHitTesting(false)
-                .offset(x: v.x, y: y)
+                .offset(x: v.x + (drag?.key == editor.clipParts.first { $0.range == seg }?.key ? CGFloat(drag?.dt ?? 0) * scale.pps : 0), y: y)
         }
 
-        // Trimmed-out areas
-        if let v = vis(0, editor.settings.trimStart) {
-            Rectangle().fill(Color.black.opacity(0.45))
-                .frame(width: v.width, height: h)
-                .allowsHitTesting(false)
-                .offset(x: v.x, y: y)
-        }
-        if let v = vis(editor.trimEnd, d) {
-            Rectangle().fill(Color.black.opacity(0.45))
-                .frame(width: v.width, height: h)
-                .allowsHitTesting(false)
-                .offset(x: v.x, y: y)
-        }
-
-        // Cuts (removed parts) and their cross dissolves
+        // Where something was cut out, with its transition
         let dissolves = editor.dissolvesByCut
         ForEach(editor.settings.cuts) { cut in
-            if let v = vis(cut.start, cut.end) {
-                CutBlock(editor: editor, cut: cut, visible: v, pps: scale.pps, height: h)
-                    .offset(x: v.x, y: y)
+            let x = scale.x(T(cut.start))
+            if x >= -9, x <= scale.width + 9 {
+                CutSeam(editor: editor, cut: cut, height: h)
+                    .offset(x: x - CutSeam.width / 2, y: y)
             }
             if let dissolve = dissolves[cut.id] {
                 dissolveCurves(dissolve, y: y, height: h)
@@ -523,23 +536,22 @@ private struct TimelineContent: View {
 
         // Intro / outro title cards, and the part pushed over the recording
         if let intro = editor.settings.intro {
-            if let v = vis(-editor.introLead, 0) {
+            if let v = scale.visible(-editor.introLead, 0) {
                 cardBlock(intro, label: "Vorspann", visible: v).offset(x: v.x, y: y)
             }
             let overlap = editor.introOverlapLength
-            if overlap > 0, let lo = editor.settings.keptSegments(duration: d).first.map({ T($0.lowerBound) }),
-               let v = scale.visible(lo, lo + overlap) {
-                cardOverlap(intro, visible: v, range: lo...(lo + overlap), fadingOut: true).offset(x: v.x, y: y)
+            if overlap > 0, let v = scale.visible(0, overlap) {
+                cardOverlap(intro, visible: v, range: 0...overlap, fadingOut: true).offset(x: v.x, y: y)
             }
         }
         if let outro = editor.settings.outro {
-            if let v = vis(d, d + editor.outroLead) {
+            let total = editor.timeMap.total
+            if let v = scale.visible(total, total + editor.outroLead) {
                 cardBlock(outro, label: "Abspann", visible: v).offset(x: v.x, y: y)
             }
             let overlap = editor.outroOverlapLength
-            if overlap > 0, let hi = editor.settings.keptSegments(duration: d).last.map({ T($0.upperBound) }),
-               let v = scale.visible(hi - overlap, hi) {
-                cardOverlap(outro, visible: v, range: (hi - overlap)...hi, fadingOut: false).offset(x: v.x, y: y)
+            if overlap > 0, let v = scale.visible(total - overlap, total) {
+                cardOverlap(outro, visible: v, range: (total - overlap)...total, fadingOut: false).offset(x: v.x, y: y)
             }
         }
 
@@ -547,17 +559,20 @@ private struct TimelineContent: View {
         ForEach(editor.settings.freezes) { freeze in
             if let v = vis(freeze.sourceRange.lowerBound, freeze.at) {
                 FreezeBlock(editor: editor, freeze: freeze, visible: v, pps: scale.pps, height: h,
-                            snap: { dt in snapped(.end, dt, T(freeze.sourceRange.lowerBound), T(freeze.at), freeze.id) })
+                            snap: { dt in snapped(.end, dt, v.lo, v.hi, freeze.id) })
                     .offset(x: v.x, y: y)
             }
         }
 
-        // Inserted clips: own block, drag the right edge to shorten
+        // Inserted clips: own block, drag the right edge to shorten, drag the clip to move it
         ForEach(editor.settings.inserts) { clip in
             if let v = vis(clip.sourceRange.lowerBound, clip.at) {
+                let part = parts.first { abs($0.range.lowerBound - clip.sourceRange.lowerBound) < 1e-6 }
                 InsertBlock(editor: editor, clip: clip, visible: v, pps: scale.pps, height: h,
-                            snap: { dt in snapped(.end, dt, T(clip.sourceRange.lowerBound), T(clip.at), clip.id) })
-                    .offset(x: v.x, y: y)
+                            snap: { dt in snapped(.end, dt, v.lo, v.hi, clip.id) })
+                    .gesture(part.map { moveGesture($0) })
+                    .offset(x: v.x + (part != nil && drag?.key == part?.key ? CGFloat(drag?.dt ?? 0) * scale.pps : 0), y: y)
+                    .zIndex(part != nil && drag?.key == part?.key ? 5 : 0)
             }
         }
 
@@ -566,24 +581,116 @@ private struct TimelineContent: View {
             dissolveHandles(cut, dissolve: dissolves[cut.id], y: y)
         }
 
-        TrimHandle(isStart: true, height: h)
-            .gesture(DragGesture(coordinateSpace: .named("timeline"))
-                .onChanged { v in
-                    editor.beginInteraction()
-                    editor.setTrim(start: S(editor.snapTime(scale.time(v.location.x), tolerance: snapTolerance, excludingTrim: true)))
-                    editor.seek(to: editor.settings.trimStart)
+        // Where a dragged part would land
+        if let drag, let t = editor.clipDropPosition(drag) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(TimelineSelection.color)
+                .frame(width: 3, height: h + 8)
+                .offset(x: scale.x(t) - 1.5, y: y - 4)
+                .allowsHitTesting(false)
+                .zIndex(6)
+        }
+
+        // The ends of the video
+        if let first = parts.first, !isInsert(first) {
+            TrimHandle(isStart: true, height: h)
+                .gesture(edgeGesture(first, isStart: true))
+                .offset(x: scale.x(0) - 5, y: y)
+        }
+        if let last = parts.last, !isInsert(last) {
+            TrimHandle(isStart: false, height: h)
+                .gesture(edgeGesture(last, isStart: false))
+                .offset(x: scale.x(editor.timeMap.total) - 5, y: y)
+        }
+    }
+
+    private func isInsert(_ part: EditSettings.ClipPart) -> Bool {
+        editor.settings.inserts.contains { abs($0.sourceRange.lowerBound - part.range.lowerBound) < 1e-6 }
+    }
+
+    private func edgeGesture(_ part: EditSettings.ClipPart, isStart: Bool) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("timeline"))
+            .onChanged { v in
+                if editor.isPlaying { editor.pause() }
+                editor.dragEdge(of: part, isStart: isStart, dt: Double(v.translation.width / scale.pps))
+            }
+            .onEnded { _ in editor.endInteraction() }
+    }
+
+    /// Drag: moves the part to another place (with a single part: moves the playhead).
+    /// Click: selects the part and puts the playhead there.
+    private func moveGesture(_ part: EditSettings.ClipPart) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("timeline"))
+            .onChanged { v in
+                let dx = v.translation.width
+                if editor.clipDrag == nil, abs(dx) < 4 { return }
+                if editor.clipParts.count < 2 { scrub(to: v.location.x); return }
+                if editor.isPlaying { editor.pause() }
+                editor.clipDrag = EditorModel.ClipDrag(key: part.key, dt: Double(dx / scale.pps))
+            }
+            .onEnded { v in
+                if let drag = editor.clipDrag {
+                    let index = editor.clipDropIndex(drag)
+                    editor.clipDrag = nil
+                    if let index { editor.moveClip(key: drag.key, to: index) }
+                } else if abs(v.translation.width) < 4 {
+                    guard editor.voiceOverState == .idle else { return }
+                    if editor.isPlaying { editor.pause() }
+                    editor.seek(to: S(editor.snapTime(scale.time(v.location.x), tolerance: snapTolerance, includePlayhead: false)))
+                    if let clip = editor.settings.inserts.first(where: { abs($0.sourceRange.lowerBound - part.range.lowerBound) < 1e-6 }) {
+                        editor.selection = .insert(clip.id)
+                    } else {
+                        editor.selection = .segment(part.range.lowerBound)
+                    }
                 }
-                .onEnded { _ in editor.endInteraction() })
-            .offset(x: scale.x(T(editor.settings.trimStart)) - 5, y: y)
-        TrimHandle(isStart: false, height: h)
-            .gesture(DragGesture(coordinateSpace: .named("timeline"))
-                .onChanged { v in
-                    editor.beginInteraction()
-                    editor.setTrim(end: S(editor.snapTime(scale.time(v.location.x), tolerance: snapTolerance, excludingTrim: true)))
-                    editor.seek(to: editor.trimEnd)
-                }
-                .onEnded { _ in editor.endInteraction() })
-            .offset(x: scale.x(T(editor.trimEnd)) - 5, y: y)
+            }
+    }
+
+    /// One part of the video in the lane.
+    private func clipBlock(_ part: EditSettings.ClipPart, visible v: TimelineScale.Visible, height h: CGFloat) -> some View {
+        let shape = BlockShape(visible: v, radius: Theme.laneRadius + 2)
+        let dragged = editor.clipDrag?.key == part.key
+        let width = max(2, v.width - 1.5)
+        return ZStack(alignment: .topLeading) {
+            shape.fill(Theme.color(.video).opacity(dragged ? 0.4 : 0.16))
+            shape.strokeBorder(Theme.color(.video).opacity(0.45), lineWidth: 1)
+            if width > 90 && !v.clippedLeft {
+                Text(editor.project.info.sourceName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 10)
+                    .padding(.top, 6)
+            }
+        }
+        .frame(width: width, height: h)
+        .contentShape(Rectangle())
+        .gesture(moveGesture(part))
+        .overlay(alignment: .leading) {
+            if !v.clippedLeft, width > 30 {
+                Color.white.opacity(0.001)
+                    .frame(width: 8)
+                    .contentShape(Rectangle())
+                    .pointerStyle(.columnResize)
+                    .gesture(edgeGesture(part, isStart: true))
+                    .help("Kante ziehen: kürzt den Teil, die Lücke schließt sich – zurückziehen holt das Entfernte wieder")
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if !v.clippedRight, width > 30 {
+                Color.white.opacity(0.001)
+                    .frame(width: 8)
+                    .contentShape(Rectangle())
+                    .pointerStyle(.columnResize)
+                    .gesture(edgeGesture(part, isStart: false))
+                    .help("Kante ziehen: kürzt den Teil, die Lücke schließt sich – zurückziehen holt das Entfernte wieder")
+            }
+        }
+        .help("Teil des Videos: klicken wählt aus, ziehen verschiebt ihn an eine andere Stelle, S teilt am Abspielkopf")
+        .offset(x: dragged ? CGFloat(editor.clipDrag?.dt ?? 0) * scale.pps : 0)
+        .shadow(color: dragged ? .black.opacity(0.35) : .clear, radius: dragged ? 8 : 0, y: dragged ? 3 : 0)
+        .zIndex(dragged ? 5 : 0)
     }
 
     /// Fade curves of a dissolve at a cut: the part before the cut fades out, the part after it fades in.
@@ -695,7 +802,7 @@ private struct TimelineContent: View {
     @ViewBuilder
     private func laneBackground(height: CGFloat, opacity: Double, hint: String?, y: CGFloat,
                                 adds lane: TimelineHover.Lane? = nil, onTap: @escaping () -> Void) -> some View {
-        if let v = vis(0, editor.duration) {
+        if let v = laneVisible {
             let hover = editor.timelineHover
             BlockShape(visible: v, radius: Theme.laneRadius)
                 .fill(Theme.lane)
@@ -923,7 +1030,7 @@ private struct TimelineContent: View {
                        hint: texts.isEmpty ? "Klicken fügt eine Bauchbinde ein" : nil,
                        y: layout.textY, adds: .text) { editor.selection = nil }
         ForEach(texts) { text in
-            if let v = vis(text.start, text.end) {
+            if let run = editor.displayRange(start: text.start, end: text.end, free: text.isFree), let v = scale.visible(run.lowerBound, run.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.textH,
                            color: text.kind == .lowerThird ? .teal : .indigo,
                            icon: text.kind == .lowerThird ? "text.below.photo" : "rectangle.inset.filled",
@@ -935,7 +1042,8 @@ private struct TimelineContent: View {
                                    editor.textDragOrigin = text; editor.selectedTextID = text.id; editor.beginInteraction()
                                }
                                guard let o = editor.textDragOrigin else { return }
-                               let r = dragged(kind, dt, start: o.start, end: o.end, minLength: 0.2, id: text.id)
+                               let r = o.isFree ? draggedFree(kind, dt, start: o.start, end: o.end, minLength: 0.2, id: text.id)
+                                   : dragged(kind, dt, start: o.start, end: o.end, minLength: 0.2, id: text.id)
                                editor.updateText(id: text.id) { t in t.start = r.start; t.end = r.end }
                            },
                            onDragEnd: { editor.endInteraction() })
@@ -951,8 +1059,8 @@ private struct TimelineContent: View {
                            ? "Bilder und Videos hierher ziehen – oder klicken" : nil,
                        y: layout.mediaY, adds: .media) { editor.selection = nil }
         ForEach(editor.settings.videoOverlays) { o in
-            let a = T(o.start)
-            if let v = scale.visible(a, a + o.duration) {
+            let shown = editor.displayRange(o)
+            if let v = scale.visible(shown.lowerBound, shown.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.mediaH, color: o.synced ? .orange : .yellow,
                            icon: o.synced ? "macwindow.on.rectangle" : "pip", label: o.name,
                            selected: editor.selection == .videoOverlay(o.id),
@@ -962,16 +1070,17 @@ private struct TimelineContent: View {
                                    editor.videoOverlayDragOrigin = o; editor.selection = .videoOverlay(o.id); editor.beginInteraction()
                                }
                                guard let origin = editor.videoOverlayDragOrigin else { return }
-                               let start = T(origin.start)
+                               let start = origin.isFree ? origin.start : T(origin.start)
                                let dt = snapped(kind, dt, start, start + origin.duration, o.id)
+                               func place(_ t: Double) -> Double { origin.isFree ? t : S(t) }
                                editor.updateVideoOverlay(id: o.id) { c in
                                    switch kind {
                                    case .move:
-                                       c.start = S(max(0, min(start + dt, editor.timeMap.total - origin.duration)))
+                                       c.start = place(max(0, min(start + dt, editor.timeMap.total - origin.duration)))
                                    case .start:
                                        // Trim the beginning: later in the file (the synced one stays in sync anyway).
                                        let delta = max(origin.synced ? -start : -min(start, origin.fileOffset), min(dt, origin.duration - 0.2))
-                                       c.start = S(start + delta)
+                                       c.start = place(start + delta)
                                        if !origin.synced { c.fileOffset = origin.fileOffset + delta }
                                        c.duration = origin.duration - delta
                                    case .end:
@@ -985,7 +1094,7 @@ private struct TimelineContent: View {
             }
         }
         ForEach(editor.settings.images) { o in
-            if let v = vis(o.start, o.end) {
+            if let run = editor.displayRange(start: o.start, end: o.end, free: o.isFree), let v = scale.visible(run.lowerBound, run.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.mediaH, color: .mint, icon: "photo",
                            label: URL(fileURLWithPath: o.file).deletingPathExtension().lastPathComponent,
                            selected: editor.selection == .image(o.id),
@@ -995,7 +1104,8 @@ private struct TimelineContent: View {
                                    editor.imageDragOrigin = o; editor.selection = .image(o.id); editor.beginInteraction()
                                }
                                guard let origin = editor.imageDragOrigin else { return }
-                               let r = dragged(kind, dt, start: origin.start, end: origin.end, minLength: 0.2, id: o.id)
+                               let r = origin.isFree ? draggedFree(kind, dt, start: origin.start, end: origin.end, minLength: 0.2, id: o.id)
+                                   : dragged(kind, dt, start: origin.start, end: origin.end, minLength: 0.2, id: o.id)
                                editor.updateImage(id: o.id) { $0.start = r.start; $0.end = r.end }
                            },
                            onDragEnd: { editor.endInteraction() })
@@ -1011,19 +1121,18 @@ private struct TimelineContent: View {
         let h = layout.audioH
         let color = Self.color(lane)
         let laneMuted = editor.isMuted(lane)
-        if let v = vis(0, editor.duration) {
+        if let v = laneVisible {
             let map = editor.timeMap
             ZStack(alignment: .leading) {
                 BlockShape(visible: v, radius: Theme.laneRadius).fill(color.opacity(0.08))
-                if lane == .music, let music = editor.settings.music, let peaks = editor.waveforms["music:" + music.file] {
+                if lane == .music, let music = editor.settings.music, music.clipped != true, let peaks = editor.waveforms["music:" + music.file] {
                     let length = Double(peaks.count) / Waveform.rate
                     let introLead = editor.introLead
                     WaveformCanvas(peaks: peaks, loudest: editor.waveformPeaks["music:" + music.file] ?? 0,
                                    timeStart: v.lo, seconds: v.hi - v.lo,
                                    fileTime: { t in
                                        // Music runs in output time: nothing under removed parts.
-                                       guard let output = t < 0 ? t + introLead : editor.outputTime(ofSource: S(t)) else { return nil }
-                                       let f = music.fileOffset + output
+                                       let f = music.fileOffset + t + introLead
                                        return music.loop && length > 0 ? f.truncatingRemainder(dividingBy: length) : (f < length ? f : nil)
                                    },
                                    color: laneMuted ? Color.secondary.opacity(0.35) : color.opacity(0.8))
@@ -1052,8 +1161,8 @@ private struct TimelineContent: View {
             .offset(x: v.x, y: y)
         }
 
-        if lane == .voiceOver {
-            voiceOverClips(y: y, height: h, color: color, laneMuted: laneMuted)
+        if lane == .voiceOver || lane == .music {
+            voiceOverClips(y: y, height: h, color: color, laneMuted: laneMuted, music: lane == .music)
         }
 
         ForEach(editor.settings.audioMutes.filter { $0.lane == lane }) { mute in
@@ -1083,12 +1192,12 @@ private struct TimelineContent: View {
     /// Voice-over clips. Clips pushed over each other are shown in rows (as they play on separate
     /// layers) with their crossfade curves; the waveform follows the fades.
     @ViewBuilder
-    private func voiceOverClips(y: CGFloat, height h: CGFloat, color: Color, laneMuted: Bool) -> some View {
+    private func voiceOverClips(y: CGFloat, height h: CGFloat, color: Color, laneMuted: Bool, music: Bool) -> some View {
         // Start in timeline time; the clips play in real time from there.
-        let clips = editor.displayVoiceOvers
+        let clips = editor.displayVoiceOvers(music: music)
         let layers = VoiceOverClip.layers(clips)
         let fades = VoiceOverClip.crossfades(clips)
-        let rowH = h / CGFloat(layers.count)
+        let rowH = h / CGFloat(max(1, layers.count))
         ForEach(clips) { clip in
             if let v = scale.visible(clip.start, clip.end) {
                 let layer = layers.layerOf[clip.id] ?? 0
@@ -1116,16 +1225,17 @@ private struct TimelineContent: View {
                                    editor.beginInteraction()
                                }
                                guard let o = editor.voiceOverDragOrigin else { return }
-                               let start = T(o.start)
+                               let start = o.isFree ? o.start : T(o.start)
                                let dt = snapped(kind, dt, start, start + o.duration, clip.id)
+                               func place(_ t: Double) -> Double { o.isFree ? t : S(t) }
                                editor.updateVoiceOver(id: clip.id) { c in
                                    switch kind {
                                    case .move:
-                                       c.start = S(start + dt)
+                                       c.start = place(start + dt)
                                    case .start:
                                        // Trim the beginning: the clip keeps its place in the file.
                                        let delta = max(-o.fileOffset, min(dt, o.duration - 0.1))
-                                       c.start = S(start + delta)
+                                       c.start = place(start + delta)
                                        c.fileOffset = o.fileOffset + delta
                                        c.duration = o.duration - delta
                                    case .end:
@@ -1304,6 +1414,7 @@ private struct ClickDots: View {
         Canvas { ctx, size in
             var dots = Path()
             for click in clicks {
+                guard map.contains(source: click.t) else { continue }
                 let t = map.timeline(click.t)
                 guard t >= scale.start, t <= scale.end else { continue }
                 let x = scale.x(t) - left
@@ -1544,97 +1655,55 @@ struct RangeBlock: View {
     }
 }
 
-private struct CutBlock: View {
+/// Mark where something was cut out and the timeline closed up. Automatic cuts (filler words,
+/// pauses, transcript) are orange and labelled.
+private struct CutSeam: View {
+    static let width: CGFloat = 16
     @ObservedObject var editor: EditorModel
     let cut: CutRange
-    let visible: TimelineScale.Visible
-    let pps: CGFloat
     let height: CGFloat
 
     var body: some View {
         let selected = editor.selectedCutID == cut.id
-        let width = max(10, visible.width)
-        let shape = BlockShape(visible: visible, radius: 6)
-        // Automatic cuts (filler words, pauses, transcript) are orange and labelled.
         let tint: Color = cut.origin == nil ? .red : .orange
-        shape
-            .fill(tint.opacity(selected ? 0.55 : 0.35))
-            .overlay(shape.strokeBorder(tint.opacity(selected ? 1 : 0.7),
-                                        style: StrokeStyle(lineWidth: selected ? 2 : 1, dash: [4, 3])))
-            .overlay { if selected { shape.inset(by: -2).strokeBorder(TimelineSelection.color, lineWidth: TimelineSelection.lineWidth) } }
-            .shadow(color: selected ? TimelineSelection.color.opacity(0.75) : .clear, radius: selected ? 5 : 0)
-            .overlay {
-                if let origin = cut.origin, width > 34 {
-                    Text(origin.short).font(.caption2.bold()).foregroundStyle(.white).lineLimit(1)
-                } else if width > 28 {
-                    Image(systemName: "scissors").font(.caption.bold()).foregroundStyle(.white)
+        ZStack(alignment: .top) {
+            Rectangle()
+                .fill(selected ? TimelineSelection.color : tint.opacity(0.8))
+                .frame(width: selected ? 3 : 2, height: height)
+            Group {
+                if let origin = cut.origin {
+                    Text(origin.short).font(.system(size: 8.5, weight: .bold))
+                } else {
+                    Image(systemName: "scissors").font(.system(size: 8, weight: .bold))
                 }
             }
-            .help(cut.origin.map { "\($0.label) – automatisch herausgeschnitten. ⌫ holt es zurück, Kanten ziehen passt den Schnitt an." }
-                  ?? "Herausgeschnittener Bereich")
-            .overlay(alignment: .leading) { if !visible.clippedLeft { edge(isStart: true) } }
-            .overlay(alignment: .trailing) { if !visible.clippedRight { edge(isStart: false) } }
-            .frame(width: width, height: height)
-            .contentShape(Rectangle())
-            .onTapGesture { editor.selectedCutID = cut.id }
-            .gesture(
-                DragGesture(minimumDistance: 2, coordinateSpace: .named("timeline"))
-                    .onChanged { v in
-                        begin()
-                        guard let o = editor.cutDragOrigin else { return }
-                        let a = editor.display(o.start), b = editor.display(o.end)
-                        let dt = editor.snapDelta(.move, dt: Double(v.translation.width / pps), start: a, end: b,
-                                                  tolerance: Double(8 / pps), excluding: cut.id)
-                        let start = min(max(0, a + dt), editor.timeMap.total - (b - a))
-                        editor.updateCut(id: cut.id, start: editor.sourceTime(start), end: editor.sourceTime(start + b - a))
-                    }
-                    .onEnded { _ in editor.endInteraction() }
-            )
-            .contextMenu {
-                if editor.canDissolve(cut) {
-                    Section("Überblendung") {
-                        ForEach([0.0, 0.5, 1.0, 2.0], id: \.self) { length in
-                            Button(length == 0 ? "Harter Schnitt" : String(format: "%.1f s", length)) {
-                                editor.setDissolve(cutID: cut.id, length)
-                            }
-                        }
-                    }
-                }
-            }
-            .help("Herausgeschnittener Bereich: ziehen zum Verschieben, Kanten ziehen zum Ändern, ⌫ zum Löschen. "
-                  + "Ausgewählt: die runden Griffe oben vom Schnitt wegziehen für eine Überblendung.")
-    }
-
-    private func begin() {
-        if editor.cutDragOrigin?.id != cut.id {
-            editor.cutDragOrigin = cut
-            editor.selectedCutID = cut.id
-            editor.beginInteraction()
+            .foregroundStyle(.white)
+            .fixedSize()
+            .padding(.horizontal, 3)
+            .frame(minWidth: 14, minHeight: 13)
+            .background(RoundedRectangle(cornerRadius: 3).fill(selected ? TimelineSelection.color : tint))
+            .offset(y: 1)
         }
-    }
-
-    private func edge(isStart: Bool) -> some View {
-        Rectangle()
-            .fill(Color.white.opacity(0.001))
-            .frame(width: 8)
-            .contentShape(Rectangle())
-            .pointerStyle(.columnResize)
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .named("timeline"))
-                    .onChanged { v in
-                        begin()
-                        guard let o = editor.cutDragOrigin else { return }
-                        let a = editor.display(o.start), b = editor.display(o.end)
-                        let dt = editor.snapDelta(isStart ? .start : .end, dt: Double(v.translation.width / pps), start: a,
-                                                  end: b, tolerance: Double(8 / pps), excluding: cut.id)
-                        if isStart {
-                            editor.updateCut(id: cut.id, start: editor.sourceTime(a + dt))
-                        } else {
-                            editor.updateCut(id: cut.id, end: editor.sourceTime(b + dt))
+        .frame(width: Self.width, height: height)
+        .contentShape(Rectangle())
+        .onTapGesture { editor.selectedCutID = cut.id }
+        .contextMenu {
+            Button("Entferntes wiederherstellen") {
+                editor.selectedCutID = cut.id
+                editor.deleteSelection()
+            }
+            if editor.canDissolve(cut) {
+                Section("Überblendung") {
+                    ForEach([0.0, 0.5, 1.0, 2.0], id: \.self) { length in
+                        Button(length == 0 ? "Harter Schnitt" : String(format: "%.1f s", length)) {
+                            editor.setDissolve(cutID: cut.id, length)
                         }
                     }
-                    .onEnded { _ in editor.endInteraction() }
-            )
+                }
+            }
+        }
+        .help(String(format: "%@ %.1f s entfernt. Anklicken: Überblendung einstellen, ⌫ holt es zurück.",
+                     cut.origin?.label ?? "Hier wurden", cut.end - cut.start))
     }
 }
 
@@ -2052,6 +2121,9 @@ struct TimelineDropDelegate: DropDelegate {
             if let i = lanes.firstIndex(of: .voiceOver), y >= layout.audioY(i) - 2, y < layout.audioY(i) + layout.audioH + 2 {
                 return (.narration, CGRect(x: 0, y: layout.audioY(i), width: 0, height: layout.audioH),
                         "Audio als Sprachspur (Voice-over) – auch für Untertitel")
+            }
+            if let i = lanes.firstIndex(of: .music), y >= layout.audioY(i) - 2, y < layout.audioY(i) + layout.audioH + 2 {
+                return (.music, CGRect(x: 0, y: layout.audioY(i), width: 0, height: layout.audioH), "Audio als weiterer Clip auf der Musikspur")
             }
             return (.audio, CGRect(x: 0, y: layout.audioY(0), width: 0, height: layout.total - layout.audioY(0)), "Audio als Hintergrundmusik")
         }

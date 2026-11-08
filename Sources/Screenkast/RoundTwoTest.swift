@@ -19,6 +19,7 @@ enum RoundTwoTest {
         try await soundTest(base)
         try await ReviewTest.run(base: base)
         try await NewProjectTest.run(base: base, dir: dir)
+        try await ClipTimelineTest.run(base: base, dir: dir)
     }
 
     private static func project(_ base: Project, _ change: (inout EditSettings) -> Void) -> Project {

@@ -13,25 +13,26 @@ extension EditorModel {
     }
 
     func isVisibleNow(videoOverlay o: VideoOverlay) -> Bool {
-        let T = display(currentTime), a = display(o.start)
-        return T >= a - 1e-6 && T <= a + o.duration + 1e-6
+        let T = display(currentTime), r = displayRange(o)
+        return T >= r.lowerBound - 1e-6 && T <= r.upperBound + 1e-6
     }
 
     /// Source range that starts at `start` and lasts `length` timeline seconds (kept on the recording).
     func sourceRange(from start: Double, timelineLength length: Double) -> (start: Double, end: Double) {
         let a = min(max(0, display(start)), max(0, timeMap.total - 0.2))
-        return (sourceTime(a), sourceTime(min(timeMap.total, a + length)))
+        return (sourceTime(a), timeMap.sourceEnd(min(timeMap.total, a + length)))
     }
 
     /// `start…end` kept on the recording and at least `minLength` timeline seconds long. Ranges that
     /// already fit stay exactly as they are.
     func clampedRange(_ start: Double, _ end: Double, minLength: Double) -> (start: Double, end: Double) {
         let total = timeMap.total
-        var a = display(start), b = display(end)
+        let run = displayRun(start, end)
+        var a = run?.lowerBound ?? display(start), b = run?.upperBound ?? display(end)
         if a >= 0, b <= total + 1e-9, b - a >= minLength - 1e-9 { return (start, end) }
         a = min(max(0, a), max(0, total - minLength))
         b = min(total, max(b, a + minLength))
-        return (sourceTime(a), sourceTime(b))
+        return (sourceTime(a), timeMap.sourceEnd(b))
     }
 
     /// Brings the playhead into the selected item, so its handles show on the right frame.
@@ -41,12 +42,18 @@ extension EditorModel {
         switch selection {
         case .mask(let id): range = settings.masks.first { $0.id == id }.map { ($0.start, $0.end) }
         case .annotation(let id): range = settings.annotations.first { $0.id == id }.map { ($0.start, $0.end) }
-        case .image(let id): range = settings.images.first { $0.id == id }.map { ($0.start, $0.end) }
+        case .image(let id):
+            if let o = settings.images.first(where: { $0.id == id }) {
+                range = o.isFree ? (sourceTime(o.start), timeMap.sourceEnd(o.end)) : (o.start, o.end)
+            }
         case .text(let id):
-            if let t = settings.texts.first(where: { $0.id == id }), t.kind == .lowerThird || t.placement == .overlay { range = (t.start, t.end) }
+            if let t = settings.texts.first(where: { $0.id == id }), t.kind == .lowerThird || t.placement == .overlay {
+                range = t.isFree ? (sourceTime(t.start), timeMap.sourceEnd(t.end)) : (t.start, t.end)
+            }
         case .videoOverlay(let id):
             if let o = settings.videoOverlays.first(where: { $0.id == id }) {
-                range = (o.start, sourceTime(display(o.start) + o.duration))
+                let r = displayRange(o)
+                range = (sourceTime(r.lowerBound), timeMap.sourceEnd(r.upperBound))
             }
         default: break
         }
@@ -88,7 +95,7 @@ extension EditorModel {
             o.aspect = abs(shown.width) / max(1, abs(shown.height))
             o.rotation = VideoRotation.degrees(transform)
             if let center { o.x = center.x; o.y = center.y }
-            settings.videoOverlays.append(o)
+            settings.videoOverlays.append(adopted(o))
             selection = .videoOverlay(o.id)
             if isPlaying { pause() }
         }
@@ -103,12 +110,12 @@ extension EditorModel {
         o.y = min(1, max(0, o.y))
         o.opacity = min(1, max(0.05, o.opacity))
         o.volume = min(2, max(0, o.volume))
-        o.start = min(max(0, o.start), max(0, duration - 0.2))
+        o.start = min(max(0, o.start), max(0, (o.isFree ? timeMap.total : duration) - 0.2))
         if !o.synced {
             o.fileOffset = min(max(0, o.fileOffset), max(0, o.fileDuration - 0.2))
             o.duration = min(max(0.2, o.duration), o.fileDuration - o.fileOffset)
         }
-        o.duration = min(max(0.2, o.duration), max(0.2, timeMap.total - display(o.start)))
+        o.duration = min(max(0.2, o.duration), max(0.2, timeMap.total - (o.isFree ? o.start : display(o.start))))
         settings.videoOverlays[i] = o
     }
 
@@ -129,7 +136,7 @@ extension EditorModel {
 // MARK: - Drag and drop of media
 
 extension EditorModel {
-    enum DropTarget { case mainTrack, overlay, audio, narration, preview(CGPoint) }
+    enum DropTarget { case mainTrack, overlay, audio, music, narration, preview(CGPoint) }
 
     static let droppableTypes: [UTType] = [.fileURL]
 
@@ -166,6 +173,8 @@ extension EditorModel {
                 addImage(url: url, at: time)
             case (.audio, .narration):
                 addNarrationFile(url: url, at: time)
+            case (.audio, .music):
+                addMusicClip(url: url, atTimeline: display(time))
             case (.audio, _):
                 setMusic(url: url)
             }
@@ -182,7 +191,7 @@ extension EditorModel {
         let r = sourceRange(from: at, timelineLength: 4)
         var image = ImageOverlay(file: file, start: r.start, end: r.end)
         if let center { image.x = center.x; image.y = center.y }
-        settings.images.append(image)
+        settings.images.append(adopted(image))
         selection = .image(image.id)
         if isPlaying { pause() }
     }
@@ -328,10 +337,10 @@ extension EditorModel {
 
         if hit(renderer.captionFrame(at: t)) { return .panel(.captions) }
         if let w = settings.watermark, hit(renderer.watermarkFrame(w, out: out)) { return .panel(.logo) }
-        for o in settings.images.reversed() where isVisibleNow(start: o.start, end: o.end) {
+        for o in settings.images.reversed() where isVisibleNow(image: o) {
             if hit(renderer.imageFrame(o, out: out)) { return .image(o.id) }
         }
-        for text in settings.overlayTexts.reversed() where isVisibleNow(start: text.start, end: text.end) {
+        for text in settings.overlayTexts.reversed() where isVisibleNow(text: text) {
             if text.kind == .titleCard { return .text(text.id) }
             if hit(renderer.lowerThirdFrame(text)) { return .text(text.id) }
         }
@@ -399,7 +408,7 @@ extension EditorModel {
             let start = min(max(0, at), max(0, duration - 0.2))
             let available = max(0.2, timeMap.total + outroLead - display(start))
             let clip = VoiceOverClip(file: file, fileOffset: 0, start: start, duration: min(length, available))
-            settings.voiceOvers.append(clip)
+            settings.voiceOvers.append(adopted(clip))
             selectedVoiceOverID = clip.id
             loadVoiceOverWaveform(file)
             if isPlaying { pause() }

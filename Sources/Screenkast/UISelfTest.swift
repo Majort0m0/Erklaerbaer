@@ -379,6 +379,29 @@ enum UISelfTest {
         guard abs(longer - (freeze.duration + 43 / pps)) < 0.1 else {
             throw fail("freeze edge drag: \(longer) s, expected about \(freeze.duration + 43 / pps)")
         }
+        // 8b. Dragging the second part in front of the first moves it; ⌘Z takes it back. The edge trims.
+        editor.settings.freezes = []
+        editor.settings.splits = [2.0]
+        editor.settings.cuts = []
+        pump(0.3)
+        let clipY = layout.clipY + layout.clipH / 2
+        drag(point(x(editor.display(3.0)), clipY), point(x(0.2), clipY))
+        guard editor.clipParts.first?.range.lowerBound == 2.0, editor.settings.clipOrder != nil else {
+            throw fail("dragging a part: \(editor.clipParts.map(\.range))")
+        }
+        key("z", 6, .command)
+        pump(0.3)
+        guard editor.settings.clipOrder == nil else { throw fail("⌘Z after moving a part") }
+        click(point(x(3.5), layout.ruler / 2))   // the playhead is not in the way
+        let totalBefore = editor.timeMap.total
+        let rippleEdge = x(2.0) - 3
+        drag(point(rippleEdge, clipY), point(rippleEdge - 40, clipY))
+        guard editor.settings.cuts.count == 1, editor.timeMap.total < totalBefore - 0.1 else {
+            throw fail("edge drag: cuts \(editor.settings.cuts), total \(editor.timeMap.total) of \(totalBefore)")
+        }
+        key("z", 6, .command)
+        pump(0.3)
+        editor.settings.cuts = []
         // 9. A click on a lane name selects the lane; a click in an empty lane then ends the selection (adds nothing).
         click(NSPoint(x: 40, y: size.height - (layout.zoomY + 11)))
         guard editor.selection == .panel(.zoom) else { throw fail("click on the lane name: \(String(describing: editor.selection))") }

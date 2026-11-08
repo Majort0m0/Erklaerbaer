@@ -41,7 +41,7 @@ enum ProjectFactory {
 
     /// An own video becomes the main track (copied into the project; on APFS a clone, no extra
     /// space). Its sound counts as the microphone: voice enhancement, captions and pause removal work.
-    static func importVideo(_ source: URL, into library: URL = Project.libraryURL) async throws -> Project {
+    static func importVideo(_ source: URL, into library: URL = ProjectLocations.current) async throws -> Project {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw Failure.noVideo }
         let size = try await track.load(.naturalSize)
@@ -75,7 +75,7 @@ enum ProjectFactory {
     /// An empty canvas (black) of `length` seconds; clips are inserted into it, pictures, videos
     /// and texts placed on top. The timeline grows with every inserted clip.
     static func empty(length: Double, aspect: OutputAspect, name: String = "Neues Projekt",
-                      into library: URL = Project.libraryURL) async throws -> Project {
+                      into library: URL = ProjectLocations.current) async throws -> Project {
         let folder = try newFolder(named: name, in: library)
         let size = aspect == .vertical ? CGSize(width: 1080, height: 1920) : aspect == .square ? CGSize(width: 1080, height: 1080)
             : aspect == .classic ? CGSize(width: 1440, height: 1080) : CGSize(width: 1920, height: 1080)

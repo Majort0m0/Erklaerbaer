@@ -222,6 +222,7 @@ struct VideoOverlaySection: View {
         let o = overlay
         let id = o.id
         Section("Bild im Bild") {
+            if !o.synced { LinkRow(free: o.isFree) { editor.setFree(videoOverlay: id, $0) } }
             LabeledSlider(title: "Größe", value: Binding(get: { o.width }, set: { v in editor.updateVideoOverlay(id: id) { $0.width = v } }),
                           range: 0.08...1, format: { "\(Int($0 * 100)) %" })
             LabeledSlider(title: "Deckkraft", value: Binding(get: { o.opacity }, set: { v in editor.updateVideoOverlay(id: id) { $0.opacity = v } }),
@@ -521,5 +522,40 @@ struct AutoEditsSection: View {
                 .buttonStyle(.borderless)
                 .help("Alle zurücknehmen")
         }
+    }
+}
+
+/// "An das Video gekoppelt" for one clip.
+struct LinkRow: View {
+    let free: Bool
+    let set: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Toggle("An das Video gekoppelt", isOn: Binding(get: { !free }, set: { set(!$0) }))
+            Text(free ? "Frei: bleibt an seiner Stelle, wenn das Video geschnitten oder umgestellt wird."
+                      : "Wird mit dem Video geschnitten und wandert mit, wenn der Teil verschoben wird.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Chain symbol of a lane: closed (tied to the video) or struck through (free).
+struct LinkSymbol: View {
+    let free: Bool
+
+    var body: some View {
+        Image(systemName: "link")
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(free ? Color.secondary.opacity(0.55) : Theme.brand)
+            .overlay {
+                if free {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.8))
+                        .frame(width: 15, height: 1.3)
+                        .rotationEffect(.degrees(-45))
+                }
+            }
     }
 }

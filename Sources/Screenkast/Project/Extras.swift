@@ -17,6 +17,8 @@ struct BackgroundMusic: Codable, Equatable {
     /// Quieter while someone speaks (microphone, voice-over).
     var duckUnderSpeech: Bool = true
     var duckLevel: Double = 0.3
+    /// The music was cut into clips (on the music lane); the file no longer runs through the video.
+    var clipped: Bool? = nil
 }
 
 extension BackgroundMusic {
@@ -32,6 +34,7 @@ extension BackgroundMusic {
         fadeOut = try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 2.5
         duckUnderSpeech = try c.decodeIfPresent(Bool.self, forKey: .duckUnderSpeech) ?? true
         duckLevel = try c.decodeIfPresent(Double.self, forKey: .duckLevel) ?? 0.3
+        clipped = try c.decodeIfPresent(Bool.self, forKey: .clipped)
     }
 }
 
@@ -196,6 +199,10 @@ struct ImageOverlay: Codable, Identifiable, Equatable {
     /// Frame and shadow (nil: none, for projects from before).
     var frame: PictureFrame? = nil
     var shadow: Bool? = nil
+    /// Not tied to the video: `start` is a timeline position and stays put when parts of the video
+    /// are cut or moved (nil: follows the moment of the video it was placed on).
+    var free: Bool? = nil
+    var isFree: Bool { free == true }
 }
 
 /// Logo in a corner of every frame.

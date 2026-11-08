@@ -109,7 +109,7 @@ enum CaptionGenerator {
         progress("Sprache wird erkannt …")
         let heard = try await transcribe(url: audioURL, localeID: localeID, progress: progress)
         // Composition time → timeline time → source time (the intro lies before the recording).
-        let map = project.settings.timeMap(duration: project.info.duration)
+        let map = project.settings.editMap(duration: project.info.duration)
         let offset = media.recordingOffset
         let words = heard.compactMap { w -> CaptionWord? in
             let a = w.start - offset, b = w.end - offset
@@ -219,12 +219,12 @@ enum CaptionGenerator {
     /// SRT in output time (trim and cuts applied; `offset` = length of an intro before the recording).
     static func srt(_ captions: [Caption], kept: [ClosedRange<Double>], offset introOffset: Double = 0, map: TimeMap? = nil) -> String {
         func timeline(_ t: Double) -> Double { map?.timeline(t) ?? t }
+        func length(_ r: ClosedRange<Double>) -> Double { map?.length(r) ?? (r.upperBound - r.lowerBound) }
         func toOutput(_ t: Double) -> Double? {
             var offset = introOffset
             for seg in kept {
-                if t < seg.lowerBound { return nil }
-                if t <= seg.upperBound { return offset + timeline(t) - timeline(seg.lowerBound) }
-                offset += timeline(seg.upperBound) - timeline(seg.lowerBound)
+                if seg.contains(t) { return offset + length(seg.lowerBound...t) }
+                offset += length(seg)
             }
             return nil
         }

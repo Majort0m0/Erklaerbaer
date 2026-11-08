@@ -399,7 +399,8 @@ enum VoiceProcessor {
                 result = (try? Data(contentsOf: target.appendingPathExtension("json"))).flatMap { try? JSONDecoder().decode(Result.self, from: $0) }
             }
         }
-        for file in Set(settings.voiceOvers.map(\.file)) {
+        // Speech only: no music clips, no sound taken from the video itself.
+        for file in Set(settings.voiceOvers.filter { !$0.isMusic && $0.file != project.info.videoFile }.map(\.file)) {
             let target = voiceOverURL(for: project, file: file, settings: settings)
             guard !FileManager.default.fileExists(atPath: target.path) else { continue }
             let samples = try await readFile(project.url.appendingPathComponent(file))

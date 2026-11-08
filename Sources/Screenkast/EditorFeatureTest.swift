@@ -439,19 +439,20 @@ enum EditorFeatureTest {
             throw fail("timeline zoom: span \(editor.visibleSpan), anchor \(fraction) → \(newFraction)")
         }
         editor.pan(by: 100)
-        guard abs(editor.visibleStart + editor.visibleSpan - editor.timelineEnd) < 1e-9 else { throw fail("timeline pan past the end") }
+        guard abs(editor.visibleStart + editor.visibleSpan - editor.displayEnd) < 1e-9 else { throw fail("timeline pan past the end") }
         editor.zoom(by: 1000)
         guard abs(editor.visibleSpan - editor.minSpan) < 1e-9, abs(editor.zoomLevel - 1) < 1e-9 else { throw fail("timeline zoom limit") }
         editor.zoomLevel = 0.5
         guard abs(editor.zoomLevel - 0.5) < 1e-6 else { throw fail("zoom slider round trip \(editor.zoomLevel)") }
         editor.zoomToFit()
         guard !editor.isZoomed else { throw fail("zoom to fit") }
-        // Playback skips the cut and the part the dissolve already showed.
-        guard editor.resumeTime(at: 1.0) == nil, editor.resumeTime(at: 1.5) == 2.5, editor.resumeTime(at: 2.2) == 2.5,
-              editor.resumeTime(at: 2.6) == nil else {
-            throw fail("resume times \(String(describing: editor.resumeTime(at: 1.5))) \(String(describing: editor.resumeTime(at: 2.2)))")
+        // The timeline closes up over the cut and the part the dissolve already showed.
+        guard abs(editor.display(1.0) - 1.0) < 1e-6, abs(editor.display(2.5) - 1.5) < 1e-6, abs(editor.display(2.6) - 1.6) < 1e-6,
+              abs(editor.display(2.2) - 1.5) < 1e-6, !editor.timeMap.contains(source: 2.2),
+              abs(editor.sourceTime(1.6) - 2.6) < 1e-6, abs(editor.timeMap.total - (base.info.duration - 1)) < 1e-6 else {
+            throw fail("closed timeline: \(editor.display(2.5)) \(editor.display(2.2)) total \(editor.timeMap.total)")
         }
-        print("✓ timeline zoom (anchor kept, limits, slider) and playback over a dissolve (1.5 s → 2.5 s)")
+        print("✓ timeline zoom (anchor kept, limits, slider) and the timeline closes up over a cut with a dissolve")
     }
 
     // MARK: Editing (text position, undo, split, snapping, adding in lanes)

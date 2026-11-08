@@ -285,6 +285,8 @@ final class EditorModel: ObservableObject {
     private(set) var timeMap: TimeMap
     func display(_ source: Double) -> Double { timeMap.timeline(source) }
     func sourceTime(_ timeline: Double) -> Double { timeMap.source(timeline) }
+    /// Timeline stretch of a source range (first unbroken part; nil if it was cut away).
+    func displayRun(_ start: Double, _ end: Double) -> ClosedRange<Double>? { timeMap.run(start, end) }
     /// Timeline range of the edited timeline (intro … outro).
     var displayStart: Double { -introLead }
     var displayEnd: Double { timeMap.total + outroLead }
@@ -293,7 +295,7 @@ final class EditorModel: ObservableObject {
         self.project = project
         self.settings = project.settings
         self.renderer = FrameRenderer(project: project)
-        self.timeMap = project.settings.timeMap(duration: project.info.duration)
+        self.timeMap = project.settings.editMap(duration: project.info.duration)
         Task { await setup() }
     }
 
@@ -361,7 +363,7 @@ final class EditorModel: ObservableObject {
                 timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] time in
                     MainActor.assumeIsolated { self?.tick(time.seconds) }
                 }
-                seek(to: settings.trimStart)
+                seek(to: timeMap.source(0))
             } else {
                 seek(to: time)
                 if wasPlaying { play() }
@@ -414,46 +416,24 @@ final class EditorModel: ObservableObject {
     private func tick(_ compTime: Double) {
         // While scrubbing, the player reports the last finished seek; the playhead already shows the newer target.
         if !isPlaying && (seekInFlight || pendingSeek != nil) { return }
-        let t = timeMap.source(compTime - playerOffset)
+        // The composition holds exactly the edited timeline: nothing to skip while it plays.
+        let T = compTime - playerOffset
+        let t = timeMap.source(T)
         currentTime = t
         if voiceOverState == .recording { anchorNarrationIfNeeded() }
         guard isPlaying else { return }
         followPlayhead()
-        // Tolerances in timeline time: a freeze frame is a tiny source range.
-        let T = display(t)
-        let trimEndT = display(trimEnd)
-        if voiceOverState == .recording, T >= trimEndT - 0.02 {
+        if voiceOverState == .recording, T >= timeMap.total - 0.02 {
             stopVoiceOver()
             return
         }
-        if t >= 0 && T < display(settings.trimStart) - 0.01 {
-            jump(to: settings.trimStart)
-        } else if t >= 0, t < duration, let target = resumeTime(at: t), display(target) < trimEndT - 0.01 {
-            jump(to: target)   // skip removed parts (and what a transition already showed)
-        } else if t >= 0, t < duration, T >= trimEndT - 0.01 || resumeTime(at: t) != nil {
-            if settings.outroDuration > 0 { jump(to: duration) } else { finishPlayback() }
-        } else if t >= timelineEnd - 0.02 {
-            finishPlayback()
-        }
+        if T >= displayEnd - 0.02 { finishPlayback() }
+        // Playing backwards ends at the beginning.
+        if shuttleRate < 0, compTime <= 0.03 { pause() }
     }
 
-    private func cut(containing t: Double) -> CutRange? {
-        let T = display(t)
-        return settings.cuts.first { t >= $0.start && T < display($0.end) - 0.005 }
-    }
-
-    /// Where playback continues when it reaches `t` inside a removed part (nil: `t` is played).
-    /// After a transition it continues behind the part the transition already showed.
-    func resumeTime(at t: Double) -> Double? {
-        let T = display(t)
-        for d in settings.dissolves(duration: duration) where T >= display(d.aEnd) - 0.005 && T < display(d.resume) - 0.005 {
-            return d.resume
-        }
-        return cut(containing: t)?.end
-    }
-
-    /// Where playback starts: the intro, else the trim start.
-    var playbackStart: Double { settings.introDuration > 0 ? timelineStart : settings.trimStart }
+    /// Where playback starts: the intro, else the beginning of the first part.
+    var playbackStart: Double { settings.introDuration > 0 ? timelineStart : timeMap.source(0) }
 
     private func finishPlayback() {
         if voiceOverState == .recording { stopVoiceOver() }
@@ -461,37 +441,11 @@ final class EditorModel: ObservableObject {
         seek(to: playbackStart)
     }
 
-    /// Seek during playback (skipping); starts a new narration stretch while recording a voice-over.
-    private func jump(to t: Double) {
-        if voiceOverState == .recording {
-            narrationSpans.append(NarrationSpan(hostStart: CACurrentMediaTime()))
-            narrationAnchorAllowed = false
-            let target = CMTime(seconds: display(t) + playerOffset, preferredTimescale: 48_000)
-            currentTime = t
-            player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-                Task { @MainActor in self?.narrationAnchorAllowed = true }
-            }
-        } else {
-            seek(to: t)
-        }
-    }
-
     /// Length of the exported video (intro, trim, cuts and outro applied).
     var outputDuration: Double { settings.outputDuration(duration: duration) }
 
     /// Playhead position in the exported video.
-    var outputTime: Double {
-        let intro = introLead
-        if currentTime < 0 { return max(0, currentTime + intro) }
-        let now = display(currentTime)
-        var t = intro
-        for seg in settings.keptSegments(duration: duration) {
-            let a = display(seg.lowerBound), b = display(seg.upperBound)
-            if now >= b { t += b - a } else if now > a { t += now - a }
-        }
-        if currentTime > duration { t += currentTime - duration }
-        return t
-    }
+    var outputTime: Double { max(0, display(currentTime) + introLead) }
 
     // MARK: Transport
 
@@ -504,14 +458,7 @@ final class EditorModel: ObservableObject {
     }
 
     func play() {
-        if currentTime >= timelineEnd - 0.05 {
-            seek(to: playbackStart)
-        } else if currentTime >= 0 && currentTime < settings.trimStart {
-            seek(to: settings.trimStart)
-        } else if display(currentTime) >= display(trimEnd) - 0.05 && currentTime < duration {
-            seek(to: settings.outroDuration > 0 ? duration : playbackStart)
-        }
-        if currentTime >= 0, currentTime < duration, let target = resumeTime(at: currentTime) { seek(to: min(target, trimEnd)) }
+        if display(currentTime) >= displayEnd - 0.05 { seek(to: playbackStart) }
         if let pending = pendingSeek {
             // Start from where the playhead is, not from an older scrub position.
             pendingSeek = nil
@@ -524,12 +471,15 @@ final class EditorModel: ObservableObject {
     func pause() {
         player.pause()
         isPlaying = false
+        shuttleRate = 0
     }
 
     /// Moves the playhead. While a seek is still running only the newest target is kept, so
     /// scrubbing follows the mouse without queueing up frames.
     func seek(to t: Double) {
-        let clamped = min(max(timelineStart, t), timelineEnd)
+        var clamped = min(max(timelineStart, t), timelineEnd)
+        // A moment that was cut away: the playhead goes to where the cut closed up.
+        if clamped >= 0, clamped < duration, !timeMap.contains(source: clamped) { clamped = timeMap.source(display(clamped)) }
         currentTime = clamped
         if seekInFlight && !isPlaying {
             pendingSeek = clamped
@@ -566,6 +516,7 @@ final class EditorModel: ObservableObject {
         overlapDragOrigin = nil; dissolveDragOrigin = nil; freezeDragID = nil
         annotationDragOrigin = nil; imageDragOrigin = nil; cameraLayoutDragOrigin = nil; chapterDragOrigin = nil
         videoOverlayDragOrigin = nil; cursorRangeDragOrigin = nil
+        finishEdgeDrag()
         if snapGuide != nil { snapGuide = nil }
         frozenViewport = nil
         if textCenterGuide { textCenterGuide = false }
@@ -579,6 +530,12 @@ final class EditorModel: ObservableObject {
         if wasInteracting || undoBurstStart != nil { commitUndoStep() }
     }
 
+    var clipboard: ClipboardItem?
+    var shuttleRate: Float = 0
+    /// A part of the video being dragged to another place.
+    @Published var clipDrag: ClipDrag?
+    var edgeDrag: EdgeDrag?
+    var edgeDragRate = 1.0
     /// Overlap of an intro/outro or dissolve length at the start of a drag.
     var overlapDragOrigin: Double?
     var dissolveDragOrigin: CutRange?
@@ -603,6 +560,8 @@ final class EditorModel: ObservableObject {
         var freezes: [FreezeFrame]
         var fades: [Double]
         var inserts: [InsertClip]
+        /// The composition holds the kept parts only, in their order.
+        var kept: [ClosedRange<Double>]
         var music: [String]
         var voice: String
         var videoOverlays: [String]
@@ -617,7 +576,8 @@ final class EditorModel: ObservableObject {
             freezes = s.freezes
             fades = [s.fadeIn, s.fadeOut]
             inserts = s.inserts
-            music = s.music.map { [$0.file, "\($0.fileOffset)", "\($0.loop)"] } ?? []
+            kept = s.keptSegments(duration: duration)
+            music = s.music.map { [$0.file, "\($0.fileOffset)", "\($0.loop)", "\($0.clipped ?? false)"] } ?? []
             voice = s.voice.enabled ? s.voice.key + (s.voice.enhancesMic ? "m" : "") + (s.voice.enhancesVoiceOver ? "v" : "") : "off"
             removeEcho = s.removeEcho
             clickSound = s.clickSound
@@ -656,9 +616,8 @@ final class EditorModel: ObservableObject {
     private func settingsChanged(from old: EditSettings) {
         guard settings != old else { return }
         if !applyingUndo { noteUndoable(old) }
-        if settings.speeds != old.speeds || settings.freezes != old.freezes || settings.inserts != old.inserts {
-            timeMap = settings.timeMap(duration: duration)
-        }
+        let newMap = settings.editMap(duration: duration)
+        if newMap != timeMap { timeMap = newMap }
         renderer.update(settings: settings)
         project.settings = settings
         if StructureKey(settings, duration: duration) != StructureKey(old, duration: duration) {
@@ -791,7 +750,9 @@ final class EditorModel: ObservableObject {
         case .cut(let id): settings.cuts.removeAll { $0.id == id }
         case .zoom(let id): settings.zoomSegments.removeAll { $0.id == id }
         case .mute(let id): settings.audioMutes.removeAll { $0.id == id }
-        case .voiceOver(let id): settings.voiceOvers.removeAll { $0.id == id }
+        case .voiceOver(let id):
+            settings.voiceOvers.removeAll { $0.id == id }
+            dropEmptyMusicLane()
         case .text(let id):
             settings.texts.removeAll { $0.id == id }
             forgetUnusedOverlaps()
@@ -1065,6 +1026,10 @@ final class EditorModel: ObservableObject {
     /// "Cuts" a lane at `t`: a range from there to the end of the current part of the recording
     /// (or up to the next range) that can get its own volume.
     func splitLane(_ lane: AudioLane, at t: Double) {
+        if lane == .music {
+            splitMusic(atTimeline: display(t))
+            return
+        }
         guard t > 0.02, t < duration - 0.05 else { return }
         if let inside = settings.audioMutes.first(where: { $0.lane == lane && t > $0.start + 0.05 && t < $0.end - 0.05 }) {
             var second = inside
@@ -1111,7 +1076,11 @@ final class EditorModel: ObservableObject {
         if let length = voiceOverFileLength(c.file) { c.duration = min(c.duration, length - c.fileOffset) }
         c.duration = max(0.1, c.duration)
         // The clip plays in real time from its start: keep it on the timeline.
-        c.start = sourceTime(min(max(0, display(c.start)), max(0, timeMap.total - c.duration)))
+        if c.isFree {
+            c.start = min(max(0, c.start), max(0, timeMap.total - c.duration))
+        } else {
+            c.start = sourceTime(min(max(0, display(c.start)), max(0, timeMap.total - c.duration)))
+        }
         settings.voiceOvers[i] = c
     }
 
@@ -1217,8 +1186,7 @@ final class EditorModel: ObservableObject {
 
         // Narration starts at the playhead, inside the kept part of the recording.
         var start = currentTime
-        if start < settings.trimStart || start >= trimEnd - 0.5 { start = settings.trimStart }
-        if let target = resumeTime(at: start) { start = min(target, trimEnd - 0.5) }
+        if display(start) >= timeMap.total - 0.5 || start < 0 || start >= duration { start = timeMap.source(0) }
         seek(to: start)
 
         let timer = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
@@ -1304,7 +1272,7 @@ final class EditorModel: ObservableObject {
                 return
             }
             commitUndoStep()
-            settings.voiceOvers += clips
+            settings.voiceOvers += clips.map(adopted)
             commitUndoStep()
             selectedVoiceOverID = clips.first?.id
             loadVoiceOverWaveform(file)
@@ -1327,7 +1295,7 @@ final class EditorModel: ObservableObject {
         let r = sourceRange(from: proposed, timelineLength: length)
         var text = TextOverlay(kind: .lowerThird, start: r.start, end: r.end, title: "Titel", subtitle: "Untertitel")
         text.design = settings.textDesign   // the design used last
-        settings.texts.append(text)
+        settings.texts.append(adopted(text))
         selectedTextID = text.id
         if isPlaying { pause() }
     }
@@ -1346,7 +1314,7 @@ final class EditorModel: ObservableObject {
         }
         // The design used last, without its box (title cards show the text on the background).
         if var d = settings.textDesign { d.box = .clear; card.design = d }
-        settings.texts.append(card)
+        settings.texts.append(adopted(card))
         selectedTextID = card.id
         if isPlaying { pause() }
         switch placement {
@@ -1366,6 +1334,9 @@ final class EditorModel: ObservableObject {
         if t.kind == .titleCard && t.placement != .overlay {
             t.start = 0
             t.end = min(20, max(1, t.end))
+        } else if t.isFree {
+            t.start = min(max(0, t.start), max(0, timeMap.total - 0.2))
+            t.end = min(timeMap.total, max(t.end, t.start + 0.2))
         } else {
             (t.start, t.end) = clampedRange(t.start, t.end, minLength: 0.2)
         }
@@ -1619,6 +1590,9 @@ extension EditorModel {
         case .deselect: selection = nil
         case .freeze: insertFreeze()
         case .chapter: addChapter()
+        case .copy: copySelection()
+        case .paste: pasteClipboard()
+        case .shuttle(let direction): shuttle(direction)
         }
     }
 }
@@ -1710,11 +1684,7 @@ extension EditorModel {
 
 extension EditorModel {
     /// Parts of the recording between split points (source time).
-    var videoSegments: [ClosedRange<Double>] {
-        let inner = settings.splits.filter { $0 > 0.01 && $0 < duration - 0.01 }.sorted()
-        let points = [0] + inner + [duration]
-        return zip(points, points.dropFirst()).compactMap { $1 - $0 > 0.005 ? $0...$1 : nil }
-    }
+    var videoSegments: [ClosedRange<Double>] { settings.clipParts(duration: duration).map(\.range) }
 
     func segment(at t: Double) -> ClosedRange<Double>? {
         videoSegments.first { t >= $0.lowerBound && t < $0.upperBound } ?? videoSegments.last.flatMap { t >= $0.upperBound ? $0 : nil }
@@ -1735,11 +1705,11 @@ extension EditorModel {
         commitUndoStep(); defer { commitUndoStep() }   // one undo step of its own
         let t = currentTime
         let T = display(t)
-        if let o = selectedVideoOverlay, T > display(o.start) + 0.1, T < display(o.start) + o.duration - 0.1 {
-            let first = T - display(o.start)
+        if let o = selectedVideoOverlay, case let range = displayRange(o), T > range.lowerBound + 0.1, T < range.upperBound - 0.1 {
+            let first = T - range.lowerBound
             var second = o
             second.id = UUID()
-            second.start = t
+            second.start = o.isFree ? T : t
             second.duration = o.duration - first
             if !o.synced { second.fileOffset = o.fileOffset + first }
             updateVideoOverlay(id: o.id) { $0.duration = first }
@@ -1763,8 +1733,9 @@ extension EditorModel {
         if let clip = selectedVoiceOver, case let range = displayRange(clip),
            display(t) > range.lowerBound + 0.05, display(t) < range.upperBound - 0.05 {
             let firstLength = display(t) - range.lowerBound
-            var second = VoiceOverClip(file: clip.file, fileOffset: clip.fileOffset + firstLength, start: t,
+            var second = VoiceOverClip(file: clip.file, fileOffset: clip.fileOffset + firstLength, start: clip.isFree ? display(t) : t,
                                        duration: clip.duration - firstLength)
+            second.free = clip.free
             second.id = UUID()
             updateVoiceOver(id: clip.id) { $0.duration = firstLength }
             settings.voiceOvers.append(second)
@@ -1811,13 +1782,17 @@ extension EditorModel {
         for c in settings.cuts where c.id != id { source += [c.start, c.end] }
         for z in settings.zoomSegments where z.id != id { source += [z.start, z.end] }
         for m in settings.masks where m.id != id { source += [m.start, m.end] }
-        for t in settings.overlayTexts where t.id != id { source += [t.start, t.end] }
+        for t in settings.overlayTexts where t.id != id {
+            if t.isFree { targets += [t.start, t.end] } else { source += [t.start, t.end] }
+        }
         for m in settings.audioMutes where m.id != id { source += [m.start, m.end] }
         for c in settings.cameraLayouts where c.id != id { source += [c.start, c.end] }
         for c in settings.cursorRanges where c.id != id { source += [c.start, c.end] }
         for a in settings.annotations where a.id != id { source += [a.start, a.end] }
-        for i in settings.images where i.id != id { source += [i.start, i.end] }
-        for o in settings.videoOverlays where o.id != id { targets += [display(o.start), display(o.start) + o.duration] }
+        for i in settings.images where i.id != id {
+            if i.isFree { targets += [i.start, i.end] } else { source += [i.start, i.end] }
+        }
+        for o in settings.videoOverlays where o.id != id { let r = displayRange(o); targets += [r.lowerBound, r.upperBound] }
         for c in settings.chapters where c.id != id { source.append(c.time) }
         targets += source.map(display)
         for f in settings.freezes where f.id != id {
@@ -1970,16 +1945,13 @@ extension EditorModel {
 
 extension EditorModel {
     /// Timeline range of a voice-over clip: it starts at its source moment and plays in real time.
-    func displayRange(_ clip: VoiceOverClip) -> ClosedRange<Double> {
-        let start = display(clip.start)
-        return start...(start + clip.duration)
-    }
-
     /// Voice-over clips with their start in timeline time (for layers and crossfades).
-    var displayVoiceOvers: [VoiceOverClip] {
-        settings.voiceOvers.map { clip in
+    func displayVoiceOvers(music: Bool) -> [VoiceOverClip] {
+        settings.voiceOvers.filter { $0.isMusic == music }.map { clip in
             var c = clip
-            c.start = display(clip.start)
+            let range = displayRange(clip)
+            c.start = range.lowerBound
+            c.duration = range.upperBound - range.lowerBound
             return c
         }
     }

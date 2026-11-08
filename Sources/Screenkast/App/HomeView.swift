@@ -121,6 +121,7 @@ struct HomeView: View {
                     .help("Zählt vor dem Start herunter – der Countdown wird nicht mit aufgenommen")
                 Toggle("Tastenkürzel einblenden", isOn: $model.recordShortcuts)
                     .help("Zeichnet nur Kürzel mit ⌘, ⌃ oder ⌥ auf – normal getippter Text wird nie gespeichert")
+                LabeledContent("Speichern in") { ProjectFolderMenu(model: model) }
                 Picker("Kamera", selection: $model.cameraID) {
                     Text("Aus").tag("")
                     ForEach(model.cameras, id: \.uniqueID) { cam in
@@ -254,6 +255,7 @@ struct HomeView: View {
                 .help("Projektordner ~/Filme/Erklärbär im Finder öffnen")
                 HelpButton(topic: "start")
                     .buttonStyle(GhostButtonStyle())
+                ProjectFolderMenu(model: model)
                 NewProjectMenu()
                     .fixedSize()
                     .disabled(model.creatingProject)
@@ -261,7 +263,7 @@ struct HomeView: View {
             if model.library.isEmpty {
                 ContentUnavailableView("Noch keine Projekte",
                                        systemImage: "film.stack",
-                                       description: Text("Starte links eine Aufnahme – oder lege hier ein eigenes Video ab bzw. wähle „Neues Projekt“. Projekte landen in ~/Filme/Erklärbär."))
+                                       description: Text("Starte links eine Aufnahme – oder lege hier ein eigenes Video ab bzw. wähle „Neues Projekt“. Den Speicherort wählst du oben."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -332,6 +334,8 @@ struct ProjectCard: View {
     @EnvironmentObject var model: AppModel
     let url: URL
     @StateObject private var card = CardModel()
+    private var offline: Bool { ProjectLocations.isOffline(url) }
+    private var moving: Bool { model.movingProjects.contains(url) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -382,12 +386,37 @@ struct ProjectCard: View {
         }
         .contentShape(Rectangle())
         .onHover { card.hovering = $0 }
-        .onTapGesture { model.open(url: url) }
+        .onTapGesture { if !moving { model.open(url: url) } }
+        .opacity(offline ? 0.55 : 1)
+        .overlay(alignment: .top) {
+            if moving || offline {
+                Label(moving ? "Wird verschoben …" : "\(ProjectLocations.volumeName(url) ?? "Laufwerk") nicht verbunden",
+                      systemImage: moving ? "arrow.right.circle" : "externaldrive.badge.xmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(.black.opacity(0.65)))
+                    .padding(.top, 8)
+            }
+        }
         .contextMenu {
             Button("Öffnen") { model.open(url: url) }
+                .disabled(offline || moving)
             Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                .disabled(offline)
+            Button("Verschieben nach …") { model.moveProject(url) }
+                .disabled(offline || moving)
             Divider()
-            Button("In den Papierkorb", role: .destructive) { model.delete(url: url) }
+            if offline {
+                Button("Aus der Liste entfernen") {
+                    ProjectLocations.forget(url)
+                    model.reloadLibrary()
+                }
+            } else {
+                Button("In den Papierkorb", role: .destructive) { model.delete(url: url) }
+                    .disabled(moving)
+            }
         }
         .task(id: url) { await card.load(url: url) }
     }

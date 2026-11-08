@@ -86,7 +86,7 @@ enum AudioMastering {
             levels.system = loudness(channels: [system])
         }
         var narration: [Float] = []
-        for clip in settings.voiceOvers {
+        for clip in settings.voiceOvers where !clip.isMusic {
             let enhanced = VoiceProcessor.voiceOverURL(for: project, file: clip.file, settings: settings)
             let url = settings.voice.enhancesVoiceOver && FileManager.default.fileExists(atPath: enhanced.path)
                 ? enhanced : project.url.appendingPathComponent(clip.file)

@@ -130,7 +130,8 @@ Ausgewählte Masken, Rahmen, Spotlights, Bilder, Videos und Texte haben im Vorsc
 
 ### Timeline bedienen
 
-- Klick oder Ziehen in der Zeitskala setzt den **Abspielkopf**.
+- Klick oder Ziehen in der Zeitskala setzt den **Abspielkopf**. Ein Klick auf einen Teil der Video-Spur setzt ihn ebenfalls; **Ziehen** verschiebt dort den Teil.
+- Die Timeline zeigt das fertige Video: Was entfernt wurde, nimmt keinen Platz ein.
 - Zoomen: Regler unten links, **⌘+ / ⌘−**, **⇧Z** zeigt alles; mit **⌥ + Scrollrad** oder zwei Fingern auf dem Trackpad um den Mauszeiger herum.
 - Gezoomt seitlich wischen oder die Übersichtsleiste unten ziehen.
 - Ein Klick in eine **leere Spur** zeigt einen Geisterblock, wo ein neues Element landet (Zoom, Maske, Bauchbinde, Cursor-Bereich).
@@ -142,7 +143,7 @@ Der **Einfach**-Modus blendet leere Spuren für Masken, Markierungen und Cursor 
 
 ## Schneiden
 
-*Teilen, entfernen, kürzen, Übergänge, Tempo und Standbilder.*
+*Teilen, entfernen, umstellen, kürzen, Übergänge, Tempo und Standbilder.*
 
 ### Einen Teil herausschneiden
 
@@ -150,28 +151,47 @@ Der **Einfach**-Modus blendet leere Spuren für Masken, Markierungen und Cursor 
 2. Am Ende der Stelle nochmal **S** drücken.
 3. Den Teil dazwischen in der Video-Spur anklicken und **⌫** drücken.
 
-Entfernte Bereiche werden beim Abspielen und im Export übersprungen. In allen Spuren sind sie schraffiert, Teilungen erscheinen als gestrichelte Linie. Einen entfernten Bereich anklicken und **⌫** drücken stellt ihn wieder her.
+Der Teil verschwindet aus der Timeline und die Lücke schließt sich. An der Stelle bleibt eine kleine Markierung mit Schere: anklicken und **⌫** holt das Entfernte zurück.
 
-> ℹ️ Alles, was an der Aufnahme hängt – Ton, Texte, Masken, Markierungen, Overlays –, bleibt an seiner Stelle verankert und wandert beim Schneiden mit.
+### Clips umstellen
 
-### Anfang und Ende kürzen
+Einen Teil der Video-Spur **mit der Maus an eine andere Stelle ziehen**. Eine gelbe Linie zeigt, wo er landet. Eingefügte Clips lassen sich genauso verschieben. **⌘Z** nimmt es zurück.
 
-Die gelben Griffe am Anfang und Ende der Video-Spur ziehen – oder **Hinzufügen › Anfang hierher kürzen / Ende hierher kürzen** am Abspielkopf.
+### Kürzen an den Kanten
+
+Die **Kante eines Teils** ziehen: Nach innen wird er kürzer und alles dahinter rückt nach. Nach außen kommt zurück, was dort entfernt wurde. Die gelben Griffe ganz links und rechts kürzen Anfang und Ende des Videos.
+
+### Gekoppelt oder frei
+
+Das **Kettensymbol** im Spurkopf von Text, Medien und Voice-over und der Schalter **An das Video gekoppelt** bei einem einzelnen Clip legen fest, wie er sich beim Schneiden verhält:
+
+- **Gekoppelt:** Der Clip hängt an seiner Stelle im Video. Wird dort geschnitten, wird er mitgeschnitten; wird der Teil verschoben, wandert er mit.
+- **Frei:** Der Clip bleibt an seiner Position auf der Timeline, egal was mit dem Video passiert.
+- Zooms, Masken, Markierungen und Cursor-Bereiche gehören immer zum Bild und sind deshalb immer gekoppelt. Musik ist immer frei und läuft über Schnitte hinweg durch.
+
+> 💡 **Tipp:** Eine Spur kannst du per Rechtsklick auf den Spurkopf **sperren**, damit sie nicht versehentlich verändert wird.
 
 ### Nur eine Tonspur schneiden
 
 Den Namen der Tonspur anklicken (die Spur ist dann gelb umrandet) und **S** drücken: Die Spur wird am Abspielkopf in Bereiche geteilt, die eine eigene Lautstärke bekommen können – 0 % ist stumm. Das Spur-Menü (…) bietet außerdem „Ab Abspielkopf stummschalten“ und „Ab Abspielkopf leiser“.
 
+### Ton vom Video lösen
+
+Bei eigenen Videos mit einer Tonspur: Spur-Menü (…) › **Ton vom Video lösen**. Der Ton wird zu freien Clips auf der Voice-over-Spur, die du unabhängig vom Bild verschieben, schneiden und ausblenden kannst.
+
 ### Übergänge
 
-- Einen Schnitt auswählen und die runden Griffe oben vom Schnitt wegziehen – oder den Regler im Inspektor benutzen. Die Teile davor und danach werden übereinandergeschoben und blenden weich über.
+- Die Schnitt-Markierung anklicken und die runden Griffe wegziehen – oder den Regler im Inspektor benutzen. Die Teile davor und danach werden übereinandergeschoben und blenden weich über.
 - Stile: **Überblenden**, **Über Schwarz** oder **Schieben**.
+- Übergänge gibt es an Schnitten, deren Teile direkt aufeinanderfolgen. Stellst du die Teile um, entfällt der Übergang an der getrennten Stelle.
 - **Ein- und Ausblenden** des ganzen Videos aus und nach Schwarz: Inspektor › Stil.
 
 ### Tempo und Standbild
 
 - **Geschwindigkeit:** einen Teil anklicken und im Inspektor 0,25× bis 8× wählen. Der Ton behält seine Tonhöhe; in der Timeline zeigt ein Hasen- oder Schildkröten-Symbol das Tempo.
 - **Standbild** (⌥F): hält das letzte Bild des ausgewählten Teils (sonst am Abspielkopf) an – Zeit zum Erklären. Die Länge änderst du an der rechten Kante des gestreiften Blocks.
+
+> 💡 **Tipp:** Elemente kopierst du mit **⌘C** und fügst sie mit **⌘V** am Abspielkopf wieder ein.
 
 > 💡 **Tipp:** Automatisch geschnittene Stellen (Füllwörter, Pausen, Schnitte aus dem Transkript) sind **orange** und beschriftet. Wie du sie prüfst und zurücknimmst, steht unter **Ton**.
 
@@ -285,6 +305,8 @@ Im Skript-Tab entfernt **Pausen entfernen** stille Stellen (Mindestlänge und Em
 ### Musik und Voice-over
 
 - **Hintergrundmusik:** Audio-Tab oder **Hinzufügen › Hintergrundmusik …** (oder eine Audiodatei auf eine Tonspur ziehen). Sie läuft über Schnitte hinweg, wiederholt sich, blendet ein und aus und wird unter Sprache automatisch leiser.
+- **Musik schneiden:** Musikspur anklicken und **S** drücken. Die Musik wird dadurch zu Clips, die du verschieben, kürzen und löschen kannst. Weitere Titel ziehst du einfach auf die Musikspur.
+- **Ein- und Ausblenden je Clip:** Clip anklicken und im Inspektor einstellen. Übereinandergeschobene Clips blenden automatisch ineinander über.
 - **Einsprechen:** zählt 3-2-1 herunter, spielt das Video ab dem Abspielkopf ab und nimmt dein Mikrofon auf; die Leertaste stoppt. Der Originalton wird darunter abgesenkt.
 - Voice-over-Clips lassen sich verschieben und kürzen; übereinandergeschoben blenden sie ineinander über.
 - **Sprachaufnahme (Audiodatei) …** fügt eine eigene Audiodatei als Erzählung ein.
@@ -395,7 +417,15 @@ Dazu ein Hintergrund mit Abstand, Ecken und Schatten. Das fertige Bild lässt si
 
 *Wo deine Aufnahmen liegen und was darin steckt.*
 
-Alle Projekte liegen in **~/Filme/Erklärbär**. **Im Finder** auf der Startseite öffnet den Ordner. Rechtsklick auf ein Projekt: Öffnen, Im Finder zeigen oder in den Papierkorb.
+Projekte liegen standardmäßig in **~/Filme/Erklärbär**. **Im Finder** auf der Startseite öffnet den Ordner.
+
+### Speicherort wählen
+
+Oben auf der Startseite und bei den Aufnahme-Einstellungen wählst du, wo neue Aufnahmen und Projekte landen – auch auf einem externen Laufwerk oder einer Netzwerkfreigabe (**Anderer Ort …**).
+
+- **Freigaben im Netzwerk:** Aufnahmen werden zuerst auf dem Mac gespeichert und nach dem Stoppen dorthin verschoben, damit nichts verloren geht.
+- **Projekt verschieben:** Rechtsklick auf ein Projekt › **Verschieben nach …**. Auf ein anderes Laufwerk wird erst kopiert; das Original wird erst danach entfernt.
+- Liegt ein Projekt auf einem Laufwerk, das gerade nicht verbunden ist, bleibt es mit einem Hinweis in der Liste.
 
 ### Inhalt eines Projekts
 
@@ -427,6 +457,7 @@ Alle Projekte liegen in **~/Filme/Erklärbär**. **Im Finder** auf der Startseit
 | ← / → | Ein Bild zurück / vor |
 | ⇧← / ⇧→ | Eine Sekunde zurück / vor |
 | Pos1 / Ende | Zum Anfang / zum Ende |
+| J / K / L | Rückwärts / Stopp / Vorwärts (mehrfach drücken: schneller) |
 
 ### Bearbeiten
 
@@ -437,6 +468,7 @@ Alle Projekte liegen in **~/Filme/Erklärbär**. **Im Finder** auf der Startseit
 | ⌥F | Standbild |
 | M | Kapitelmarke |
 | ⌘Z / ⇧⌘Z | Widerrufen / Wiederholen |
+| ⌘C / ⌘V | Element kopieren / am Abspielkopf einfügen |
 | Esc | Auswahl aufheben |
 | N | Einrasten an / aus |
 | ⌘K | Befehlspalette |

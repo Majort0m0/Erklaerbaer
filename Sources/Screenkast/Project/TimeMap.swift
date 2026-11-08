@@ -58,7 +58,10 @@ struct TimeMap: Equatable {
     }
 
     let duration: Double
+    /// In timeline order.
     let pieces: [Piece]
+    /// The same pieces sorted by source time (clips can be in another order on the timeline).
+    private let bySource: [Piece]
 
     /// Length of the recording on the timeline.
     var total: Double { pieces.last?.timeline.upperBound ?? duration }
@@ -106,17 +109,53 @@ struct TimeMap: Equatable {
             t += length
         }
         self.pieces = pieces
+        bySource = pieces
     }
 
-    private func pieceIndex(source s: Double) -> Int? {
-        var lo = 0, hi = pieces.count - 1
+    /// The edited timeline: only the kept `parts` of the recording, one after the other, in the
+    /// order given. What was cut away has no place on it.
+    init(base: TimeMap, parts: [ClosedRange<Double>]) {
+        duration = base.duration
+        var result: [Piece] = []
+        var t = 0.0
+        for part in parts {
+            for p in base.pieces(in: part) {
+                let length = p.timeline.upperBound - p.timeline.lowerBound
+                if !p.isFreeze, let last = result.last, !last.isFreeze, abs(last.source.upperBound - p.source.lowerBound) < 1e-9,
+                   abs(last.rate - p.rate) < 1e-9 {
+                    result[result.count - 1] = Piece(source: last.source.lowerBound...p.source.upperBound,
+                                                     timeline: last.timeline.lowerBound...(t + length), isFreeze: false)
+                } else {
+                    result.append(Piece(source: p.source, timeline: t...(t + length), isFreeze: p.isFreeze, insertID: p.insertID))
+                }
+                t += length
+            }
+        }
+        pieces = result
+        bySource = result.sorted { $0.source.lowerBound < $1.source.lowerBound }
+    }
+
+    /// The piece playing source time `s` (a piece starting at `s` wins over one ending there).
+    private func piece(source s: Double) -> Piece? {
+        var lo = 0, hi = bySource.count - 1
+        var touching: Piece?
         while lo <= hi {
             let mid = (lo + hi) / 2
-            let p = pieces[mid]
-            if s < p.source.lowerBound { hi = mid - 1 } else if s > p.source.upperBound { lo = mid + 1 } else { return mid }
+            let p = bySource[mid]
+            if s < p.source.lowerBound {
+                hi = mid - 1
+            } else if s >= p.source.upperBound {
+                if s == p.source.upperBound { touching = p }
+                lo = mid + 1
+            } else {
+                return p
+            }
         }
-        return nil
+        return touching
     }
+
+    /// True if source time `s` is on the timeline (not cut away).
+    func contains(source s: Double) -> Bool { piece(source: s) != nil }
 
     private func pieceIndex(timeline t: Double) -> Int? {
         var lo = 0, hi = pieces.count - 1
@@ -128,22 +167,59 @@ struct TimeMap: Equatable {
         return nil
     }
 
-    /// Timeline time of a source time.
+    /// Timeline time of a source time. A moment that was cut away lies where the cut closed up.
     func timeline(_ s: Double) -> Double {
-        if s <= 0 || pieces.isEmpty { return s }
+        if s < 0 || pieces.isEmpty { return s }
         if s >= duration { return total + (s - duration) }
-        return pieceIndex(source: s).map { pieces[$0].timeline(s) } ?? s
+        if let p = piece(source: s) { return p.timeline(s) }
+        if let next = bySource.first(where: { $0.source.lowerBound > s }) { return next.timeline.lowerBound }
+        return bySource.last?.timeline.upperBound ?? s
     }
 
-    /// Source time of a timeline time.
+    /// Source time of a timeline time (at a join: the part that begins there).
     func source(_ t: Double) -> Double {
-        if t <= 0 || pieces.isEmpty { return t }
+        if t < 0 || pieces.isEmpty { return t }
         if t >= total { return duration + (t - total) }
-        return pieceIndex(timeline: t).map { pieces[$0].source(t) } ?? t
+        return pieceIndex(timeline: t).map { i in
+            // A join belongs to the part after it.
+            if i + 1 < pieces.count, t >= pieces[i].timeline.upperBound { return pieces[i + 1].source(t) }
+            return pieces[i].source(t)
+        } ?? t
+    }
+
+    /// Source time for the end of a range at timeline time `t` (at a join: the part that ends there).
+    func sourceEnd(_ t: Double) -> Double {
+        guard let i = pieces.lastIndex(where: { t > $0.timeline.lowerBound && t <= $0.timeline.upperBound + 1e-9 }) else { return source(t) }
+        return pieces[i].source(min(t, pieces[i].timeline.upperBound))
+    }
+
+    /// Where a source range lies on the timeline: its first unbroken stretch from `lo` on, across
+    /// cuts that closed up. Nil if all of it was cut away.
+    func run(_ lo: Double, _ hi: Double) -> ClosedRange<Double>? {
+        guard hi > lo, !pieces.isEmpty else { return nil }
+        var index = pieces.firstIndex { lo >= $0.source.lowerBound && lo < $0.source.upperBound }
+        if index == nil, let next = bySource.first(where: { $0.source.lowerBound >= lo && $0.source.lowerBound < hi }) {
+            index = pieces.firstIndex(of: next)
+        }
+        guard var i = index else { return nil }
+        let start = pieces[i].timeline(max(lo, pieces[i].source.lowerBound))
+        var end = pieces[i].timeline.upperBound
+        while true {
+            let p = pieces[i]
+            if hi <= p.source.upperBound { end = p.timeline(hi); break }
+            end = p.timeline.upperBound
+            guard i + 1 < pieces.count, pieces[i + 1].source.lowerBound >= p.source.upperBound - 1e-9,
+                  pieces[i + 1].source.lowerBound < hi else { break }
+            i += 1
+        }
+        return start...max(start, end)
     }
 
     /// Length of a source range on the timeline.
-    func length(_ r: ClosedRange<Double>) -> Double { timeline(r.upperBound) - timeline(r.lowerBound) }
+    func length(_ r: ClosedRange<Double>) -> Double {
+        guard let run = run(r.lowerBound, r.upperBound) else { return 0 }
+        return run.upperBound - run.lowerBound
+    }
 
     /// The pieces covering a source range, clipped to it.
     func pieces(in r: ClosedRange<Double>) -> [Piece] {

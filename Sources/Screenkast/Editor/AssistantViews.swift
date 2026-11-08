@@ -597,7 +597,7 @@ struct PreviewContextBar: View {
             guard let m = editor.settings.masks.first(where: { $0.id == id }), editor.isVisibleNow(start: m.start, end: m.end) else { return nil }
             return (g.view(CGRect(x: m.x, y: m.y, width: m.width, height: m.height)), "Maske")
         case .image(let id):
-            guard let o = editor.settings.images.first(where: { $0.id == id }), editor.isVisibleNow(start: o.start, end: o.end),
+            guard let o = editor.settings.images.first(where: { $0.id == id }), editor.isVisibleNow(image: o),
                   let r = editor.renderer.imageFrame(o, out: out) else { return nil }
             return (toView(r), "Bild")
         case .videoOverlay(let id):
@@ -605,7 +605,7 @@ struct PreviewContextBar: View {
             return (toView(FrameRenderer.videoOverlayFrame(o, out: out)), o.name)
         case .text(let id):
             guard let t = editor.settings.texts.first(where: { $0.id == id }), t.kind == .lowerThird,
-                  editor.isVisibleNow(start: t.start, end: t.end) else { return nil }
+                  editor.isVisibleNow(text: t) else { return nil }
             return (toView(editor.renderer.lowerThirdFrame(t)), "Bauchbinde")
         default:
             return nil

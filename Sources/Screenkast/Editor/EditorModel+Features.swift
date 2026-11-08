@@ -13,7 +13,11 @@ extension EditorModel {
     var detectedPauses: [ClosedRange<Double>] {
         guard let peaks = speechPeaks else { return [] }
         let kept = settings.keptSegments(duration: duration)
-        let narration = settings.voiceOvers.map { clip in clip.start...sourceTime(display(clip.start) + clip.duration) }
+        let narration = settings.voiceOvers.compactMap { clip -> ClosedRange<Double>? in
+            let r = displayRange(clip)
+            let a = sourceTime(r.lowerBound), b = timeMap.sourceEnd(r.upperBound)
+            return b > a ? a...b : nil
+        }
         return PauseDetector.pauses(peaks, options: pauseOptions).filter { p in
             kept.contains { $0.lowerBound <= p.lowerBound && $0.upperBound >= p.upperBound }
                 && !narration.contains { $0.overlaps(p) }
@@ -166,6 +170,11 @@ extension EditorModel {
         setMusic(url: url)
     }
 
+    func chooseMusicClip() {
+        guard let url = chooseFile([.audio], message: "Audiodatei für die Musikspur wählen") else { return }
+        addMusicClip(url: url, atTimeline: display(currentTime))
+    }
+
     func setMusic(url: URL) {
         guard let file = importMedia(url) else { return }
         commitUndoStep(); defer { commitUndoStep() }
@@ -218,7 +227,12 @@ extension EditorModel {
         o.x = min(1, max(0, o.x))
         o.y = min(1, max(0, o.y))
         o.opacity = min(1, max(0.05, o.opacity))
-        (o.start, o.end) = clampedRange(o.start, o.end, minLength: 0.2)
+        if o.isFree {
+            o.start = min(max(0, o.start), max(0, timeMap.total - 0.2))
+            o.end = min(timeMap.total, max(o.end, o.start + 0.2))
+        } else {
+            (o.start, o.end) = clampedRange(o.start, o.end, minLength: 0.2)
+        }
         settings.images[i] = o
     }
 
@@ -453,13 +467,7 @@ extension EditorModel {
 
     /// Position of a source moment in the exported video (nil if it is cut out).
     func outputTime(ofSource t: Double) -> Double? {
-        var out = introLead
-        for seg in settings.keptSegments(duration: duration) {
-            if t < seg.lowerBound - 1e-6 { return nil }
-            if t <= seg.upperBound { return out + display(t) - display(seg.lowerBound) }
-            out += timeMap.length(seg)
-        }
-        return nil
+        timeMap.contains(source: t) ? introLead + display(t) : nil
     }
 
     /// Chapters in output time, sorted; a first chapter at 0:00 is added if needed (YouTube).

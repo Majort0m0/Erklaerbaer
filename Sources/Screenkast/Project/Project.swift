@@ -282,6 +282,12 @@ struct EditSettings: Codable, Equatable {
     var cursorEffectSize: Double = 1
     /// Parts with their own highlight (the cursor lane).
     var cursorRanges: [CursorRange] = []
+    /// Order of the video's parts on the timeline (their source start times), nil: the original order.
+    var clipOrder: [Double]? = nil
+    /// Lanes whose new items are not tied to the video ("texts", "media", "voiceOver").
+    var freeLanes: [String] = []
+    /// Lanes locked against changes with the mouse.
+    var lockedLanes: [String] = []
     /// Short "whoosh" at zooms and transitions.
     var soundEffects: Bool = false
     var soundEffectVolume: Double = 0.35
@@ -300,6 +306,59 @@ extension EditSettings {
     /// the cross dissolves between them. A part that follows a dissolve starts `length` later:
     /// its first seconds are shown during the dissolve.
     func cutLayout(duration: Double) -> (segments: [ClosedRange<Double>], dissolves: [Dissolve]) {
+        let natural = naturalCutLayout(duration: duration)
+        guard clipOrder != nil else { return natural }
+        let parts = clipParts(duration: duration, natural: natural)
+        // A transition needs the two parts it joins next to each other.
+        let dissolves = natural.dissolves.filter { d in
+            guard let i = parts.firstIndex(where: { abs($0.range.upperBound - d.aEnd) < 1e-6 }), i + 1 < parts.count else { return false }
+            return abs(parts[i + 1].range.lowerBound - d.resume) < 1e-6
+        }
+        return (parts.map(\.range), dissolves)
+    }
+
+    /// A stretch of the video on the timeline (between cuts, split points and inserted clips).
+    struct ClipPart: Equatable {
+        /// Identifies the part in `clipOrder`: where it begins in the recording.
+        let key: Double
+        let range: ClosedRange<Double>
+    }
+
+    /// The parts of the video in the order they play.
+    func clipParts(duration: Double) -> [ClipPart] { clipParts(duration: duration, natural: naturalCutLayout(duration: duration)) }
+
+    private func clipParts(duration: Double, natural: (segments: [ClosedRange<Double>], dissolves: [Dissolve])) -> [ClipPart] {
+        let map = timeMap(duration: duration)
+        let borders = splits + inserts.flatMap { [$0.sourceRange.lowerBound, $0.sourceRange.upperBound] }
+        var parts: [ClipPart] = []
+        for seg in natural.segments {
+            let inner = Set(borders.filter { $0 > seg.lowerBound + 1e-6 && $0 < seg.upperBound - 1e-6 }).sorted()
+            let points = [seg.lowerBound] + inner + [seg.upperBound]
+            for (a, b) in zip(points, points.dropFirst()) where map.length(a...b) > 0.002 {
+                // After a transition the part begins later than the cut ended; the key stays the cut's end.
+                let key = a == seg.lowerBound ? (natural.dissolves.first { abs($0.resume - a) < 1e-6 }?.bStart ?? a) : a
+                parts.append(ClipPart(key: key, range: a...b))
+            }
+        }
+        guard let order = clipOrder else { return parts }
+        // Parts in the saved order; new ones (after a split or a restored cut) follow their neighbor.
+        var ordered: [ClipPart] = []
+        for key in order {
+            if let p = parts.first(where: { abs($0.key - key) < 1e-4 }), !ordered.contains(p) { ordered.append(p) }
+        }
+        for (i, p) in parts.enumerated() where !ordered.contains(p) {
+            if i > 0, let j = ordered.firstIndex(of: parts[i - 1]) { ordered.insert(p, at: j + 1) } else { ordered.insert(p, at: 0) }
+        }
+        return ordered
+    }
+
+    /// The edited timeline: kept parts only, in playing order.
+    func editMap(duration: Double) -> TimeMap {
+        TimeMap(base: timeMap(duration: duration), parts: keptSegments(duration: duration))
+    }
+
+    /// Kept parts of the recording in their original order, with the transitions at the cuts.
+    func naturalCutLayout(duration: Double) -> (segments: [ClosedRange<Double>], dissolves: [Dissolve]) {
         let start = max(0, trimStart), end = min(trimEnd ?? duration, duration)
         guard end > start else { return ([], []) }
         // Transition lengths are timeline seconds (speed changes and freeze frames applied).
@@ -477,6 +536,9 @@ extension EditSettings {
         cursorEffect = try v(.cursorEffect, cursorEffect)
         cursorEffectSize = try v(.cursorEffectSize, cursorEffectSize)
         cursorRanges = try v(.cursorRanges, cursorRanges)
+        clipOrder = try c.decodeIfPresent([Double].self, forKey: .clipOrder)
+        freeLanes = try v(.freeLanes, freeLanes)
+        lockedLanes = try v(.lockedLanes, lockedLanes)
         soundEffects = try v(.soundEffects, soundEffects)
         soundEffectVolume = try v(.soundEffectVolume, soundEffectVolume)
         exportShortSide = try v(.exportShortSide, exportShortSide)
@@ -523,14 +585,14 @@ final class Project {
         return dir
     }
 
-    static func makeNewProjectURL(date: Date = Date()) -> URL {
+    static func makeNewProjectURL(date: Date = Date(), in folder: URL = Project.libraryURL) -> URL {
         let f = DateFormatter()
         f.locale = Locale(identifier: "de_DE")
         f.dateFormat = "yyyy-MM-dd 'um' HH.mm.ss"
-        var url = libraryURL.appendingPathComponent("Aufnahme \(f.string(from: date)).\(fileExtension)", isDirectory: true)
+        var url = folder.appendingPathComponent("Aufnahme \(f.string(from: date)).\(fileExtension)", isDirectory: true)
         var n = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = libraryURL.appendingPathComponent("Aufnahme \(f.string(from: date)) \(n).\(fileExtension)", isDirectory: true)
+            url = folder.appendingPathComponent("Aufnahme \(f.string(from: date)) \(n).\(fileExtension)", isDirectory: true)
             n += 1
         }
         return url
@@ -572,10 +634,13 @@ final class Project {
         return enc
     }
 
-    /// All projects in the library, newest first.
-    static func listLibrary() -> [URL] {
+    /// All projects in the standard folder, newest first.
+    static func listLibrary() -> [URL] { listProjects(in: libraryURL) }
+
+    /// All projects directly in `folder`, newest first.
+    static func listProjects(in folder: URL) -> [URL] {
         let fm = FileManager.default
-        let items = (try? fm.contentsOfDirectory(at: libraryURL, includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])) ?? []
+        let items = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles])) ?? []
         return items
             .filter { $0.pathExtension == fileExtension && fm.fileExists(atPath: $0.appendingPathComponent("recording.json").path) }
             .sorted { a, b in

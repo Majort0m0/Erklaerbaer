@@ -155,7 +155,9 @@ struct MediaComposition {
     func audioMix(settings: EditSettings) -> AVAudioMix? {
         guard !audioTracks.isEmpty else { return nil }
         let mix = AVMutableAudioMix()
-        let fades = VoiceOverClip.crossfades(voiceOverClips)
+        // Clips crossfade within their own lane.
+        let fades = VoiceOverClip.crossfades(voiceOverClips.filter { !$0.isMusic })
+            .merging(VoiceOverClip.crossfades(voiceOverClips.filter(\.isMusic))) { a, _ in a }
         let tail = MediaBuilder.dissolveTail
         mix.inputParameters = audioTracks.map { entry in
             let p = AVMutableAudioMixInputParameters(track: entry.track)
@@ -194,7 +196,7 @@ struct MediaComposition {
                 curves.append(.init(start: outputRange.upperBound - max(0.01, music.fadeOut), end: outputRange.upperBound, shape: .linearOut))
                 if music.duckUnderSpeech {
                     var talk = speech.flatMap { compRanges(ofSource: $0) }
-                    talk += voiceOverClips.flatMap { compRanges(ofTimeline: $0.start...$0.end) }
+                    talk += voiceOverClips.filter { !$0.isMusic }.flatMap { compRanges(ofTimeline: $0.start...$0.end) }
                     for r in talk {
                         dips.append(.init(start: r.lowerBound, end: r.upperBound, level: music.duckLevel, rampIn: 0.3, rampOut: 0.6))
                     }
@@ -246,7 +248,7 @@ struct MediaComposition {
             }
             if lane == .mic || lane == .system {
                 if settings.duckUnderVoiceOver, !settings.voiceOverMuted, settings.voiceOverVolume > 0.01 {
-                    for clip in voiceOverClips {
+                    for clip in voiceOverClips where !clip.isMusic {
                         for r in compRanges(ofTimeline: clip.start...clip.end) {
                             dips.append(.init(start: r.lowerBound, end: r.upperBound, level: settings.duckLevel, rampIn: 0.25, rampOut: 0.4))
                         }
@@ -265,10 +267,13 @@ struct MediaComposition {
                 }
             }
             // Voice-over clips pushed over each other crossfade.
-            if lane == .voiceOver, let layer = entry.layer {
-                for clip in voiceOverClips where voiceOverLayers[clip.id] == layer {
+            if lane == .voiceOver || lane == .music, let layer = entry.layer {
+                for clip in voiceOverClips where voiceOverLayers[clip.id] == layer && clip.isMusic == (lane == .music) {
+                    // The clip's own fades.
+                    if let f = clip.fadeIn, f > 0.01 { curves += timelineCurves(clip.start, min(clip.end, clip.start + f), .linearIn) }
+                    if let f = clip.fadeOut, f > 0.01 { curves += timelineCurves(max(clip.start, clip.end - f), clip.end, .linearOut) }
                     // Clip volume (looked up in the settings: changing it needs no new composition).
-                    let gain = settings.voiceOvers.first { $0.id == clip.id }?.gain ?? clip.gain
+                    let gain = settings.voiceOvers.first { $0.id == (clip.parent ?? clip.id) }?.gain ?? clip.gain
                     if gain < 0.999 {
                         for r in compRanges(ofTimeline: clip.start...clip.end) {
                             dips.append(.init(start: r.lowerBound, end: r.upperBound, level: gain, rampIn: 0.01, rampOut: 0.01))
@@ -407,16 +412,21 @@ enum MediaBuilder {
     static func make(project: Project, renderer: FrameRenderer, fps: Int,
                      segments: [ClosedRange<Double>]? = nil, speech: [ClosedRange<Double>] = []) async throws -> MediaComposition {
         let settings = project.settings
+        // `map`: speed changes, freeze frames, inserted clips. `edit`: the edited timeline on top of
+        // it (only the kept parts, in their order).
         let map = settings.timeMap(duration: project.info.duration)
+        let edit = settings.editMap(duration: project.info.duration)
         let layout = settings.cutLayout(duration: project.info.duration)
         let kept = layout.segments
         let screenAsset = AVURLAsset(url: project.videoURL)
         let duration = try await screenAsset.load(.duration)
         let full = CMTimeRange(start: .zero, duration: duration)
-        let ranges: [ClosedRange<Double>] = (segments ?? [0...duration.seconds]).compactMap {
+        var ranges: [ClosedRange<Double>] = (segments ?? kept).compactMap {
             let hi = min($0.upperBound, duration.seconds)
             return hi > $0.lowerBound ? $0.lowerBound...hi : nil
         }
+        // The preview needs something to show even if everything is cut away.
+        if ranges.isEmpty, segments == nil, duration.seconds > 0 { ranges = [0...min(0.5, duration.seconds)] }
         guard !ranges.isEmpty else { throw RecorderError.writerFailed("Nichts zu exportieren – alles weggeschnitten") }
 
         let composition = AVMutableComposition()
@@ -491,14 +501,31 @@ enum MediaBuilder {
             keepAlive.append(asset)
             voSources[file] = (track, range)
         }
-        let voClips = settings.voiceOvers.filter { voSources[$0.file] != nil && $0.duration > 0.01 }
-            .map { clip -> VoiceOverClip in
-                var c = clip
-                c.start = map.timeline(clip.start)
-                return c
+        let allAudioClips = settings.voiceOvers.filter { voSources[$0.file] != nil && $0.duration > 0.01 }
+            .flatMap { clip -> [VoiceOverClip] in
+                if clip.isFree { return [clip] }
+                // Tied to the video: it is cut and moved along with it.
+                let pieces = settings.linkedPieces(start: clip.start, duration: clip.duration, map: map, kept: kept)
+                return pieces.enumerated().map { index, piece in
+                    var c = clip
+                    c.id = UUID()
+                    c.parent = clip.id
+                    if index > 0 { c.fadeIn = nil }
+                    if index < pieces.count - 1 { c.fadeOut = nil }
+                    c.start = piece.timeline.lowerBound
+                    c.duration = piece.timeline.upperBound - piece.timeline.lowerBound
+                    c.fileOffset += piece.fileShift
+                    return c
+                }
             }
             .sorted { $0.start < $1.start }
+        let musicClips = allAudioClips.filter(\.isMusic)
+        let voClips = allAudioClips.filter { !$0.isMusic }
         let voLayers = VoiceOverClip.layers(voClips)
+        let musicLayers = VoiceOverClip.layers(musicClips)
+        let musicClipTracks: [AVMutableCompositionTrack] = musicClips.isEmpty ? [] : (0..<musicLayers.count).compactMap { _ in
+            composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        }
         let voTracks: [AVMutableCompositionTrack] = voClips.isEmpty ? [] : (0..<voLayers.count).compactMap { _ in
             composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
         }
@@ -539,7 +566,18 @@ enum MediaBuilder {
             if let a = try? await asset.loadTracks(withMediaType: .audio).first, let r = try? await a.load(.timeRange) { audio = (a, r) }
             overlaySources[o.id] = OverlaySource(overlay: o, video: video, videoRange: videoRange, audio: audio)
         }
-        let overlayLayers = VideoOverlay.layers(Array(overlaySources.values.map(\.overlay)), timeline: map.timeline)
+        func overlayPieces(_ o: VideoOverlay) -> [LinkedPiece] {
+            o.isFree ? [LinkedPiece(timeline: o.start...(o.start + o.duration), fileShift: 0)]
+                : settings.linkedPieces(start: o.start, duration: o.duration, map: map, kept: kept)
+        }
+        let overlaysOnTimeline = overlaySources.values.compactMap { source -> VideoOverlay? in
+            var o = source.overlay
+            guard let first = overlayPieces(o).first, let last = overlayPieces(o).last else { return nil }
+            o.start = first.timeline.lowerBound
+            o.duration = last.timeline.upperBound - first.timeline.lowerBound
+            return o
+        }
+        let overlayLayers = VideoOverlay.layers(overlaysOnTimeline, timeline: { $0 })
         let overlayVideoTracks: [AVMutableCompositionTrack] = (0..<overlayLayers.count).compactMap {
             composition.addMutableTrack(withMediaType: .video, preferredTrackID: overlayTrackBase + CMPersistentTrackID($0))
         }
@@ -605,6 +643,8 @@ enum MediaBuilder {
             }
             return true
         }
+        /// Composition time of the start of the edited timeline.
+        var timelineZero = 0.0
         /// Places a source range of the recording piece by piece (speed, freeze frames) at composition
         /// time `at` onto the given video/camera/audio tracks. Freeze frames are silent.
         func placeRecording(_ r: ClosedRange<Double>, at: Double, video: AVMutableCompositionTrack,
@@ -624,7 +664,8 @@ enum MediaBuilder {
                         place(track, CMTimeRangeGetIntersection(clipRange, otherRange: range), into: insertAudio, at: time(cursor))
                         insertVolumes.append((cursor...(cursor + length), ins.clip.volume))
                     }
-                    slices.append(TimeSlice(source: piece.source, timeline: piece.timeline, compStart: cursor, isFreeze: true, insertID: id))
+                    slices.append(TimeSlice(source: piece.source, timeline: (cursor - timelineZero)...(cursor - timelineZero + length),
+                                            compStart: cursor, isFreeze: true, insertID: id))
                     cursor += length
                     continue
                 }
@@ -640,7 +681,8 @@ enum MediaBuilder {
                         placeScaled(src, available: available, into: target, source: piece.source, length: length, at: cursor)
                     }
                 }
-                slices.append(TimeSlice(source: piece.source, timeline: piece.timeline, compStart: cursor, isFreeze: piece.isFreeze))
+                slices.append(TimeSlice(source: piece.source, timeline: (cursor - timelineZero)...(cursor - timelineZero + length),
+                                        compStart: cursor, isFreeze: piece.isFreeze))
                 cursor += length
             }
             if audioExtra > 0, let last = slices.last, !last.isFreeze {
@@ -703,6 +745,7 @@ enum MediaBuilder {
         }
         if let intro { addCard(intro, length: intro.length - introOverlap, localOffset: 0, fadeToRecording: introOverlap == 0) }
         let recordingStart = cursor
+        timelineZero = recordingStart
         let mainAudio = audioSources.map { ($0.source, $0.range, $0.target) }
 
         for range in ranges {
@@ -711,28 +754,6 @@ enum MediaBuilder {
                                         synced: syncedTrack)
             guard !placed.isEmpty else { throw RecorderError.writerFailed("Videospur konnte nicht eingefügt werden") }
             let t0 = map.timeline(range.lowerBound), t1 = map.timeline(range.upperBound)
-            // Voice-over portions on this part of the timeline.
-            for clip in voClips {
-                let lo = max(clip.start, t0), hi = min(clip.end, t1)
-                guard hi - lo > 0.001, let src = voSources[clip.file], let layer = voLayers.layerOf[clip.id] else { continue }
-                let fileRange = CMTimeRangeGetIntersection(CMTimeRange(start: time(clip.fileOffset + lo - clip.start), duration: time(hi - lo)),
-                                                           otherRange: src.range)
-                place(src.track, fileRange, into: voTracks[layer], at: time(segmentStart + lo - t0))
-            }
-            // Video overlay portions on this part of the timeline (real time from their start).
-            for source in overlaySources.values {
-                let o = source.overlay
-                let s0 = map.timeline(o.start)
-                let lo = max(s0, t0), hi = min(s0 + o.duration, t1)
-                guard hi - lo > 0.001, let layer = overlayLayers.layerOf[o.id], layer < overlayVideoTracks.count else { continue }
-                let fileRange = CMTimeRange(start: time(o.fileOffset + lo - s0), duration: time(hi - lo))
-                let at = time(segmentStart + lo - t0)
-                place(source.video, CMTimeRangeGetIntersection(fileRange, otherRange: source.videoRange), into: overlayVideoTracks[layer], at: at)
-                if let (track, available) = source.audio, let target = overlayAudioTracks[layer] {
-                    place(track, CMTimeRangeGetIntersection(fileRange, otherRange: available), into: target, at: at)
-                    overlayVolumes[target.trackID, default: []].append(((segmentStart + lo - t0)...(segmentStart + hi - t0), o.id))
-                }
-            }
             if let clickTrack, let clickSource {
                 for t in clicks where t >= range.lowerBound && t < range.upperBound {
                     guard let slice = placed.first(where: { !$0.isFreeze && $0.source.contains(t) }),
@@ -747,13 +768,41 @@ enum MediaBuilder {
                 let dissolved = layout.dissolves.contains {
                     abs($0.aEnd - prev.source.upperBound) < 1e-6 && abs($0.resume - range.lowerBound) < 1e-6
                 }
-                if !dissolved { joins.append(time(segmentStart)) }
+                // Parts that simply continue each other (a split point) need none either.
+                if !dissolved, abs(prev.source.upperBound - range.lowerBound) > 1e-6 { joins.append(time(segmentStart)) }
             }
             slices += placed
             cursor = segmentStart + t1 - t0
         }
         let recordingEnd = cursor
         let outroCompStart = cursor
+        // Voice-overs and video overlays run in real time along the finished timeline: from where
+        // they begin, straight across every join.
+        let timelineLength = recordingEnd - recordingStart
+        for clip in voClips + musicClips {
+            let lo = max(clip.start, 0), hi = min(clip.end, timelineLength)
+            guard hi - lo > 0.001, let src = voSources[clip.file] else { continue }
+            guard let layer = (clip.isMusic ? musicLayers : voLayers).layerOf[clip.id] else { continue }
+            let tracks = clip.isMusic ? musicClipTracks : voTracks
+            guard layer < tracks.count else { continue }
+            let fileRange = CMTimeRangeGetIntersection(CMTimeRange(start: time(clip.fileOffset + lo - clip.start), duration: time(hi - lo)),
+                                                       otherRange: src.range)
+            place(src.track, fileRange, into: tracks[layer], at: time(recordingStart + lo))
+        }
+        let placedOverlays = overlaySources.values.flatMap { source in overlayPieces(source.overlay).map { (source, $0) } }
+            .sorted { $0.1.timeline.lowerBound < $1.1.timeline.lowerBound }
+        for (source, piece) in placedOverlays {
+            let o = source.overlay
+            let lo = max(piece.timeline.lowerBound, 0), hi = min(piece.timeline.upperBound, timelineLength)
+            guard hi - lo > 0.001, let layer = overlayLayers.layerOf[o.id], layer < overlayVideoTracks.count else { continue }
+            let fileRange = CMTimeRange(start: time(o.fileOffset + piece.fileShift + lo - piece.timeline.lowerBound), duration: time(hi - lo))
+            let at = time(recordingStart + lo)
+            place(source.video, CMTimeRangeGetIntersection(fileRange, otherRange: source.videoRange), into: overlayVideoTracks[layer], at: at)
+            if let (track, available) = source.audio, let target = overlayAudioTracks[layer] {
+                place(track, CMTimeRangeGetIntersection(fileRange, otherRange: available), into: target, at: at)
+                overlayVolumes[target.trackID, default: []].append(((recordingStart + lo)...(recordingStart + hi), o.id))
+            }
+        }
         if let outro { addCard(outro, length: outro.length - outroOverlap, localOffset: outroOverlap, fadeToRecording: outroOverlap == 0) }
 
         func compTime(ofSource t: Double) -> Double? {
@@ -797,7 +846,7 @@ enum MediaBuilder {
         // Background music in output time: each kept part gets the music that belongs to its output
         // position, so it runs on seamlessly where playback skips a cut.
         var musicTrack: AVMutableCompositionTrack?
-        if let music = settings.music {
+        if let music = settings.music, music.clipped != true {
             let asset = AVURLAsset(url: project.url.appendingPathComponent(music.file))
             if let track = try? await asset.loadTracks(withMediaType: .audio).first,
                let range = try? await track.load(.timeRange), range.duration.seconds > 0.1,
@@ -863,7 +912,11 @@ enum MediaBuilder {
         var lastEnd = time(recordingStart)
         for (index, slice) in slices.enumerated() {
             let start = lastEnd
-            let end = index == slices.count - 1 ? time(recordingEnd) : time(slices[index + 1].compStart)
+            // Without an outro the last instruction must reach the very end of the composition: the
+            // file's own timescale can make its tracks some microseconds longer than our rounding,
+            // and macOS rejects the export of a video composition that leaves such a sliver uncovered.
+            let end = index == slices.count - 1 ? (outro == nil ? max(time(recordingEnd), composition.duration) : time(recordingEnd))
+                : time(slices[index + 1].compStart)
             guard end > start else { continue }
             lastEnd = end
             var bounds: [CMTime] = [start, end]
@@ -918,6 +971,7 @@ enum MediaBuilder {
         var audioTracks = audioSources.map { MediaComposition.AudioTrack(track: $0.target, role: $0.role) }
         audioTracks += audioSources.compactMap { a in a.bTarget.map { MediaComposition.AudioTrack(track: $0, role: a.role, isDissolveB: true) } }
         audioTracks += voTracks.enumerated().map { MediaComposition.AudioTrack(track: $0.element, role: AudioLane.voiceOver.role, layer: $0.offset) }
+        audioTracks += musicClipTracks.enumerated().map { MediaComposition.AudioTrack(track: $0.element, role: AudioLane.music.role, layer: $0.offset) }
         if let clickTrack { audioTracks.append(.init(track: clickTrack, role: "clicks")) }
         if let effectsTrack { audioTracks.append(.init(track: effectsTrack, role: "effects")) }
         if let musicTrack { audioTracks.append(.init(track: musicTrack, role: AudioLane.music.role)) }
@@ -925,7 +979,8 @@ enum MediaBuilder {
         audioTracks += overlayAudioTracks.values.map { MediaComposition.AudioTrack(track: $0, role: "overlay") }
         return MediaComposition(asset: composition, videoComposition: video, audioTracks: audioTracks, joins: joins,
                                 dissolves: dissolves, slices: slices, totalDuration: cursor,
-                                voiceOverClips: voClips, voiceOverLayers: voLayers.layerOf,
+                                voiceOverClips: voClips + musicClips,
+                                voiceOverLayers: voLayers.layerOf.merging(musicLayers.layerOf) { a, _ in a },
                                 outputRange: outputStart...max(outputStart, outputEnd),
                                 speech: speech, insertVolumes: insertVolumes, overlayVolumes: overlayVolumes)
     }

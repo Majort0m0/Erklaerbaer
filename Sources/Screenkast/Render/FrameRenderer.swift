@@ -68,7 +68,7 @@ final class FrameRenderer: @unchecked Sendable {
                       motion: MotionPaths(track: project.cursor, duration: project.info.duration,
                                           smoothing: project.settings.cursorSmoothing),
                       sprites: sprites,
-                      map: project.settings.timeMap(duration: project.info.duration))
+                      map: project.settings.editMap(duration: project.info.duration))
     }
 
     func update(settings: EditSettings) {
@@ -76,7 +76,7 @@ final class FrameRenderer: @unchecked Sendable {
         let old = state.settings
         state.settings = settings
         if old.speeds != settings.speeds || old.freezes != settings.freezes || old.inserts != settings.inserts {
-            state.map = settings.timeMap(duration: state.info.duration)
+            state.map = settings.editMap(duration: state.info.duration)
         }
         let needsMotion = old.cursorSmoothing != settings.cursorSmoothing
         let track = state.track, duration = state.info.duration
@@ -266,11 +266,12 @@ final class FrameRenderer: @unchecked Sendable {
                 // A range of the cursor lane overrides the setting for the whole video.
                 let hot = CGPoint(x: pos.x, y: pos.y)
                 let T = st.map.timeline(t)
-                let range = s.cursorRanges.first { T >= st.map.timeline($0.start) && T <= st.map.timeline($0.end) }
+                let range = s.cursorRanges.first { r in st.map.run(r.start, r.end).map { $0.contains(T) } ?? false }
                 let effect = range?.effect ?? s.cursorEffect
                 var fade = 1.0
                 if let range {
-                    let a = st.map.timeline(range.start), b = st.map.timeline(range.end)
+                    let run = st.map.run(range.start, range.end)
+                    let a = run?.lowerBound ?? T, b = run?.upperBound ?? T
                     fade = max(0, min(1, (T - a) / 0.2, (b - T) / 0.2))
                 }
                 let alpha = alpha * fade
@@ -401,7 +402,8 @@ final class FrameRenderer: @unchecked Sendable {
         var words = tokens.map(\.text)
         var highlight: Int?
         var unitStart = caption.start
-        let T = map.timeline(t), T0 = map.timeline(caption.start), T1 = map.timeline(caption.end)
+        let captionRun = map.run(caption.start, caption.end)
+        let T = map.timeline(t), T0 = captionRun?.lowerBound ?? map.timeline(caption.start), T1 = captionRun?.upperBound ?? map.timeline(caption.end)
         var alpha = max(0, min(1, (T - T0) / 0.12, (T1 - T) / 0.12))
         switch style.mode {
         case .sentence:
@@ -454,7 +456,8 @@ final class FrameRenderer: @unchecked Sendable {
         var image = base
         let short = min(out.width, out.height)
         for o in s.overlayTexts {
-            let a = map.timeline(o.start), b = map.timeline(o.end)
+            guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { continue }
+            let a = r.lowerBound, b = r.upperBound
             guard T >= a, T <= b else { continue }
             let fadeIn = min(1, (T - a) / TextOverlay.fade)
             let fadeOut = min(1, (b - T) / TextOverlay.fade)
@@ -612,7 +615,8 @@ final class FrameRenderer: @unchecked Sendable {
         let W = src.extent.width, H = src.extent.height
         let unit = max(W, H) / 400
         for a in annotations {
-            let a0 = map.timeline(a.start), a1 = map.timeline(a.end)
+            guard let stretch = map.run(a.start, a.end) else { continue }
+            let a0 = stretch.lowerBound, a1 = stretch.upperBound
             guard T >= a0, T <= a1 else { continue }
             let alpha = max(0, min(1, (T - a0) / 0.2, (a1 - T) / 0.2))
             let (r, g, b) = a.color.rgb
@@ -735,7 +739,8 @@ final class FrameRenderer: @unchecked Sendable {
         }
         let short = min(out.width, out.height)
         for o in s.images {
-            let a = map.timeline(o.start), b = map.timeline(o.end)
+            guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { continue }
+            let a = r.lowerBound, b = r.upperBound
             guard T >= a, T <= b, let img = picture(o.file), let rect = imageFrame(o, out: out) else { continue }
             let fade = max(0, min(1, (T - a) / 0.3, (b - T) / 0.3))
             let framed = framedPicture(img, in: rect, frame: o.frame ?? .none, shadow: o.shadow ?? false, short: short)
@@ -763,7 +768,13 @@ final class FrameRenderer: @unchecked Sendable {
         var image = base
         let short = min(out.width, out.height)
         for o in s.videoOverlays {
-            let a = map.timeline(o.start), b = a + o.duration
+            var a = o.start, b = o.start + o.duration
+            if !o.isFree {
+                let pieces = s.linkedPieces(start: o.start, duration: o.duration, map: s.timeMap(duration: map.duration), kept: s.keptSegments(duration: map.duration))
+                guard let first = pieces.first, let last = pieces.last, pieces.contains(where: { $0.timeline.contains(T) }) else { continue }
+                a = first.timeline.lowerBound
+                b = last.timeline.upperBound
+            }
             guard T >= a, T <= b, let raw = frames[o.id], raw.extent.width > 1 else { continue }
             var frame = raw.transformed(by: CGAffineTransform(translationX: -raw.extent.minX, y: -raw.extent.minY))
             if s.color.applyToMedia, !s.color.isNeutral { frame = Self.graded(frame, s.color) }

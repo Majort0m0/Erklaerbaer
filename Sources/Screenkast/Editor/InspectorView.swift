@@ -114,7 +114,7 @@ struct InspectorView: View {
             return SelectionInfo(icon: "plus.magnifyingglass", title: "Zoom", subtitle: shown(z.start, z.end), delete: "Zoom löschen")
         case .cut:
             guard let c = editor.selectedCut else { return nil }
-            return SelectionInfo(icon: "scissors", title: "Entfernter Bereich", subtitle: shown(c.start, c.end), delete: "Wiederherstellen")
+            return SelectionInfo(icon: "scissors", title: "Entfernter Bereich", subtitle: String(format: "%.1f s entfernt", c.end - c.start), delete: "Wiederherstellen")
         case .mask:
             guard let m = editor.selectedMask else { return nil }
             return SelectionInfo(icon: "square.grid.3x3", title: "Maske", subtitle: shown(m.start, m.end), delete: "Maske löschen")
@@ -125,7 +125,8 @@ struct InspectorView: View {
         case .voiceOver:
             guard let c = editor.selectedVoiceOver else { return nil }
             let r = editor.displayRange(c)
-            return SelectionInfo(icon: "waveform", title: "Voice-over", subtitle: Self.range(r.lowerBound, r.upperBound), delete: "Clip löschen")
+            return SelectionInfo(icon: c.isMusic ? "music.note" : "waveform", title: c.isMusic ? "Musik-Clip" : "Voice-over",
+                                 subtitle: Self.range(r.lowerBound, r.upperBound), delete: "Clip löschen")
         case .text:
             guard let t = editor.selectedText else { return nil }
             let title = t.kind == .lowerThird ? "Bauchbinde" : t.placement == .overlay ? "Titelkarte" : t.placement.label
@@ -168,8 +169,8 @@ struct InspectorView: View {
                                  delete: "")
         case .videoOverlay:
             guard let o = editor.selectedVideoOverlay else { return nil }
-            let a = editor.display(o.start)
-            return SelectionInfo(icon: o.synced ? "macwindow.on.rectangle" : "pip", title: o.name, subtitle: Self.range(a, a + o.duration),
+            let r = editor.displayRange(o)
+            return SelectionInfo(icon: o.synced ? "macwindow.on.rectangle" : "pip", title: o.name, subtitle: Self.range(r.lowerBound, r.upperBound),
                                  delete: "Video entfernen")
         case nil:
             return nil
@@ -382,6 +383,7 @@ struct InspectorView: View {
 
     private func imageSection(_ o: ImageOverlay) -> some View {
         Section {
+            LinkRow(free: o.isFree) { editor.setFree(image: o.id, $0) }
             LabeledSlider(title: "Größe", value: Binding(get: { o.width }, set: { v in editor.updateImage(id: o.id) { $0.width = v } }),
                           range: 0.05...1, format: { "\(Int($0 * 100)) %" })
             LabeledSlider(title: "Deckkraft", value: Binding(get: { o.opacity }, set: { v in editor.updateImage(id: o.id) { $0.opacity = v } }),
@@ -600,7 +602,7 @@ struct InspectorView: View {
                         Image(systemName: o.synced ? "macwindow.on.rectangle" : "pip").foregroundStyle(.secondary)
                         Text(o.name).lineLimit(1)
                         Spacer()
-                        Text("\(formatTime(editor.display(o.start)))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        Text("\(formatTime(editor.displayRange(o).lowerBound))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
                     .contentShape(Rectangle())
                 }
@@ -1095,6 +1097,9 @@ struct InspectorView: View {
         }
         return Group {
             Section("Inhalt") {
+                if text.placement == .overlay || text.kind == .lowerThird {
+                    LinkRow(free: text.isFree) { editor.setFree(text: id, $0) }
+                }
                 TextField("Titel", text: binding(\.title), axis: .vertical)
                 TextField("Untertitel", text: binding(\.subtitle), axis: .vertical)
             }
@@ -1156,9 +1161,16 @@ struct InspectorView: View {
     private func voiceOverClipSection(_ clip: VoiceOverClip) -> some View {
         let fade = VoiceOverClip.crossfades(editor.settings.voiceOvers)[clip.id]
         return Section {
+            LinkRow(free: clip.isFree) { editor.setFree(voiceOver: clip.id, $0) }
             LabeledSlider(title: "Lautstärke des Clips",
                           value: Binding(get: { clip.gain }, set: { v in editor.updateVoiceOver(id: clip.id) { $0.volume = v } }),
                           range: 0...1, format: { "\(Int($0 * 100)) %" })
+            LabeledSlider(title: "Einblenden",
+                          value: Binding(get: { clip.fadeIn ?? 0 }, set: { v in editor.updateVoiceOver(id: clip.id) { $0.fadeIn = v < 0.02 ? nil : v } }),
+                          range: 0...5, format: { $0 < 0.02 ? "aus" : String(format: "%.1f s", $0) })
+            LabeledSlider(title: "Ausblenden",
+                          value: Binding(get: { clip.fadeOut ?? 0 }, set: { v in editor.updateVoiceOver(id: clip.id) { $0.fadeOut = v < 0.02 ? nil : v } }),
+                          range: 0...5, format: { $0 < 0.02 ? "aus" : String(format: "%.1f s", $0) })
             if let fade, fade.fadeIn > 0 || fade.fadeOut > 0 {
                 LabeledContent("Überblendung") {
                     Text([fade.fadeIn > 0 ? String(format: "%.1f s am Anfang", fade.fadeIn) : nil,
