@@ -102,6 +102,7 @@ struct InspectorView: View {
             voiceEnhancementSection
             AutoEditsSection(editor: editor)
             musicSection
+            scriptSection
             voiceOverSection
             if editor.canRemoveEcho { echoSection }
         case .text:
@@ -111,6 +112,7 @@ struct InspectorView: View {
             captionSection
             if !editor.settings.captions.isEmpty { CaptionStyleSection(editor: editor) }
         case .media:
+            librarySection
             imagesSection
             logoSection
         case .transcript:
@@ -249,7 +251,9 @@ struct InspectorView: View {
         case .zoom: selectedZoomSection
         case .cut: if let cut = editor.selectedCut { cutSection(cut) }
         case .join(let key): joinSection(key)
-        case .mask: maskSection
+        case .mask:
+            maskSection
+            if let m = editor.selectedMask { MaskFollowRow(editor: editor, mask: m) }
         case .mute: muteSection
         case .voiceOver: if let clip = editor.selectedVoiceOver { voiceOverClipSection(clip) }
         case .text: if let text = editor.selectedText { textEditSection(text) }
@@ -257,10 +261,18 @@ struct InspectorView: View {
         case .freeze: if let freeze = editor.selectedFreeze { freezeSection(freeze) }
         case .cameraLayout: if let r = editor.selectedCameraLayout { cameraLayoutSection(r) }
         case .annotation: if let a = editor.selectedAnnotation { annotationSection(a) }
-        case .image: if let o = editor.selectedImage { imageSection(o) }
+        case .image:
+            if let o = editor.selectedImage {
+                imageSection(o)
+                MotionSection(editor: editor, target: .image(o.id))
+            }
         case .insert: if let c = editor.selectedInsert { insertSection(c) }
         case .chapter: if let c = editor.selectedChapter { chapterSection(c) }
-        case .videoOverlay: if let o = editor.selectedVideoOverlay { VideoOverlaySection(editor: editor, overlay: o) }
+        case .videoOverlay:
+            if let o = editor.selectedVideoOverlay {
+                VideoOverlaySection(editor: editor, overlay: o)
+                if !o.synced { MotionSection(editor: editor, target: .video(o.id), showsVolume: true) }
+            }
         case .audioLane(let lane): AudioLaneSection(editor: editor, lane: lane)
         case .panel(let panel): panelContent(panel)
         case .cursorRange: if let r = editor.selectedCursorRange { cursorRangeSection(r) }
@@ -405,21 +417,21 @@ struct InspectorView: View {
                         Toggle("Wiederholen, solange der Block läuft", isOn: Binding(get: { a.repeats ?? false }, set: { v in editor.updateAnnotation(id: a.id) { $0.repeats = v } }))
                     }
                 }
-                LabeledSlider(title: a.kind == .touch ? "Größe" : "Linienstärke", value: Binding(get: { a.thickness }, set: { v in editor.updateAnnotation(id: a.id) { $0.thickness = v } }),
+                LabeledSlider(title: a.kind == .touch || a.kind == .step ? "Größe" : "Linienstärke", value: Binding(get: { a.thickness }, set: { v in editor.updateAnnotation(id: a.id) { $0.thickness = v } }),
                               range: 0.4...3, format: { "\(Int($0 * 100)) %" })
-                if a.kind != .touch {
+                if a.kind != .touch && a.kind != .step {
                 Toggle("Von Hand gezeichnet", isOn: Binding(get: { a.handDrawn ?? true }, set: { v in editor.updateAnnotation(id: a.id) { $0.handDrawn = v } }))
                 Toggle(a.kind == .arrow ? "Zeichnen und pulsieren" : "Beim Einblenden zeichnen",
                        isOn: Binding(get: { a.animated ?? true }, set: { v in editor.updateAnnotation(id: a.id) { $0.animated = v } }))
                 }
             }
-            if a.kind != .arrow && a.kind != .touch {
+            if a.kind != .arrow && a.kind != .touch && a.kind != .step {
                 Picker("Form", selection: Binding(get: { a.outline }, set: { v in editor.updateAnnotation(id: a.id) { $0.shape = v } })) {
                     ForEach(AnnotationShape.allCases) { Label($0.label, systemImage: $0.icon).tag($0) }
                 }
                 .pickerStyle(.segmented)
             }
-            Text(a.kind == .touch ? (a.touchGesture.isPinch ? "Im Vorschaubild die Mitte und den Abstand der Finger ziehen; die Länge des Blocks bestimmt das Tempo." : a.touchGesture.usesPath ? "Im Vorschaubild Anfang und Ende der Geste ziehen; die Länge des Blocks bestimmt das Tempo." : "Im Vorschaubild auf die Stelle ziehen, die berührt wird.")
+            Text(a.kind == .step ? "Die Nummer ergibt sich aus der Reihenfolge in der Timeline. Im Vorschaubild verschieben." : a.kind == .touch ? (a.touchGesture.isPinch ? "Im Vorschaubild die Mitte und den Abstand der Finger ziehen; die Länge des Blocks bestimmt das Tempo." : a.touchGesture.usesPath ? "Im Vorschaubild Anfang und Ende der Geste ziehen; die Länge des Blocks bestimmt das Tempo." : "Im Vorschaubild auf die Stelle ziehen, die berührt wird.")
                  : a.kind == .arrow ? "Im Vorschaubild Anfang und Spitze ziehen, an der Linie verschieben." : "Im Vorschaubild verschieben, an den Ecken die Größe ändern.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -627,6 +639,29 @@ struct InspectorView: View {
 
     // MARK: Pictures, chapters
 
+    private var librarySection: some View {
+        let _ = editor.libraryVersion
+        return Section("Bibliothek") {
+            Button { editor.importToLibrary() } label: { Label("Dateien importieren …", systemImage: "square.and.arrow.down") }
+            ForEach(editor.mediaLibrary, id: \.self) { url in
+                Button { editor.useLibraryItem(url) } label: {
+                    HStack {
+                        Image(systemName: EditorModel.libraryIcon(url)).foregroundStyle(.secondary).frame(width: 18)
+                        Text(EditorModel.libraryName(url)).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .draggable(url)
+                .help("Klick setzt die Datei am Abspielkopf ein, oder in die Timeline ziehen")
+            }
+            if editor.mediaLibrary.isEmpty {
+                Text("Noch leer. Importierte Dateien bleiben hier und lassen sich mehrfach verwenden.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var imagesSection: some View {
         Section("Bilder & Videos") {
             HStack {
@@ -734,6 +769,7 @@ struct InspectorView: View {
             textsSection
             textDesignDefaultsSection
         case .media:
+            librarySection
             imagesSection
         case .captions:
             captionSection
@@ -1050,6 +1086,17 @@ struct InspectorView: View {
             Text("Einzelne Bereiche stummschalten: Rechtsklick auf eine Audiospur.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var scriptSection: some View {
+        Section("Sprechtext") {
+            TextField("Läuft beim Einsprechen als Teleprompter mit", text: Binding(get: { editor.settings.script ?? "" }, set: { editor.settings.script = $0.isEmpty ? nil : $0 }), axis: .vertical)
+                .lineLimit(3...8)
+            if !editor.settings.words.isEmpty {
+                Button("Aus dem Transkript übernehmen") { editor.settings.script = editor.settings.words.map(\.text).joined(separator: " ") }
+                    .buttonStyle(.link)
+            }
         }
     }
 

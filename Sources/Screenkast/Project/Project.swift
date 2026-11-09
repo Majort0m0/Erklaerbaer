@@ -83,6 +83,24 @@ struct BlurMask: Codable, Identifiable, Equatable {
     var width: Double = 0.3
     var height: Double = 0.12
     var style: Style = .pixelate
+    /// Where the mask has followed its content to (nil: it stays in place).
+    var track: [MaskPoint]? = nil
+
+    /// Top left corner of the mask at source time `t`.
+    func place(at t: Double) -> CGPoint {
+        guard let track, let first = track.first, let last = track.last else { return CGPoint(x: x, y: y) }
+        if t <= first.t { return CGPoint(x: first.x, y: first.y) }
+        if t >= last.t { return CGPoint(x: last.x, y: last.y) }
+        guard let i = track.firstIndex(where: { $0.t > t }), i > 0 else { return CGPoint(x: last.x, y: last.y) }
+        let a = track[i - 1], b = track[i], p = (t - a.t) / max(1e-6, b.t - a.t)
+        return CGPoint(x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p)
+    }
+}
+
+struct MaskPoint: Codable, Equatable {
+    var t: Double
+    var x: Double
+    var y: Double
 }
 
 /// A part of the recording that is removed in the output (source time).
@@ -266,6 +284,8 @@ struct EditSettings: Codable, Equatable {
     var watermark: Watermark? = nil
     /// Picture behind the person in the camera (project file, nil: the real room).
     var cameraBackground: String? = nil
+    /// Text for the teleprompter while speaking a voice-over.
+    var script: String? = nil
     /// Outline of the person (0…1) and how much it is calmed over time (nil: 0.5).
     var cameraBackgroundEdge: Double? = nil
     var cameraBackgroundCalm: Double? = nil
@@ -297,6 +317,7 @@ struct EditSettings: Codable, Equatable {
     var cursorRanges: [CursorRange] = []
     /// Order of the video's parts on the timeline (their source start times), nil: the original order.
     var clipOrder: [Double]? = nil
+    static let maxMediaLanes = 4
     /// Lanes whose new items are not tied to the video ("texts", "media", "voiceOver").
     var freeLanes: [String] = []
     /// Lanes locked against changes with the mouse.
@@ -568,6 +589,7 @@ extension EditSettings {
         images = try v(.images, images)
         watermark = try c.decodeIfPresent(Watermark.self, forKey: .watermark)
         cameraBackground = try c.decodeIfPresent(String.self, forKey: .cameraBackground)
+        script = try c.decodeIfPresent(String.self, forKey: .script)
         cameraBackgroundEdge = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundEdge)
         cameraBackgroundCalm = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundCalm)
         inserts = try v(.inserts, inserts)

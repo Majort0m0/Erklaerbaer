@@ -343,7 +343,7 @@ extension EditorModel {
         if hit(renderer.captionFrame(at: t)) { return .panel(.captions) }
         if let w = settings.watermark, hit(renderer.watermarkFrame(w, out: out)) { return .panel(.logo) }
         for o in settings.images.reversed() where isVisibleNow(image: o) {
-            if hit(renderer.imageFrame(o, out: out)) { return .image(o.id) }
+            if hit(renderer.imageFrame(keyedImage(o), out: out)) { return .image(o.id) }
         }
         for text in settings.overlayTexts.reversed() where isVisibleNow(text: text) {
             if text.kind == .titleCard { return .text(text.id) }
@@ -358,14 +358,14 @@ extension EditorModel {
             }
         }
         for o in settings.videoOverlays.reversed() where isVisibleNow(videoOverlay: o) {
-            if hit(FrameRenderer.videoOverlayFrame(o, out: out)) { return .videoOverlay(o.id) }
+            if hit(FrameRenderer.videoOverlayFrame(keyedVideo(o), out: out)) { return .videoOverlay(o.id) }
         }
         // Annotations and masks live on the recording (normalized, zoomed with it).
         let n = renderer.normalizedPoint(fromOutput: q, at: t)
         let tolerance = 14 * k / max(1, out.width)
         for a in settings.annotations.reversed() where isVisibleNow(start: a.start, end: a.end) {
-            if a.kind == .touch {
-                let center = CGPoint(x: a.x, y: a.y), end = a.touchGesture.usesPath ? CGPoint(x: a.x + a.width, y: a.y + a.height) : center
+            if a.kind == .touch || a.kind == .step {
+                let center = CGPoint(x: a.x, y: a.y), end = a.hasTwoPoints ? CGPoint(x: a.x + a.width, y: a.y + a.height) : center
                 if ShotDocument.distance(n, segment: center, end) < tolerance * 4 { return .annotation(a.id) }
             } else if a.kind == .arrow {
                 let d = ShotDocument.distance(n, segment: CGPoint(x: a.x, y: a.y), CGPoint(x: a.x + a.width, y: a.y + a.height))

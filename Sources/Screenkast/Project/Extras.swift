@@ -127,7 +127,7 @@ struct CameraLayoutRange: Codable, Identifiable, Equatable {
 // MARK: - Annotations
 
 enum AnnotationKind: String, Codable, CaseIterable, Identifiable {
-    case arrow, frame, spotlight, touch
+    case arrow, frame, spotlight, touch, step
     var id: String { rawValue }
 
     var label: String {
@@ -136,6 +136,7 @@ enum AnnotationKind: String, Codable, CaseIterable, Identifiable {
         case .frame: return "Rahmen"
         case .spotlight: return "Spotlight"
         case .touch: return "Finger"
+        case .step: return "Schritt"
         }
     }
 
@@ -145,6 +146,7 @@ enum AnnotationKind: String, Codable, CaseIterable, Identifiable {
         case .frame: return "rectangle"
         case .spotlight: return "flashlight.on.fill"
         case .touch: return "hand.point.up.left.fill"
+        case .step: return "1.circle.fill"
         }
     }
 }
@@ -227,7 +229,61 @@ struct Annotation: Codable, Identifiable, Equatable {
     var touchLook: TouchLook { look ?? .dot }
     /// Drawn with two points (arrow, or a finger gesture with a way).
     var hasTwoPoints: Bool { kind == .arrow || (kind == .touch && touchGesture.usesPath) }
+    /// Placed by one point (a tap of a finger, a numbered step).
+    var isPoint: Bool { kind == .step || (kind == .touch && !touchGesture.usesPath) }
 }
+
+// MARK: - Keyframes
+
+/// Place, size, opacity and volume of a clip at a moment (`t`: seconds from the start of the clip).
+struct MotionKey: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var t: Double
+    var x: Double
+    var y: Double
+    var width: Double
+    var opacity: Double
+    var volume: Double
+}
+
+enum Motion {
+    /// The values between the keyframes, moving softly; before the first and after the last they stand still.
+    static func value(_ keys: [MotionKey], at t: Double) -> MotionKey? {
+        let sorted = keys.sorted { $0.t < $1.t }
+        guard let first = sorted.first, let last = sorted.last else { return nil }
+        if t <= first.t { return first }
+        if t >= last.t { return last }
+        guard let i = sorted.firstIndex(where: { $0.t > t }), i > 0 else { return last }
+        let a = sorted[i - 1], b = sorted[i]
+        let linear = (t - a.t) / max(1e-6, b.t - a.t), p = linear * linear * (3 - 2 * linear)
+        func mix(_ u: Double, _ v: Double) -> Double { u + (v - u) * p }
+        return MotionKey(t: t, x: mix(a.x, b.x), y: mix(a.y, b.y), width: mix(a.width, b.width), opacity: mix(a.opacity, b.opacity), volume: mix(a.volume, b.volume))
+    }
+}
+
+/// A clip whose place can change over time.
+protocol MotionPlaced {
+    var x: Double { get set }
+    var y: Double { get set }
+    var width: Double { get set }
+    var opacity: Double { get set }
+    var keys: [MotionKey]? { get set }
+}
+
+extension MotionPlaced {
+    func moved(at t: Double) -> Self {
+        guard let keys, let key = Motion.value(keys, at: t) else { return self }
+        var copy = self
+        copy.x = key.x
+        copy.y = key.y
+        copy.width = key.width
+        copy.opacity = key.opacity
+        return copy
+    }
+}
+
+extension ImageOverlay: MotionPlaced {}
+extension VideoOverlay: MotionPlaced {}
 
 // MARK: - Own media
 
@@ -242,6 +298,9 @@ struct ImageOverlay: Codable, Identifiable, Equatable {
     var y: Double = 0.5
     var width: Double = 0.35
     var opacity: Double = 1
+    /// Media lane (nil: the first; higher lanes lie further up in the picture) and keyframes.
+    var lane: Int? = nil
+    var keys: [MotionKey]? = nil
     /// Frame and shadow (nil: none, for projects from before).
     var frame: PictureFrame? = nil
     var shadow: Bool? = nil

@@ -158,9 +158,10 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
 
     private func showPanel() {
         let visible = (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let host = NSHostingView(rootView: LiveControlView(live: self, app: app))
-        host.sizingOptions = [.intrinsicContentSize]
-        let size = host.fittingSize
+        // The window follows its content when sections open and close.
+        let controller = NSHostingController(rootView: LiveControlView(live: self, app: app))
+        controller.sizingOptions = [.preferredContentSize]
+        let size = controller.view.fittingSize
         let rect = NSRect(x: visible.maxX - size.width - 24, y: visible.maxY - size.height - 24, width: size.width, height: size.height)
         let panel = NSPanel(contentRect: rect, styleMask: [.titled, .closable, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
         panel.title = "Erklärbär Live – Steuerung"
@@ -170,7 +171,8 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.sharingType = .none   // never to be seen in the meeting, even when a whole screen is shared
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = host
+        panel.contentViewController = controller
+        panel.setContentSize(size)
         panel.delegate = self
         panel.orderFrontRegardless()
         self.panel = panel
@@ -212,7 +214,7 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.22
-            panel.animator().setFrame(open, display: true)
+            panel.animator().setFrame(NSRect(x: open.minX, y: open.maxY - panel.frame.height, width: panel.frame.width, height: panel.frame.height), display: true)
             panel.animator().alphaValue = 1
         }
     }
@@ -276,8 +278,30 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         config.background = true
     }
 
+    /// A logo in a corner of the live picture (kept in the app's own folder).
+    func chooseLogo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.message = "Logo für das Live-Bild (am besten ein PNG mit transparentem Hintergrund)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Screenkast/Logos", isDirectory: true)
+        let target = folder.appendingPathComponent(UUID().uuidString + "." + url.pathExtension)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: url, to: target)
+        } catch {
+            message = "Das Logo ließ sich nicht übernehmen: \(error.localizedDescription)"
+            return
+        }
+        if let old = config.logo?.file, old != target.path { try? FileManager.default.removeItem(atPath: old) }
+        var logo = config.logo ?? Watermark(file: target.path)
+        logo.file = target.path
+        config.logo = logo
+        config.logoOn = true
+    }
+
     func playMeme(_ slot: MemeSlot) {
-        engine.playMeme(url: MemeBoard.shared.url(of: slot), duration: slot.duration, transparent: slot.transparent == true)
+        engine.playMeme(url: MemeBoard.shared.url(of: slot), length: slot.liveLength, transparent: slot.transparent == true)
     }
 
     // MARK: Source

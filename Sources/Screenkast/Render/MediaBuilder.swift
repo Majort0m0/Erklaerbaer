@@ -189,7 +189,7 @@ struct MediaComposition {
                 for v in overlayVolumes[entry.track.trackID] ?? [] {
                     guard let mine = settings.videoOverlays.first(where: { $0.id == v.overlay }), !mine.synced else { continue }
                     let rivals = others.filter { other in
-                        settings.videoOverlays.contains { $0.id == other.overlay && !$0.synced && FrameRenderer.sameSpot($0, mine) }
+                        settings.videoOverlays.contains { $0.id == other.overlay && !$0.synced && FrameRenderer.sameSpot($0, mine) && ($0.lane ?? 0) == (mine.lane ?? 0) }
                     }
                     for o in rivals where o.range.overlaps(v.range) {
                         if o.range.lowerBound < v.range.lowerBound, o.range.upperBound < v.range.upperBound, o.range.upperBound - v.range.lowerBound > 0.02 {
@@ -204,7 +204,18 @@ struct MediaComposition {
                 for v in overlayVolumes[entry.track.trackID] ?? [] {
                     let o = settings.videoOverlays.first { $0.id == v.overlay }
                     let volume = o.map { $0.muted ? 0 : min(1, $0.volume) } ?? 1
-                    if volume < 0.999 {
+                    // Keyframes: the volume follows them in small steps.
+                    if let keys = o?.keys, !keys.isEmpty, o?.muted != true {
+                        let first = (overlayVolumes.values.flatMap { $0 }.filter { $0.overlay == v.overlay }.map(\.range.lowerBound).min()) ?? v.range.lowerBound
+                        var t = v.range.lowerBound
+                        while t < v.range.upperBound {
+                            let end = min(v.range.upperBound, t + 0.1)
+                            if let level = Motion.value(keys, at: (t + end) / 2 - first)?.volume, level < 0.999 {
+                                dips.append(.init(start: t, end: end, level: level, rampIn: 0.05, rampOut: 0.05))
+                            }
+                            t = end
+                        }
+                    } else if volume < 0.999 {
                         dips.append(.init(start: v.range.lowerBound, end: v.range.upperBound, level: volume, rampIn: 0.02, rampOut: 0.02))
                     }
                 }

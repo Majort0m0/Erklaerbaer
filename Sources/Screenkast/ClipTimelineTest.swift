@@ -24,6 +24,7 @@ enum ClipTimelineTest {
         try markingEdgeTest(base)
         try await liveTest(dir)
         try await memeTest(base, dir)
+        try await improvementTest(base, dir)
         try await deviceWriterTest(dir)
     }
 
@@ -871,6 +872,27 @@ enum ClipTimelineTest {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first, try await track.load(.naturalSize) == CGSize(width: 1920, height: 1080), length > 0.3 else { throw fail("live recording: \(length)") }
         await engine.stop()
+        // In a scene the source lies on the screen of the device; the picture around it is the scene.
+        var framed = LiveConfig()
+        framed.bubble = false
+        for kind in MockupKind.allCases {
+            framed.mockup = kind
+            let shot = LiveCompositor.compose(config: framed, source: source, camera: nil)
+            let area = kind.screen(out: canvas.size, aspect: 800.0 / 600.0, placement: MockupPlacement())
+            guard shot.extent == canvas, canvas.contains(area), area.width < canvas.width else { throw fail("live scene \(kind): \(area)") }
+            guard isRed(pixel(shot, area.midX, area.midY)), !isRed(pixel(shot, 3, 3)), pixel(shot, 3, 3) != (18, 20, 26) else { throw fail("live scene \(kind): \(pixel(shot, area.midX, area.midY)), \(pixel(shot, 3, 3))") }
+        }
+        // The logo in its corner, only when it is switched on.
+        let logoFile = dir.appendingPathComponent("logo-live.png")
+        try NSBitmapImageRep(cgImage: CIContext().createCGImage(CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 200, height: 100)), from: CGRect(x: 0, y: 0, width: 200, height: 100))!).representation(using: .png, properties: [:])?.write(to: logoFile)
+        var branded = LiveConfig()
+        branded.bubble = false
+        branded.logo = Watermark(file: logoFile.path, corner: .bottomLeft, size: 0.2, opacity: 1)
+        let logoSpot = LiveCompositor.logoRect(branded.logo!, size: CGSize(width: 200, height: 100))
+        guard !isGreen(pixel(LiveCompositor.compose(config: branded, source: source, camera: nil), logoSpot.midX, logoSpot.midY)) else { throw fail("logo shown while off") }
+        branded.logoOn = true
+        let withLogo = LiveCompositor.compose(config: branded, source: source, camera: nil)
+        guard isGreen(pixel(withLogo, logoSpot.midX, logoSpot.midY)), logoSpot.minX < 100, logoSpot.minY < 100, withLogo.extent == canvas else { throw fail("live logo: \(logoSpot)") }
         // A shortcut appears at the bottom and is gone later.
         var shortcut = LiveConfig()
         shortcut.keys = true
@@ -918,7 +940,14 @@ enum ClipTimelineTest {
         await board.assign(4, file: junk)
         let (first, last, broken, problem, credits) = await MainActor.run { (board.slots[0], board.slots[9], board.slots[4], board.problem, board.credits) }
         guard let first, let last, broken == nil, problem != nil, credits == "Autor – CC BY 4.0" else { throw fail("meme places: \(String(describing: first)), \(String(describing: last)), \(String(describing: problem))") }
-        guard near(first.duration, 1, 0.05), near(last.duration, MemeConverter.stillLength, 0.05), first.width == 300, first.title == "tanz" else { throw fail("meme lengths: \(first.duration), \(last.duration), \(first.width)") }
+        // The GIF (1 second) plays three times, so that it is on screen long enough.
+        guard near(first.duration, 3, 0.05), near(last.duration, MemeConverter.stillLength, 0.05), first.width == 300, first.title == "tanz" else { throw fail("meme lengths: \(first.duration), \(last.duration), \(first.width)") }
+        var timed = first
+        guard near(timed.liveLength ?? 0, 3, 0.05) else { throw fail("live length auto: \(String(describing: timed.liveLength))") }
+        timed.showFor = 0
+        guard timed.liveLength == nil else { throw fail("live length until pressed") }
+        timed.showFor = 8
+        guard timed.liveLength == 8 else { throw fail("live length set") }
         for slot in [first, last] {
             let url = await MainActor.run { board.url(of: slot) }
             let asset = AVURLAsset(url: url)
@@ -1048,5 +1077,190 @@ enum ClipTimelineTest {
         let found = o.name == "Mein Meme" && near(o.x, 0.5) && near(o.duration, last.duration, 0.05)
         guard found else { throw fail("meme in the editor") }
         print("✓ meme board: own files and pictures become clips, places are remembered, search answers are read, memes reach the editor")
+    }
+
+    /// Clicks to markings, steps, packs, lanes, keyframes, roll, slip, library and selecting.
+    private static func improvementTest(_ base: Project, _ dir: URL) async throws {
+        let d = base.info.duration
+        guard d >= 3.9 else { print("– improvements skipped (short test video)"); return }
+        try await MainActor.run {
+            // Recorded clicks become markings: close ones count once, a second run adds nothing.
+            var cursor = base.cursor
+            cursor.clicks = [ClickEvent(t: 1, x: 0.5, y: 0.5), ClickEvent(t: 1.2, x: 0.51, y: 0.5), ClickEvent(t: 2.5, x: 0.2, y: 0.3)]
+            let clicked = EditorModel(project: Project(url: base.url, info: base.info, cursor: cursor, settings: project(base) { _ in }.settings))
+            guard clicked.highlightClicks(with: .frame) == 2, clicked.highlightClicks(with: .frame) == 0, clicked.settings.annotations.count == 2 else { throw fail("click highlights: \(clicked.settings.annotations.count)") }
+            guard clicked.highlightClicks(with: .touch) == 2, clicked.settings.annotations.contains(where: { $0.kind == .touch && near($0.x, 0.2) && near($0.y, 0.3) }) else { throw fail("click fingers") }
+
+            // Steps count by their place in time.
+            let steps = EditorModel(project: project(base) { s in
+                s.annotations = [Annotation(kind: .step, start: 2, end: 3), Annotation(kind: .frame, start: 0, end: 3), Annotation(kind: .step, start: 1, end: 3)]
+            })
+            guard steps.stepNumber(steps.settings.annotations[0]) == 2, steps.stepNumber(steps.settings.annotations[2]) == 1 else { throw fail("step numbers") }
+
+            // Selecting: everything after the playhead.
+            let group = EditorModel(project: project(base) { s in
+                s.masks = [BlurMask(start: 0.2, end: 0.8), BlurMask(start: 2.5, end: 3)]
+                s.annotations = [Annotation(kind: .frame, start: 2.2, end: 2.8)]
+            })
+            group.seek(to: 2)
+            group.selectRightOfPlayhead()
+            let later = EditorSelection.mask(group.settings.masks[1].id), earlier = EditorSelection.mask(group.settings.masks[0].id)
+            guard group.multiSelection.contains(later), group.multiSelection.contains(.annotation(group.settings.annotations[0].id)), !group.multiSelection.contains(earlier) else { throw fail("select right: \(group.multiSelection)") }
+            guard group.timelineItems().contains(where: { $0.row == "mask" && $0.item == earlier }) else { throw fail("timeline items") }
+
+            // Rolling keeps the length, at a plain join and at a cut, and the part keeps its order.
+            let total: (EditorModel) -> Double = { $0.timeMap.total }
+            let rolled = EditorModel(project: project(base) { $0.splits = [2] })
+            let lengthBefore = total(rolled)
+            rolled.rollEdge(of: rolled.clipParts[0], isStart: false, dt: 0.5)
+            rolled.finishTrimDrag()
+            guard near(rolled.settings.splits[0], 2.5), near(total(rolled), lengthBefore, 0.001), rolled.clipParts.count == 2 else { throw fail("roll split: \(rolled.settings.splits)") }
+            let rollCut = EditorModel(project: project(base) { s in
+                s.cuts = [CutRange(start: 1, end: 2)]
+                s.clipOrder = [0, 2]
+                s.joinTransitions = [JoinTransition(key: 2, length: 0.2)]
+            })
+            let cutLength = total(rollCut)
+            rollCut.rollEdge(of: rollCut.clipParts[1], isStart: true, dt: 0.3)
+            rollCut.finishTrimDrag()
+            guard near(rollCut.settings.cuts[0].start, 1.3), near(rollCut.settings.cuts[0].end, 2.3), near(total(rollCut), cutLength, 0.001),
+                  rollCut.settings.clipOrder == [0, 2.3], near(rollCut.settings.joinTransitions[0].key, 2.3) else { throw fail("roll cut: \(rollCut.settings.cuts), \(String(describing: rollCut.settings.clipOrder))") }
+
+            // Slipping: same place, same length, another piece; it stops before a cut would vanish.
+            let slipped = EditorModel(project: project(base) { $0.cuts = [CutRange(start: 0.5, end: 1), CutRange(start: 2, end: 2.5)] })
+            let slipLength = total(slipped)
+            let middle = slipped.clipParts[1]
+            slipped.slipPart(middle, dt: -0.2)
+            guard near(slipped.settings.cuts[0].end, 1.2), near(slipped.settings.cuts[1].start, 2.2), near(total(slipped), slipLength, 0.001) else { throw fail("slip: \(slipped.settings.cuts)") }
+            slipped.slipPart(middle, dt: -5)
+            guard near(slipped.settings.cuts[1].start, 2.4), near(slipped.settings.cuts[0].end, 1.4) else { throw fail("slip limit: \(slipped.settings.cuts)") }
+            slipped.finishTrimDrag()
+            guard slipped.slipOrigin == nil else { throw fail("slip origin") }
+            let joined = EditorModel(project: project(base) { $0.splits = [2] })
+            joined.slipPart(joined.clipParts[0], dt: 0.3)
+            joined.finishTrimDrag()
+            guard joined.settings.splits == [2], joined.settings.cuts.isEmpty else { throw fail("slip without room") }
+
+            // Lanes: neighbors only on the same lane, always a free lane above.
+            func overlay(_ start: Double, lane: Int?) -> VideoOverlay {
+                var o = VideoOverlay(file: "a.mov", name: "a", start: start, duration: 1, fileDuration: 1)
+                o.free = true
+                o.lane = lane
+                return o
+            }
+            let lanes = EditorModel(project: project(base) { $0.videoOverlays = [overlay(0, lane: nil), overlay(1, lane: 1), overlay(2, lane: nil)] })
+            guard lanes.mediaRows == 3, lanes.laneNeighbours(of: lanes.settings.videoOverlays[0].id).count == 1 else { throw fail("lanes: \(lanes.mediaRows)") }
+            lanes.setLane(.video(lanes.settings.videoOverlays[0].id), 9)
+            guard lanes.settings.videoOverlays[0].lane == EditSettings.maxMediaLanes - 1 else { throw fail("lane limit") }
+
+            // Keyframes: place and in between; a changed place lands on the keyframe.
+            let keyed = EditorModel(project: project(base) { s in
+                var o = overlay(0, lane: nil)
+                o.duration = 3
+                o.x = 0.2
+                s.videoOverlays = [o]
+            })
+            let id = keyed.settings.videoOverlays[0].id
+            keyed.seek(to: keyed.sourceTime(0.5))
+            keyed.addKey(.video(id))
+            keyed.seek(to: keyed.sourceTime(2.5))
+            keyed.addKey(.video(id))
+            keyed.place(.video(id), x: 0.8)
+            let list = keyed.keys(.video(id))
+            guard list.count == 2, near(list[0].x, 0.2), near(list[1].x, 0.8), near(keyed.settings.videoOverlays[0].x, 0.2) else { throw fail("keyframes: \(list)") }
+            guard near(keyed.settings.videoOverlays[0].moved(at: 1.5).x, 0.5, 0.01), near(keyed.settings.videoOverlays[0].moved(at: 0).x, 0.2), near(keyed.settings.videoOverlays[0].moved(at: 3).x, 0.8) else { throw fail("keyframe values") }
+            keyed.clearKeys(.video(id))
+            guard keyed.keys(.video(id)).isEmpty, near(keyed.settings.videoOverlays[0].x, 0.8) else { throw fail("clear keyframes") }
+
+            // The library lists a file once and uses it without another copy.
+            let shelf = EditorModel(project: project(base) { _ in })
+            let folder = base.url.appendingPathComponent("media", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let source = dir.appendingPathComponent("regal.png")
+            try NSBitmapImageRep(cgImage: CIContext().createCGImage(CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 8, height: 8)), from: CGRect(x: 0, y: 0, width: 8, height: 8))!).representation(using: .png, properties: [:])?.write(to: source)
+            let before = shelf.mediaLibrary.count
+            shelf.addToLibrary([source])
+            guard shelf.mediaLibrary.count == before + 1, let stored = shelf.mediaLibrary.first(where: { EditorModel.libraryName($0) == "regal" }), shelf.importMedia(stored) == "media/\(stored.lastPathComponent)", shelf.mediaLibrary.count == before + 1 else { throw fail("library: \(shelf.mediaLibrary)") }
+            try? FileManager.default.removeItem(at: stored)
+        }
+
+        // A followed mask: between its points, and it moves along with the content.
+        var mask = BlurMask(start: 0, end: 2)
+        mask.track = [MaskPoint(t: 0, x: 0.1, y: 0.1), MaskPoint(t: 2, x: 0.5, y: 0.3)]
+        guard near(Double(mask.place(at: 1).x), 0.3), near(Double(mask.place(at: 5).y), 0.3), near(Double(mask.place(at: -1).x), 0.1) else { throw fail("mask place") }
+        let moving = dir.appendingPathComponent("moving.mov")
+        try? FileManager.default.removeItem(at: moving)
+        let writer = try AVAssetWriter(outputURL: moving, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 640, AVVideoHeightKey: 360])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 640, kCVPixelBufferHeightKey as String: 360])
+        writer.add(input)
+        guard writer.startWriting() else { throw fail("moving video") }
+        writer.startSession(atSourceTime: .zero)
+        let drawing = CIContext()
+        for i in 0..<60 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            guard let pool = adaptor.pixelBufferPool else { throw fail("moving pool") }
+            var frame: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, pool, &frame)
+            guard let frame else { throw fail("moving frame") }
+            let x = 100 + CGFloat(i) * 5
+            let box = CIImage(color: CIColor(red: 1, green: 0.8, blue: 0)).cropped(to: CGRect(x: x, y: 140, width: 80, height: 80))
+            let cross = CIImage(color: .blue).cropped(to: CGRect(x: x + 30, y: 150, width: 20, height: 60))
+            drawing.render(cross.composited(over: box).composited(over: CIImage(color: CIColor(red: 0.15, green: 0.15, blue: 0.15)).cropped(to: CGRect(x: 0, y: 0, width: 640, height: 360))), to: frame)
+            adaptor.append(frame, withPresentationTime: CMTime(value: Int64(i), timescale: 30))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        var start = BlurMask(start: 0, end: 1.9)
+        start.width = 80.0 / 640; start.height = 80.0 / 360
+        start.x = 100.0 / 640; start.y = (360 - 220) / 360.0
+        do {
+            let path = try await MaskTracker.track(url: moving, mask: start)
+            guard let end = path.last, path.count > 10, abs(end.x - (100 + 5 * end.t * 30) / 640) < 0.06, abs(end.y - start.y) < 0.06 else { throw fail("mask following: \(path.count), \(String(describing: path.last))") }
+            print("✓ mask following: the mask stays on content that moves")
+        } catch let error as NSError where error.domain != "selftest" {
+            print("– mask following skipped (Vision: \(error.localizedDescription))")
+        }
+
+        // Lanes in the picture: the higher lane is on top, whatever the order in the list.
+        let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 320, height: 180))
+        let blue = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 320, height: 180))
+        var upper = VideoOverlay(file: "a.mov", name: "a", start: 0.5, duration: 2, fileDuration: 2)
+        upper.free = true; upper.x = 0.5; upper.y = 0.5; upper.width = 0.4; upper.lane = 1; upper.shadow = false; upper.frame = .none
+        var lower = upper
+        lower.id = UUID()
+        lower.lane = nil
+        let layered = project(base) { $0.videoOverlays = [upper, lower]; $0.showCursor = false; $0.exportShortSide = 720 }
+        let picture = FrameRenderer(project: layered)
+        let image = picture.render(source: nil, camera: nil, time: 1.5, overlays: [upper.id: blue, lower.id: red])
+        let center = picture.outputSize
+        var px = [UInt8](repeating: 0, count: 4)
+        CIContext().render(image, toBitmap: &px, rowBytes: 4, bounds: CGRect(x: center.width / 2, y: center.height / 2, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        guard px[2] > 200, px[0] < 60 else { throw fail("lanes in the picture: \(px)") }
+        guard FrameRenderer.mediaDissolves(layered.settings, map: layered.settings.editMap(duration: d)).isEmpty else { throw fail("dissolve across lanes") }
+
+        // A pack brings intro, outro and the design along; a plain style leaves them.
+        var kit = project(base) { _ in }.settings
+        var card = TextOverlay(kind: .titleCard, start: 0, end: 2, title: "Willkommen")
+        card.placement = .intro
+        kit.texts = [card]
+        kit.textDesign = TextDesign()
+        var target = project(base) { _ in }.settings
+        var old = TextOverlay(kind: .titleCard, start: 0, end: 1, title: "Alt")
+        old.placement = .intro
+        target.texts = [old]
+        var pack = StylePreset(name: "Paket", settings: kit)
+        var plain = target
+        StyleLibrary.apply(pack, to: &plain, projectURL: base.url)
+        guard plain.intro?.title == "Alt" else { throw fail("plain style changed the intro") }
+        pack.isPack = true
+        StyleLibrary.apply(pack, to: &target, projectURL: base.url)
+        guard target.intro?.title == "Willkommen", target.intro?.id != card.id, target.texts.count == 1, target.textDesign != nil else { throw fail("pack: \(target.texts.map(\.title))") }
+
+        // Older projects open, new fields are kept.
+        var saved = project(base) { $0.script = "Hallo" }.settings
+        saved.cameraBackground = nil
+        guard try JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(saved)).script == "Hallo" else { throw fail("script not saved") }
+        print("✓ editing: clicks to markings, steps, selecting, roll, slip, lanes, keyframes, library and packs")
     }
 }

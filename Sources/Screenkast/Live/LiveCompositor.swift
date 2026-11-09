@@ -23,6 +23,11 @@ struct LiveConfig: Codable, Equatable {
     var backgroundCalm: Double? = nil
     /// Show keyboard shortcuts pressed on the Mac.
     var keys: Bool? = nil
+    /// Scene around the source (laptop, television …), nil: none.
+    var mockup: MockupKind? = nil
+    /// Logo in a corner (`file` is a full path) and whether it is shown.
+    var logo: Watermark? = nil
+    var logoOn: Bool? = nil
 }
 
 enum MemeSpot: String, Codable, CaseIterable, Identifiable {
@@ -147,6 +152,33 @@ enum LiveCompositor {
         return c.makeImage().map { CIImage(cgImage: $0).transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY)) }
     }
 
+    private struct DrawnScene {
+        let key: String
+        let image: CIImage
+        let mask: CIImage?
+    }
+    nonisolated(unsafe) private static var drawnScene: DrawnScene?
+    private static let sceneLock = NSLock()
+
+    /// The scene for a source of this shape, drawn once. `mask` rounds the corners of its screen.
+    private static func scene(_ kind: MockupKind, screen: CGRect) -> DrawnScene? {
+        let key = "\(kind.rawValue)|\(Int(screen.minX)),\(Int(screen.minY)),\(Int(screen.width)),\(Int(screen.height))"
+        if let kept = sceneLock.withLock({ drawnScene }), kept.key == key { return kept }
+        guard let picture = MockupScene.image(kind, size: canvas.size, screen: screen) else { return nil }
+        var mask: CIImage?
+        let radius = kind.cornerRadius(screen: screen)
+        if radius > 0, let c = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            c.addPath(CGPath(roundedRect: screen, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            c.setFillColor(CGColor(gray: 1, alpha: 1))
+            c.fillPath()
+            mask = c.makeImage().map { CIImage(cgImage: $0) }
+        }
+        let drawn = DrawnScene(key: key, image: CIImage(cgImage: picture), mask: mask)
+        sceneLock.withLock { drawnScene = drawn }
+        return drawn
+    }
+
     /// The shortcut as a dark pill with large letters. The last one is kept.
     private static func keyImage(_ label: String) -> CIImage {
         if let kept = keyPill, kept.label == label { return kept.image }
@@ -167,6 +199,26 @@ enum LiveCompositor {
         let image = c.makeImage().map { CIImage(cgImage: $0) } ?? .empty()
         keyPill = (label, image)
         return image
+    }
+
+    nonisolated(unsafe) private static var logoPicture: (path: String, image: CIImage)?
+
+    private static func logoImage(_ path: String) -> CIImage? {
+        if let kept = sceneLock.withLock({ logoPicture }), kept.path == path { return kept.image }
+        guard let image = CIImage(contentsOf: URL(fileURLWithPath: path), options: [.applyOrientationProperty: true]) else { return nil }
+        let placed = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
+        sceneLock.withLock { logoPicture = (path, placed) }
+        return placed
+    }
+
+    /// Where the logo lies: like in the editor, a part of the shorter side wide, in its corner.
+    static func logoRect(_ logo: Watermark, size: CGSize) -> CGRect {
+        let short = min(canvas.width, canvas.height)
+        let width = CGFloat(logo.size) * short, height = width * size.height / max(1, size.width)
+        let margin = 0.035 * short
+        let left = logo.corner == .topLeft || logo.corner == .bottomLeft
+        let bottom = logo.corner == .bottomLeft || logo.corner == .bottomRight
+        return CGRect(x: left ? margin : canvas.width - margin - width, y: bottom ? margin : canvas.height - margin - height, width: width, height: height)
     }
 
     /// Where the shortcut is shown: at the bottom in the middle.
@@ -203,13 +255,22 @@ enum LiveCompositor {
         case .webcam:
             if let camera { image = place(camera, filling: canvas).composited(over: image) }
         case .source:
+            // In a scene the source lies on the screen of the device, otherwise it fills the picture.
+            let shape = source.map { $0.extent.width / max(1, $0.extent.height) } ?? canvas.width / canvas.height
+            let screen = config.mockup.map { $0.screen(out: canvas.size, aspect: shape, placement: MockupPlacement()) }
+            let drawn = config.mockup.flatMap { kind in screen.flatMap { scene(kind, screen: $0) } }
+            if let drawn { image = drawn.image.composited(over: image) }
             if let source {
                 let e = source.extent
-                let rect = fit(e.size, in: canvas)
-                image = source.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY)
+                let rect = fit(e.size, in: screen ?? canvas)
+                var video = source.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY)
                     .concatenating(CGAffineTransform(scaleX: rect.width / max(1, e.width), y: rect.height / max(1, e.height)))
                     .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
-                    .cropped(to: rect).composited(over: image)
+                    .cropped(to: rect)
+                if let mask = drawn?.mask {
+                    video = video.applyingFilter("CIBlendWithAlphaMask", parameters: [kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask])
+                }
+                image = video.composited(over: image)
                 func onCanvas(_ n: CGPoint) -> CGPoint { CGPoint(x: rect.minX + n.x * rect.width, y: rect.maxY - n.y * rect.height) }
                 if config.trail, let trail = trailImage(effects.trail.map { (onCanvas($0.at), $0.age) }) {
                     image = trail.composited(over: image)
@@ -224,6 +285,12 @@ enum LiveCompositor {
                 }
             }
             if config.bubble, let camera { image = bubble(camera, over: image, config: config) }
+        }
+        if config.logoOn == true, let logo = config.logo, let picture = logoImage(logo.file) {
+            let rect = logoRect(logo, size: picture.extent.size)
+            let placed = picture.transformed(by: CGAffineTransform(scaleX: rect.width / max(1, picture.extent.width), y: rect.height / max(1, picture.extent.height))
+                .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
+            image = faded(placed, logo.opacity).composited(over: image)
         }
         if let key = effects.key, key.age < keyLife {
             let pill = keyImage(key.label)

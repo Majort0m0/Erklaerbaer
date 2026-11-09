@@ -333,7 +333,7 @@ final class FrameRenderer: @unchecked Sendable {
         }
 
         // 5b. Video overlays (picture in picture, second window)
-        image = videoOverlays(over: image, time: T, settings: s, map: st.map, frames: overlays, out: out)
+        image = videoOverlays(over: image, time: T, settings: s, map: st.map, frames: overlays, out: out, lane: 0)
 
         // 6. Camera (fixed in the output, not affected by zoom): bubble, larger bubble or full frame by layout.
         if let camera {
@@ -361,7 +361,13 @@ final class FrameRenderer: @unchecked Sendable {
 
         // 6b. Lower thirds and covering title cards, pictures and the logo (fixed in the output)
         image = textOverlays(over: image, time: T, settings: s, map: st.map, out: out)
-        image = imageOverlays(over: image, time: T, settings: s, map: st.map, out: out)
+        image = imageOverlays(over: image, time: T, settings: s, map: st.map, out: out, lane: 0)
+        // Higher media lanes lie above the first one, each one complete before the next.
+        for lane in 1..<EditSettings.maxMediaLanes where s.images.contains(where: { $0.lane == lane }) || s.videoOverlays.contains(where: { $0.lane == lane }) {
+            image = videoOverlays(over: image, time: T, settings: s, map: st.map, frames: overlays, out: out, lane: lane)
+            image = imageOverlays(over: image, time: T, settings: s, map: st.map, out: out, lane: lane)
+        }
+        image = logo(over: image, settings: s, out: out)
 
         // 7. Keyboard shortcut badge (above the captions when they are at the bottom)
         let caption = s.showCaptions ? captionPlacement(at: t, settings: s, map: st.map, out: out) : nil
@@ -641,7 +647,8 @@ final class FrameRenderer: @unchecked Sendable {
         var img = src
         let W = src.extent.width, H = src.extent.height
         for m in masks where t >= m.start && t <= m.end {
-            let r = CGRect(x: m.x * W, y: (1 - m.y - m.height) * H, width: m.width * W, height: m.height * H)
+            let at = m.place(at: t)
+            let r = CGRect(x: at.x * W, y: (1 - at.y - m.height) * H, width: m.width * W, height: m.height * H)
                 .integral.intersection(src.extent)
             guard !r.isNull, r.width > 2, r.height > 2 else { continue }
             let effect: CIImage
@@ -711,6 +718,26 @@ final class FrameRenderer: @unchecked Sendable {
                     arrow = arrow.transformed(by: CGAffineTransform(translationX: (to.x - from.x) / length * push, y: (to.y - from.y) / length * push))
                 }
                 img = Self.withAlpha(arrow, alpha).composited(over: img)
+            case .step:
+                let number = (annotations.filter { $0.kind == .step }.sorted { ($0.start, $0.id.uuidString) < ($1.start, $1.id.uuidString) }.firstIndex { $0.id == a.id } ?? 0) + 1
+                let radius = 11 * unit * CGFloat(a.thickness), art = min(radius, 120)
+                let key = "step|\(number)|\(a.color.rawValue)|\(Int(art))"
+                var badge = lock.withLock { arrowCache[key] }
+                if badge == nil {
+                    let made = TouchArt.step(number, r: art, color: (CGFloat(r), CGFloat(g), CGFloat(b)))
+                    lock.withLock {
+                        if arrowCache.count > 24 { arrowCache.removeAll() }
+                        arrowCache[key] = made
+                    }
+                    badge = made
+                }
+                // Pops up and settles.
+                let p = CGFloat(min(1, age / 0.22)), overshoot = p < 1 ? 0.6 + 0.5 * p + 0.2 * sin(p * .pi) : 1.0
+                let size = radius / art * (animated ? min(1.12, overshoot) : 1)
+                if let badge {
+                    let placed = badge.transformed(by: CGAffineTransform(scaleX: size, y: size).concatenating(CGAffineTransform(translationX: a.x * W, y: (1 - a.y) * H)))
+                    img = Self.withAlpha(placed, alpha).composited(over: img)
+                }
             case .touch:
                 let from = CGPoint(x: a.x * W, y: (1 - a.y) * H)
                 let to = CGPoint(x: (a.x + a.width) * W, y: (1 - a.y - a.height) * H)
@@ -830,19 +857,20 @@ final class FrameRenderer: @unchecked Sendable {
                       width: width, height: height)
     }
 
-    private func imageOverlays(over base: CIImage, time T: Double, settings s: EditSettings, map: TimeMap, out: CGSize) -> CIImage {
+    private func imageOverlays(over base: CIImage, time T: Double, settings s: EditSettings, map: TimeMap, out: CGSize, lane: Int) -> CIImage {
         var image = base
         let short = min(out.width, out.height)
         let dissolves = Self.mediaDissolves(s, map: map)
-        for o in s.images.sorted(by: { Self.imageStart($0, map) < Self.imageStart($1, map) }) {
-            guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { continue }
+        for placed in s.images.filter({ ($0.lane ?? 0) == lane }).sorted(by: { Self.imageStart($0, map) < Self.imageStart($1, map) }) {
+            guard let r = placed.isFree ? placed.start...max(placed.start, placed.end) : map.run(placed.start, placed.end) else { continue }
             let a = r.lowerBound, b = r.upperBound
+            let o = placed.moved(at: T - a)
             guard T >= a, T <= b, let img = picture(o.file), let rect = imageFrame(o, out: out) else { continue }
             let fade = max(0, min(1, (T - a) / max(0.3, dissolves[o.id]?.fadeIn ?? 0), (b - T) / max(0.3, dissolves[o.id]?.fadeOut ?? 0)))
             let framed = framedPicture(img, in: rect, frame: o.frame ?? .none, shadow: o.shadow ?? false, short: short)
             image = Self.withAlpha(framed, fade * o.opacity).composited(over: image)
         }
-        return logo(over: image, settings: s, out: out)
+        return image
     }
 
     /// The logo in its corner, on every frame of the video.
@@ -873,10 +901,10 @@ final class FrameRenderer: @unchecked Sendable {
     /// over a later video fades out instead.) Clips at different places in the picture stay apart.
     static func mediaDissolves(_ s: EditSettings, map: TimeMap) -> [UUID: (fadeIn: Double, fadeOut: Double)] {
         guard s.images.count + s.videoOverlays.count > 1 else { return [:] }
-        struct Item { let id: UUID; let start: Double; let end: Double; let isImage: Bool; let box: CGRect }
+        struct Item { let id: UUID; let start: Double; let end: Double; let isImage: Bool; let box: CGRect; let lane: Int }
         var items: [Item] = s.images.compactMap { o in
             guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { return nil }
-            return Item(id: o.id, start: r.lowerBound, end: r.upperBound, isImage: true, box: spot(o.x, o.y, o.width))
+            return Item(id: o.id, start: r.lowerBound, end: r.upperBound, isImage: true, box: spot(o.x, o.y, o.width), lane: o.lane ?? 0)
         }
         items += s.videoOverlays.filter { !$0.synced }.compactMap { o in
             var a = o.start, b = o.start + o.duration
@@ -886,13 +914,13 @@ final class FrameRenderer: @unchecked Sendable {
                 a = first.timeline.lowerBound
                 b = last.timeline.upperBound
             }
-            return Item(id: o.id, start: a, end: b, isImage: false, box: spot(o.x, o.y, o.width))
+            return Item(id: o.id, start: a, end: b, isImage: false, box: spot(o.x, o.y, o.width), lane: o.lane ?? 0)
         }
         var result: [UUID: (fadeIn: Double, fadeOut: Double)] = [:]
         let sorted = items.sorted { ($0.start, $0.id.uuidString) < ($1.start, $1.id.uuidString) }
         for (i, a) in sorted.enumerated() {
             for b in sorted[(i + 1)...] where b.start < a.end - 0.01 && b.end > a.end + 0.01 {
-                guard sameSpot(a.box, b.box) else { continue }
+                guard a.lane == b.lane, sameSpot(a.box, b.box) else { continue }
                 let overlap = min(EditSettings.maxDissolve, a.end - b.start)
                 if a.isImage && !b.isImage {
                     result[a.id, default: (0, 0)].fadeOut = max(result[a.id]?.fadeOut ?? 0, overlap)
@@ -915,12 +943,13 @@ final class FrameRenderer: @unchecked Sendable {
 
     /// - Parameter T: timeline time.
     private func videoOverlays(over base: CIImage, time T: Double, settings s: EditSettings, map: TimeMap,
-                               frames: [UUID: CIImage], out: CGSize) -> CIImage {
+                               frames: [UUID: CIImage], out: CGSize, lane: Int) -> CIImage {
         guard !frames.isEmpty else { return base }
         var image = base
         let short = min(out.width, out.height)
         let dissolves = Self.mediaDissolves(s, map: map)
-        for o in s.videoOverlays.sorted(by: { (Self.overlayStart($0, map), $0.id.uuidString) < (Self.overlayStart($1, map), $1.id.uuidString) }) {
+        for placed in s.videoOverlays.filter({ ($0.lane ?? 0) == lane }).sorted(by: { (Self.overlayStart($0, map), $0.id.uuidString) < (Self.overlayStart($1, map), $1.id.uuidString) }) {
+            var o = placed
             var a = o.start, b = o.start + o.duration
             if !o.isFree {
                 let pieces = s.linkedPieces(start: o.start, duration: o.duration, map: s.timeMap(duration: map.duration), kept: s.keptSegments(duration: map.duration))
@@ -929,6 +958,7 @@ final class FrameRenderer: @unchecked Sendable {
                 b = last.timeline.upperBound
             }
             guard T >= a, T <= b, let raw = frames[o.id], raw.extent.width > 1 else { continue }
+            o = o.moved(at: T - a)
             var frame = raw.transformed(by: CGAffineTransform(translationX: -raw.extent.minX, y: -raw.extent.minY))
             if s.color.applyToMedia, !s.color.isNeutral { frame = Self.graded(frame, s.color) }
             let fade = max(0, min(1, (T - a) / max(0.25, dissolves[o.id]?.fadeIn ?? 0), (b - T) / max(0.25, dissolves[o.id]?.fadeOut ?? 0)))

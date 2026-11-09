@@ -12,6 +12,7 @@ import SwiftUI
 enum EditorKeyCommand: Equatable {
     case step(frames: Int), stepSeconds(Double), home, end, zoomIn, zoomOut, zoomFit
     case split, undo, redo, toggleSnapping, deselect, freeze, chapter, copy, paste, shuttle(Int)
+    case selectRight, addStep, cycleTrimMode
     case trimStart, trimEnd, addZoom, addText, addMask, addArrow, addFrame, addSpotlight, addFinger, addCursor, addImage, addVideo
     case voiceOver, toggleMagnet, transition, speed(Int), memeBoard, meme(Int)
 }
@@ -110,6 +111,10 @@ final class EditorKeyHandlerView: NSView {
             onCommand(.speed(event.keyCode == 126 ? 1 : -1))
             return nil
         }
+        if mods == [.command, .shift], event.keyCode == 124 {   // ⇧⌘→
+            onCommand(.selectRight)
+            return nil
+        }
         if mods == [.command, .shift], chars.lowercased() == "z" {
             onCommand(.redo)
             return nil
@@ -156,6 +161,8 @@ final class EditorKeyHandlerView: NSView {
             case "r": onCommand(.addFrame)
             case "p": onCommand(.addSpotlight)
             case "f": onCommand(.addFinger)
+            case "b": onCommand(.addStep)
+            case "y": onCommand(.cycleTrimMode)
             case "e": onCommand(.memeBoard)
             case "c": onCommand(.addCursor)
             case "i": onCommand(.addImage)

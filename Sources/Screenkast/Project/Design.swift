@@ -292,6 +292,9 @@ struct VideoOverlay: Codable, Identifiable, Equatable {
     var width: Double = 0.38
     /// Width / height of the video.
     var aspect: Double = 16.0 / 9.0
+    /// Media lane (nil: the first; higher lanes lie further up in the picture) and keyframes.
+    var lane: Int? = nil
+    var keys: [MotionKey]? = nil
     var opacity: Double = 1
     var volume: Double = 1
     var muted: Bool = false

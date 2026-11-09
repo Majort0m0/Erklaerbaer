@@ -161,6 +161,19 @@ final class EditorModel: ObservableObject {
     var cursorRangeDragOrigin: CursorRange?
     @Published var showShortcutHelp = false
     @Published var showMemeBoard = false
+    /// What dragging a part's edge or body does.
+    @Published var trimMode: TrimMode = .normal
+    var rollOrigin: RollOrigin?
+    var slipOrigin: RollOrigin?
+    /// The mask being followed, and a message about it.
+    @Published var trackingMask: UUID?
+    @Published var maskMessage: String?
+    /// The rectangle being dragged in the timeline to select several things.
+    @Published var marquee: CGRect?
+    /// Teleprompter while speaking a voice-over.
+    let prompter = NotesPanel()
+    /// Bumped when the library of the project changes.
+    @Published var libraryVersion = 0
     let timelineHover = TimelineHover()
 
     // Undo / redo of the edit settings. Changes in quick succession (typing, a slider or
@@ -251,7 +264,9 @@ final class EditorModel: ObservableObject {
     enum VoiceOverState: Equatable {
         case idle, countdown(Int), recording, saving
     }
-    @Published var voiceOverState: VoiceOverState = .idle
+    @Published var voiceOverState: VoiceOverState = .idle {
+        didSet { if voiceOverState == .idle { prompter.hide() } }
+    }
     @Published var voiceOverLevel: Float = 0
     @Published var voiceOverError: String?
     /// Hear the video while narrating (only with headphones, otherwise it is recorded too).
@@ -1199,6 +1214,10 @@ final class EditorModel: ObservableObject {
             voiceOverError = "Kein Mikrofon gefunden."
             return
         }
+        if let script = settings.script, !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if prompter.model.scrollSpeed == 0 { prompter.model.scrollSpeed = 22 }
+            prompter.show(text: script, on: nil)
+        }
         let file = "voiceover/vo-\(UUID().uuidString.prefix(8)).m4a"
         let recorder = VoiceOverRecorder()
         do {
@@ -1629,6 +1648,9 @@ extension EditorModel {
         case .addFrame: addAnnotation(.frame)
         case .addSpotlight: addAnnotation(.spotlight)
         case .addFinger: addAnnotation(.touch)
+        case .addStep: addAnnotation(.step)
+        case .selectRight: selectRightOfPlayhead()
+        case .cycleTrimMode: cycleTrimMode()
         case .memeBoard: showMemeBoard.toggle()
         case .meme(let index): pressMeme(index)
         case .addCursor: addCursorRangeAtPlayhead()

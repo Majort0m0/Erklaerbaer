@@ -34,17 +34,31 @@ final class LiveEngine: @unchecked Sendable {
         let url: URL
         let player: AVPlayer
         let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
-        let duration: Double
+        /// Seconds on screen (nil: until pressed again); the clip repeats as long as needed.
+        let length: Double?
         let transparent: Bool
+        let started = CACurrentMediaTime()
         var frame: CVPixelBuffer?
+        private var repeating: NSObjectProtocol?
 
-        init(url: URL, duration: Double, transparent: Bool) {
+        init(url: URL, length: Double?, transparent: Bool) {
             self.url = url
-            self.duration = duration
+            self.length = length
             self.transparent = transparent
             let item = AVPlayerItem(url: url)
             item.add(output)
             player = AVPlayer(playerItem: item)
+            player.actionAtItemEnd = .none
+            repeating = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [player] _ in
+                player.seek(to: .zero)
+                player.play()
+            }
+        }
+
+        func stop() {
+            player.pause()
+            if let repeating { NotificationCenter.default.removeObserver(repeating) }
+            repeating = nil
         }
     }
 
@@ -126,7 +140,7 @@ final class LiveEngine: @unchecked Sendable {
             defer { meme = nil }
             return meme
         }
-        running?.player.pause()
+        running?.stop()
         await stopSource()
         lock.withLock {
             sourceFrame = nil
@@ -152,7 +166,7 @@ final class LiveEngine: @unchecked Sendable {
 
     func setConfig(_ new: LiveConfig) {
         lock.withLock {
-            if new.scene != config.scene || new.bubble != config.bubble { stamp += 1 }
+            if new.scene != config.scene || new.bubble != config.bubble || new.mockup != config.mockup { stamp += 1 }
             config = new
         }
         segmenter.calm = new.backgroundCalm ?? 0.5
@@ -283,14 +297,14 @@ final class LiveEngine: @unchecked Sendable {
     }
 
     /// Starts a meme; pressing the same one again takes it away.
-    func playMeme(url: URL, duration: Double, transparent: Bool = false) {
+    func playMeme(url: URL, length: Double?, transparent: Bool = false) {
         let running: ActiveMeme? = lock.withLock { meme }
-        running?.player.pause()
+        running?.stop()
         guard running?.url != url else {
             lock.withLock { meme = nil }
             return
         }
-        let new = ActiveMeme(url: url, duration: duration, transparent: transparent)
+        let new = ActiveMeme(url: url, length: length, transparent: transparent)
         lock.withLock { meme = new }
         new.player.play()
     }
@@ -302,13 +316,15 @@ final class LiveEngine: @unchecked Sendable {
         if current.output.hasNewPixelBuffer(forItemTime: time) {
             current.frame = current.output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) ?? current.frame
         }
-        let seconds = max(0, time.seconds)
-        if seconds >= current.duration - 0.02 {
+        let shown = now - current.started
+        if let length = current.length, shown >= length {
             lock.withLock { if meme === current { meme = nil } }
+            DispatchQueue.main.async { current.stop() }
             return nil
         }
         guard let frame = current.frame else { return nil }
-        return (CIImage(cvPixelBuffer: frame), min(1, seconds / 0.15, (current.duration - seconds) / 0.15), current.transparent)
+        let fadeOut = current.length.map { ($0 - shown) / 0.15 } ?? 1
+        return (CIImage(cvPixelBuffer: frame), min(1, shown / 0.15, fadeOut), current.transparent)
     }
 
     private func effects(now: Double, area: CGRect?, fresh: [(CGPoint, Double)], config: LiveConfig) -> LiveEffects {
@@ -482,7 +498,7 @@ extension LiveEngine {
                 }
                 print("Höchstwert", peak, "MB")
                 if let i = arguments.firstIndex(of: "--meme"), i + 1 < arguments.count {
-                    engine.playMeme(url: URL(fileURLWithPath: arguments[i + 1]), duration: 3)
+                    engine.playMeme(url: URL(fileURLWithPath: arguments[i + 1]), length: 3)
                     try await Task.sleep(for: .seconds(1))
                 }
                 if recording { print("Aufnahme:", try await engine.stopRecording(), "s") }

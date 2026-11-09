@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 import AppKit
 import AVFoundation
 
@@ -146,6 +147,8 @@ extension EditorModel {
     }
 
     /// Source seconds per timeline second inside a part.
+    func partRate(_ part: EditSettings.ClipPart) -> Double { rate(of: part) }
+
     private func rate(of part: EditSettings.ClipPart) -> Double {
         guard let run = clipRun(part), run.upperBound > run.lowerBound else { return 1 }
         return (part.range.upperBound - part.range.lowerBound) / (run.upperBound - run.lowerBound)
@@ -827,13 +830,18 @@ extension EditorModel {
     // MARK: Gluing clips
 
     /// Time ranges of the other clips on the lane of `id` (nothing for items that are not clips of a media file).
+    private func mediaLane(of id: UUID) -> Int {
+        (settings.images.first { $0.id == id }?.lane ?? settings.videoOverlays.first { $0.id == id }?.lane) ?? 0
+    }
+
     func laneNeighbours(of id: UUID) -> [ClosedRange<Double>] {
         if let clip = settings.voiceOvers.first(where: { $0.id == id }) {
             return settings.voiceOvers.filter { $0.id != id && $0.isMusic == clip.isMusic }.map { displayRange($0) }
         }
         guard settings.videoOverlays.contains(where: { $0.id == id && !$0.synced }) || settings.images.contains(where: { $0.id == id }) else { return [] }
-        return settings.videoOverlays.filter { $0.id != id && !$0.synced }.map { displayRange($0) }
-            + settings.images.filter { $0.id != id }.compactMap { displayRange(start: $0.start, end: $0.end, free: $0.isFree) }
+        let lane = mediaLane(of: id)
+        return settings.videoOverlays.filter { $0.id != id && !$0.synced && ($0.lane ?? 0) == lane }.map { displayRange($0) }
+            + settings.images.filter { $0.id != id && ($0.lane ?? 0) == lane }.compactMap { displayRange(start: $0.start, end: $0.end, free: $0.isFree) }
     }
 
     /// `dt` of a dragged clip adjusted so that it sticks to the end of a neighbor when it comes close.
@@ -866,5 +874,140 @@ extension EditorModel {
 
     func addMeme(_ slot: MemeSlot) {
         addVideoOverlay(url: MemeBoard.shared.url(of: slot), at: currentTime, center: CGPoint(x: 0.5, y: 0.5), name: slot.title, transparent: slot.transparent == true)
+    }
+
+    // MARK: Numbered steps and clicks
+
+    func stepNumber(_ a: Annotation) -> Int {
+        (settings.annotations.filter { $0.kind == .step }.sorted { ($0.start, $0.id.uuidString) < ($1.start, $1.id.uuidString) }.firstIndex { $0.id == a.id } ?? 0) + 1
+    }
+
+    /// Turns the recorded clicks into markings at the right place. Clicks close together count once;
+    /// a click that already has such a marking gets no second one.
+    @discardableResult
+    func highlightClicks(with kind: AnnotationKind) -> Int {
+        commitUndoStep(); defer { commitUndoStep() }
+        var added = 0
+        var last: ClickEvent?
+        for click in project.cursor.clicks.sorted(by: { $0.t < $1.t }) where timeMap.contains(source: click.t) {
+            if let last, click.t - last.t < 0.7, hypot(click.x - last.x, click.y - last.y) < 0.04 { continue }
+            last = click
+            func anchor(_ a: Annotation) -> CGPoint {
+                switch a.kind {
+                case .frame, .spotlight: return CGPoint(x: a.x + a.width / 2, y: a.y + a.height / 2)
+                case .arrow: return CGPoint(x: a.x + a.width, y: a.y + a.height)
+                case .touch, .step: return CGPoint(x: a.x, y: a.y)
+                }
+            }
+            guard !settings.annotations.contains(where: {
+                $0.kind == kind && $0.start <= click.t && $0.end >= click.t && hypot(anchor($0).x - click.x, anchor($0).y - click.y) < 0.05
+            }) else { continue }
+            var a = Annotation(kind: kind, start: max(0, click.t - 0.15), end: min(duration, click.t + (kind == .touch ? 1.1 : 1.8)))
+            switch kind {
+            case .frame, .spotlight:
+                a.width = 0.16; a.height = 0.1
+                a.x = min(1 - a.width, max(0, click.x - a.width / 2)); a.y = min(1 - a.height, max(0, click.y - a.height / 2))
+            case .arrow:
+                a.x = min(0.95, max(0.05, click.x + (click.x > 0.8 ? -0.12 : 0.12))); a.y = min(0.95, max(0.05, click.y + (click.y > 0.8 ? -0.12 : 0.12)))
+                a.width = click.x - a.x; a.height = click.y - a.y
+            case .touch:
+                a.x = click.x; a.y = click.y; a.width = 0.14; a.height = 0; a.color = .blue
+            case .step:
+                a.x = click.x; a.y = click.y; a.width = 0; a.height = 0
+            }
+            settings.annotations.append(a)
+            added += 1
+        }
+        return added
+    }
+
+    // MARK: Selecting several things
+
+    /// Everything on the lanes with its place on the timeline; `row` names the lane.
+    func timelineItems() -> [(item: EditorSelection, range: ClosedRange<Double>, row: String)] {
+        var items: [(item: EditorSelection, range: ClosedRange<Double>, row: String)] = []
+        func add(_ item: EditorSelection, _ range: ClosedRange<Double>?, _ row: String) {
+            if let range { items.append((item, range, row)) }
+        }
+        for part in clipParts { add(.segment(part.range.lowerBound), clipRun(part), "clip") }
+        for z in settings.zoomSegments { add(.zoom(z.id), displayRun(z.start, z.end), "zoom") }
+        for c in settings.cursorRanges { add(.cursorRange(c.id), displayRun(c.start, c.end), "cursor") }
+        for m in settings.masks { add(.mask(m.id), displayRun(m.start, m.end), "mask") }
+        for a in settings.annotations { add(.annotation(a.id), displayRun(a.start, a.end), "annotation") }
+        for t in settings.overlayTexts { add(.text(t.id), displayRange(start: t.start, end: t.end, free: t.isFree), "text") }
+        for o in settings.images { add(.image(o.id), displayRange(start: o.start, end: o.end, free: o.isFree), "media") }
+        for o in settings.videoOverlays { add(.videoOverlay(o.id), displayRange(o), "media") }
+        for v in settings.voiceOvers { add(.voiceOver(v.id), displayRange(v), v.isMusic ? AudioLane.music.rawValue : AudioLane.voiceOver.rawValue) }
+        return items
+    }
+
+    func selectGroup(_ items: [EditorSelection]) {
+        guard let first = items.first else {
+            multiSelection = []
+            selection = nil
+            return
+        }
+        if items.count == 1 { multiSelection = [] } else { multiSelection = items }
+        selection = first
+    }
+
+    /// Selects everything that starts at or after the playhead.
+    func selectRightOfPlayhead() {
+        let here = display(currentTime) - 0.001
+        selectGroup(timelineItems().filter { $0.range.lowerBound >= here }.map(\.item))
+    }
+
+    // MARK: Library
+
+    private var libraryFolder: URL { project.url.appendingPathComponent("media", isDirectory: true) }
+
+    /// The files of this project, ready to be used again.
+    var mediaLibrary: [URL] {
+        ((try? FileManager.default.contentsOfDirectory(at: libraryFolder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+            .filter { Self.libraryKind($0) != nil }
+            .sorted { Self.libraryName($0).localizedStandardCompare(Self.libraryName($1)) == .orderedAscending }
+    }
+
+    private static func libraryKind(_ url: URL) -> UTType? {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
+        return [UTType.image, .movie, .audio].first { type.conforms(to: $0) }
+    }
+
+    static func libraryIcon(_ url: URL) -> String {
+        switch libraryKind(url) {
+        case UTType.image: return "photo"
+        case UTType.movie: return "film"
+        default: return "waveform"
+        }
+    }
+
+    /// Without the number that keeps file names apart in the project.
+    static func libraryName(_ url: URL) -> String {
+        let name = url.deletingPathExtension().lastPathComponent
+        guard name.count > 9, name[name.index(name.startIndex, offsetBy: 8)] == "-" else { return name }
+        return String(name.dropFirst(9))
+    }
+
+    func importToLibrary() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, .movie, .audio]
+        panel.allowsMultipleSelection = true
+        panel.message = "Dateien in die Bibliothek dieses Projekts übernehmen"
+        guard panel.runModal() == .OK else { return }
+        addToLibrary(panel.urls)
+    }
+
+    func addToLibrary(_ urls: [URL]) {
+        for url in urls { _ = importMedia(url) }
+        libraryVersion &+= 1
+    }
+
+    func useLibraryItem(_ url: URL) {
+        switch Self.libraryKind(url) {
+        case UTType.image: addImage(url: url, at: currentTime)
+        case UTType.movie: addVideoOverlay(url: url, at: currentTime, name: Self.libraryName(url))
+        case UTType.audio: addNarrationFile(url: url, at: currentTime)
+        default: break
+        }
     }
 }

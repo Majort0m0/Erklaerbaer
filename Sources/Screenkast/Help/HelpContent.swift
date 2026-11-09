@@ -219,6 +219,17 @@ enum HelpContent {
             .text("**⇧-Klick** nimmt weitere Elemente zur Auswahl dazu, auch aus verschiedenen Spuren; ein zweiter ⇧-Klick nimmt eines wieder heraus. Ziehen bewegt alle gemeinsam, **⌫** entfernt sie, **⌘C** und **⌘V** kopieren sie mit ihrem Abstand zueinander. Mit ⇧ ausgewählte Teile der Video-Spur lassen sich gemeinsam umstellen."),
             .tip("Elemente kopierst du mit **⌘C** und fügst sie mit **⌘V** am Abspielkopf wieder ein."),
             .tip("Automatisch geschnittene Stellen (Füllwörter, Pausen, Schnitte aus dem Transkript) sind **orange** und beschriftet. Wie du sie prüfst und zurücknimmst, steht unter **Ton**."),
+            .heading("Rollen und Slip"),
+            .text("Mit den beiden Schaltern in der Symbolleiste (oder **Y**) wechselst du den Schnittmodus. Danach wieder ausschalten."),
+            .bullets([
+                "**Rollen:** Ziehst du die Kante eines Teils, wandert der Schnitt. Links wird es länger, rechts kürzer (oder umgekehrt), das Video behält seine Länge.",
+                "**Slip:** Ziehst du einen Teil, bleibt er, wo er ist, und zeigt einen früheren oder späteren Ausschnitt. Das geht, wenn auf beiden Seiten noch weggeschnittenes Material vorhanden ist.",
+            ]),
+            .heading("Mehrere Dinge auswählen"),
+            .bullets([
+                "In einer leeren Spur ziehen zieht einen **Rahmen** auf; alles, was er berührt, ist ausgewählt.",
+                "**⇧⌘→** wählt alles rechts vom Abspielkopf aus, zum Beispiel um den Rest des Videos zu verschieben.",
+            ]),
         ])
 
     // MARK: Zoom und Cursor
@@ -285,6 +296,12 @@ enum HelpContent {
             .tip("Ein Klick auf ein Bild oder einen Text im Vorschaubild öffnet sofort seine Einstellungen."),
             .heading("Kapitelmarken"),
             .text("**M** setzt am Abspielkopf eine Kapitelmarke (Fähnchen in der Zeitskala, ziehbar). Die Liste im Text-Tab prüft die YouTube-Regeln und kopiert die Kapitel für die Videobeschreibung; beim Export entsteht zusätzlich eine `….kapitel.txt`."),
+            .heading("Bibliothek"),
+            .text("Im Medien-Tab sammelt die **Bibliothek** alle Dateien des Projekts. Einmal importiert, setzt ein Klick sie am Abspielkopf ein, oder du ziehst sie in die Timeline."),
+            .heading("Mehrere Medienspuren"),
+            .text("Clips lassen sich in der Timeline nach oben oder unten auf eine andere Spur ziehen, bis zu vier. Höhere Spuren liegen im Bild weiter oben. Überblendungen und Zusammenkleben gelten innerhalb einer Spur."),
+            .heading("Keyframes"),
+            .text("Für Bewegung: Abspielkopf setzen, im Inspektor **Keyframe am Abspielkopf**, weiter zur nächsten Stelle, wieder Keyframe, und den Clip dort im Vorschaubild verschieben oder skalieren. Dazwischen bewegt er sich weich. Deckkraft und bei Videos die Lautstärke lassen sich genauso ändern."),
         ])
 
     // MARK: Markierungen und Masken
@@ -306,6 +323,13 @@ enum HelpContent {
             .heading("Sensible Daten automatisch finden"),
             .text("**Hinzufügen › Sensible Daten verpixeln …** durchsucht die Aufnahme nach E-Mail-Adressen, Telefonnummern, IBANs, Kartennummern, API-Schlüsseln und Gesichtern und legt Masken für genau die Zeit an, in der sie zu sehen sind. Vor dem Übernehmen kannst du einzelne Funde abwählen."),
             .note("Für die Erkennung nutzt Erklärbär die Text- und Bilderkennung von macOS. Meldet sie, dass sie gerade nicht verfügbar ist, hilft meist ein Neustart des Macs."),
+            .heading("Nummerierte Schritte und Klicks"),
+            .bullets([
+                "**Schritt** (B): ein Kreis mit Nummer. Die Nummern ergeben sich von selbst aus der Reihenfolge in der Timeline.",
+                "**Hinzufügen › Klicks hervorheben:** Aus den aufgezeichneten Klicks entstehen automatisch Rahmen, Pfeile, Finger oder Schritte an der richtigen Stelle.",
+            ]),
+            .heading("Maske folgt dem Inhalt"),
+            .text("Setze die Maske am Anfang ihres Bereichs auf den Inhalt und wähle im Inspektor **Maske dem Inhalt folgen lassen**. Sie wandert dann mit, zum Beispiel beim Scrollen. Am besten klappt das mit einer nicht zu kleinen Maske um etwas Markantes. Sieh dir das Ergebnis trotzdem an, bevor du Vertrauliches veröffentlichst."),
         ])
 
     // MARK: Ton
@@ -346,6 +370,8 @@ enum HelpContent {
                 "**Sprachaufnahme (Audiodatei) …** fügt eine eigene Audiodatei als Erzählung ein.",
             ]),
             .note("**Lautsprecher-Echo:** Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton im Mikrofon. Erklärbär rechnet dieses Echo heraus (abschaltbar im Audio-Tab). Mit Kopfhörern entsteht es gar nicht erst."),
+            .heading("Teleprompter beim Einsprechen"),
+            .text("Trage im Audio-Bereich unter **Sprechtext** deinen Text ein oder übernimm ihn aus dem Transkript. Beim **Einsprechen** läuft er in einem schwebenden Fenster mit, das nicht aufgenommen wird."),
         ])
 
     // MARK: Untertitel
@@ -411,6 +437,8 @@ enum HelpContent {
                 "**Farbkorrektur:** Belichtung, Kontrast, Sättigung, Wärme, Lebendigkeit und Vorlagen (Lebendig, Warm, Kühl, Schwarzweiß …) – getrennt für Bildschirm, Kamera und Videos.",
                 "**Vorlagen:** Stil übernehmen oder als eigenen Stil sichern (Hintergrund, Rahmen, Cursor, Kamera, Blenden, Logo, Export) und als Standard für neue Aufnahmen festlegen.",
             ]),
+            .heading("Vorlagen-Pakete"),
+            .text("Beim **Sichern** eines Stils kannst du Vorspann, Abspann und das Bauchbinden-Design mitspeichern. So sieht jedes Video gleich aus: Wähle das Paket als Standard für neue Aufnahmen."),
         ])
 
     // MARK: Export
@@ -490,9 +518,9 @@ enum HelpContent {
             .keys([("S  oder  ⌘B", "Am Abspielkopf teilen"), ("⌫", "Auswahl löschen / Teil entfernen / wiederherstellen"),
                    ("Q / W", "Anfang / Ende hierher kürzen"), ("⌥F", "Standbild"), ("⌘T", "Überblendung an der Schnittstelle"),
                    ("⌥↑ / ⌥↓", "Teil schneller / langsamer"), ("⌘Z / ⇧⌘Z", "Widerrufen / Wiederholen"),
-                   ("⌘C / ⌘V", "Element kopieren / am Abspielkopf einfügen"), ("⌘K", "Befehlspalette")]),
+                   ("⌘C / ⌘V", "Element kopieren / am Abspielkopf einfügen"), ("Y", "Schnittmodus: Normal, Rollen, Slip"), ("⇧⌘→", "Alles rechts vom Abspielkopf auswählen"), ("⌘K", "Befehlspalette")]),
             .heading("Hinzufügen"),
-            .keys([("Z", "Zoom"), ("T", "Text"), ("X", "Maske"), ("A / R / P", "Pfeil / Rahmen / Spotlight"), ("F", "Finger-Geste"), ("E", "Meme-Board"), ("1 … 0", "Meme einsetzen"), ("C", "Mauszeiger-Bereich"),
+            .keys([("Z", "Zoom"), ("T", "Text"), ("X", "Maske"), ("A / R / P", "Pfeil / Rahmen / Spotlight"), ("F", "Finger-Geste"), ("B", "Nummerierter Schritt"), ("E", "Meme-Board"), ("1 … 0", "Meme einsetzen"), ("C", "Mauszeiger-Bereich"),
                    ("I / O", "Bild / Video"), ("V", "Einsprechen"), ("M", "Kapitelmarke")]),
             .heading("Timeline"),
             .keys([("N", "Einrasten an / aus"), ("G", "Clips zusammenkleben an / aus"), ("⌘+ / ⌘−", "Hinein- / Herauszoomen"), ("⇧Z", "Alles zeigen"),
@@ -516,6 +544,8 @@ enum HelpContent {
             .heading("Was du einstellen kannst"),
             .bullets([
                 "**Quelle:** ein Bildschirm, ein Programmfenster oder ein iPad am Kabel.",
+                "**Logo:** wie im Editor in einer Ecke, mit Größe. Rahmen, Hintergrund und Logo findest du unter **Rahmen, Hintergrund und Logo** in der Steuerung.",
+                "**Rahmen:** zeigt die Quelle auf einem Laptop, Tablet, Fernseher, im Theater, Kino oder Bilderrahmen. „Nur Webcam“ bleibt davon unberührt.",
                 "**Webcam-Bubble:** in der kleinen Vorschau ziehen, am gelben Punkt die Größe ändern.",
                 "**Virtueller Hintergrund:** Du stehst vor einem Bild oder einer Grafik, ohne Greenscreen. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Gleichmäßiges Licht macht den Rand sauberer.",
                 "**Klick-Effekte**, **Mausspur** und **Tastenkürzel** lassen sich zuschalten (nicht beim iPad). Angezeigt werden nur Kombinationen mit ⌘, ⌃ oder ⌥, normales Tippen nie. Für die Tastenkürzel fragt macOS beim ersten Mal nach der Berechtigung **Bedienungshilfen**.",
@@ -536,6 +566,7 @@ enum HelpContent {
                 "Mit einem Klick oder den Tasten **1 bis 0** auslösen.",
             ]),
             .bullets([
+                "Kurze GIFs laufen mehrmals hintereinander, damit sie mindestens drei Sekunden zu sehen sind. Rechtsklick › **Dauer im Live-Bild** stellt die Dauer je Platz ein, auch „bis zum erneuten Drücken“.",
                 "**Live** erscheint das Meme sofort im Bild; noch einmal drücken nimmt es weg. Die Position wählst du neben der Überschrift. Sein Ton kommt aus dem Mac.",
                 "Im **Editor** landet das Meme als Clip am Abspielkopf in der Medien-Spur und lässt sich dort wie jedes Video verschieben und kürzen.",
                 "Rechtsklick auf einen Platz: neu belegen oder leeren. Die Plätze bleiben auch nach dem Beenden erhalten.",

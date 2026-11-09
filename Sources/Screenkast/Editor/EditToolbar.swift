@@ -30,6 +30,7 @@ struct EditToolbar: View {
                 tool(AnnotationKind.frame.icon, "Rahmen (R)", .addFrame)
                 tool(AnnotationKind.spotlight.icon, "Spotlight (P)", .addSpotlight)
                 tool(AnnotationKind.touch.icon, "Finger-Geste für iPad-Videos: Tippen, Halten, Ziehen, Pinch … (F)", .addFinger)
+                tool(AnnotationKind.step.icon, "Nummerierter Schritt, zählt von selbst weiter (B)", .addStep)
                 tool("cursorarrow.rays", "Mauszeiger-Bereich (C)", .addCursor)
                 tool("photo", "Bild hinzufügen (I)", .addImage)
                 tool("pip", "Video als Bild im Bild (O)", .addVideo)
@@ -47,6 +48,13 @@ struct EditToolbar: View {
                        editor.snapping ? "Einrasten an (N) – Kanten rasten am Abspielkopf und an anderen Clips ein" : "Einrasten aus (N)", .toggleSnapping)
                 toggle("rectangle.split.2x1", on: editor.magnet,
                        editor.magnet ? "Zusammenkleben an (G) – Clips einer Spur haften an ihren Enden aneinander; weiter geschoben blenden sie über" : "Zusammenkleben aus (G)", .toggleMagnet)
+                Button { editor.trimMode = editor.trimMode == .roll ? .normal : .roll } label: { icon("arrow.left.and.right.righttriangle.left.righttriangle.right.fill") }
+                    .buttonStyle(GhostButtonStyle(active: editor.trimMode == .roll))
+                    .help(editor.trimMode == .roll ? "Rollen an: Kante eines Teils ziehen verschiebt den Schnitt, die Länge bleibt gleich (Y)" : "Rollen (Y)")
+                Button { editor.trimMode = editor.trimMode == .slip ? .normal : .slip } label: { icon("arrow.left.and.right.square.fill") }
+                    .buttonStyle(GhostButtonStyle(active: editor.trimMode == .slip))
+                    .help(editor.trimMode == .slip ? "Slip an: Teil ziehen zeigt einen früheren oder späteren Ausschnitt an derselben Stelle (Y)" : "Slip (Y)")
+                tool("text.line.last.and.arrowtriangle.forward", "Alles rechts vom Abspielkopf auswählen (⇧⌘→)", .selectRight)
                 tool("arrow.left.and.right.square", "Ganze Timeline zeigen (⇧Z)", .zoomFit)
                 Button { editor.showShortcutHelp.toggle() } label: { icon("keyboard") }
                     .help("Alle Tastenkürzel")

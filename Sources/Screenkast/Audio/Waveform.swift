@@ -24,25 +24,36 @@ enum Waveform {
         reader.add(output)
         guard reader.startReading() else { throw reader.error ?? RecorderError.writerFailed("Audio lesen") }
         let perBucket = sampleRate / rate
-        var peaks = [Float](repeating: 0, count: Int(duration * rate) + 1)
-        var chunk: [Float] = []
-        while let sb = output.copyNextSampleBuffer() {
-            try Task.checkCancellation()
-            guard let block = sb.dataBuffer else { continue }
-            let length = CMBlockBufferGetDataLength(block)
-            if chunk.count < length / 4 { chunk = [Float](repeating: 0, count: length / 4) }
-            _ = chunk.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
-            let first = sb.presentationTimeStamp.seconds * sampleRate
-            for i in 0..<(length / 4) {
-                let bucket = Int((first + Double(i)) / perBucket)
-                guard bucket >= 0, bucket < peaks.count else { continue }
-                let v = abs(chunk[i])
-                if v > peaks[bucket] { peaks[bucket] = v }
+        let count = Int(duration * rate) + 1
+        // The reading blocks while it waits for the decoder: on its own queue, so that several
+        // waveforms at once cannot take all of Swift's shared threads (that once stalled everything).
+        return try await withCheckedThrowingContinuation { (done: CheckedContinuation<[Float], Error>) in
+            readQueue.async {
+                var peaks = [Float](repeating: 0, count: count)
+                var chunk: [Float] = []
+                while let sb = output.copyNextSampleBuffer() {
+                    guard let block = sb.dataBuffer else { continue }
+                    let length = CMBlockBufferGetDataLength(block)
+                    if chunk.count < length / 4 { chunk = [Float](repeating: 0, count: length / 4) }
+                    _ = chunk.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
+                    let first = sb.presentationTimeStamp.seconds * sampleRate
+                    for i in 0..<(length / 4) {
+                        let bucket = Int((first + Double(i)) / perBucket)
+                        guard bucket >= 0, bucket < peaks.count else { continue }
+                        let v = abs(chunk[i])
+                        if v > peaks[bucket] { peaks[bucket] = v }
+                    }
+                }
+                if reader.status == .failed {
+                    done.resume(throwing: reader.error ?? RecorderError.writerFailed("Audio lesen"))
+                } else {
+                    done.resume(returning: peaks)
+                }
             }
         }
-        if reader.status == .failed { throw reader.error ?? RecorderError.writerFailed("Audio lesen") }
-        return peaks
     }
+
+    private static let readQueue = DispatchQueue(label: "screenkast.waveform", qos: .utility)
 
     /// Peaks of the first audio track of a file.
     static func peaks(url: URL) async throws -> [Float] {

@@ -8,6 +8,8 @@ struct StylePreset: Codable, Identifiable, Equatable {
     /// Logo file in the library folder (copied into a project when applied).
     var logoFile: String?
     var builtIn = false
+    /// Also holds the intro, the outro and the design of lower thirds (a whole pack).
+    var isPack: Bool? = nil
 }
 
 extension EditSettings {
@@ -84,6 +86,17 @@ enum StyleLibrary {
 
     static func apply(_ preset: StylePreset, to s: inout EditSettings, projectURL: URL) {
         s.applyStyle(from: preset.settings)
+        if preset.isPack == true {
+            s.textDesign = preset.settings.textDesign
+            let cards = [preset.settings.intro, preset.settings.outro].compactMap { $0 }
+            let places = Set(cards.map(\.placement))
+            s.texts.removeAll { $0.kind == .titleCard && places.contains($0.placement) }
+            s.texts += cards.map { card in
+                var copy = card
+                copy.id = UUID()
+                return copy
+            }
+        }
         if let logo = preset.logoFile, var w = preset.settings.watermark {
             let name = "media/\(logo)"
             let target = projectURL.appendingPathComponent(name)
@@ -99,8 +112,9 @@ enum StyleLibrary {
     }
 
     /// Saves the look of a project under a name (its logo is copied into the library).
-    static func add(name: String, settings: EditSettings, projectURL: URL) -> StylePreset {
+    static func add(name: String, settings: EditSettings, projectURL: URL, pack: Bool = false) -> StylePreset {
         var preset = StylePreset(name: name, settings: settings)
+        preset.isPack = pack ? true : nil
         if let w = settings.watermark {
             let logo = "logo-\(preset.id.uuidString.prefix(8)).\(URL(fileURLWithPath: w.file).pathExtension)"
             if (try? FileManager.default.copyItem(at: projectURL.appendingPathComponent(w.file), to: folder.appendingPathComponent(logo))) != nil {

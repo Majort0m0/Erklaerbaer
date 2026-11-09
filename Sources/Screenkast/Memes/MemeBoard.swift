@@ -16,6 +16,17 @@ struct MemeSlot: Codable, Equatable {
     var duration: Double
     /// See-through parts (nil: none).
     var transparent: Bool? = nil
+    /// How long it stays in the live picture: nil as long as the clip, but at least a few seconds
+    /// (short ones repeat); 0 until it is pressed again.
+    var showFor: Double? = nil
+
+    static let shortest = 3.0
+
+    /// Seconds in the live picture, nil: until pressed again.
+    var liveLength: Double? {
+        if showFor == 0 { return nil }
+        return showFor ?? max(duration, Self.shortest)
+    }
 }
 
 /// Every meme becomes a small movie on the way in, so that editor and live picture only deal with one format.
@@ -127,11 +138,21 @@ enum MemeConverter {
             try await append(first, at: 0)
             time = stillLength
         } else {
-            for i in 0..<count where time < maxLength {
+            // A short animation plays a few times, so that it can be seen at all.
+            var frames: [(image: CGImage, delay: Double)] = []
+            var total = 0.0
+            for i in 0..<min(count, 400) where total < maxLength {
                 guard let frame = CGImageSourceCreateImageAtIndex(images, i, nil) else { continue }
-                try await append(frame, at: time)
-                last = frame
-                time += delay(images, i)
+                frames.append((frame, delay(images, i)))
+                total += delay(images, i)
+            }
+            let rounds = total > 0 ? max(1, Int((MemeSlot.shortest / total).rounded(.up))) : 1
+            for _ in 0..<rounds {
+                for frame in frames where time < maxLength {
+                    try await append(frame.image, at: time)
+                    last = frame.image
+                    time += frame.delay
+                }
             }
             time = min(time, maxLength + 1)
         }
@@ -224,6 +245,12 @@ final class MemeBoard: ObservableObject {
         try? FileManager.default.removeItem(at: url(of: slot))
         try? FileManager.default.removeItem(at: folder.appendingPathComponent(slot.thumb))
         slots[index] = nil
+    }
+
+    func setShowFor(_ index: Int, _ seconds: Double?) {
+        guard slots.indices.contains(index), slots[index] != nil else { return }
+        slots[index]?.showFor = seconds
+        save()
     }
 
     func clear(_ index: Int) {

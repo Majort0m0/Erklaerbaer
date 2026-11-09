@@ -22,6 +22,7 @@ private struct LivePreview: NSViewRepresentable {
 struct LiveControlView: View {
     @ObservedObject var live: LiveModel
     @ObservedObject var app: AppModel
+    @AppStorage("liveExtrasOpen") private var extrasOpen = false
 
     private let width: CGFloat = 400
     private var previewHeight: CGFloat { (width - 28) * 9 / 16 }
@@ -32,6 +33,7 @@ struct LiveControlView: View {
             preview
             scenes
             sourceRows
+            extras
             effects
             memes
             recording
@@ -177,27 +179,59 @@ struct LiveControlView: View {
                 Text("Aus").tag("")
                 ForEach(app.cameras, id: \.uniqueID) { c in Text(c.localizedName).tag(c.uniqueID) }
             }
-            HStack {
-                Toggle("Virtueller Hintergrund", isOn: Binding(get: { live.config.background == true }, set: { on in
-                    if on && live.backgroundFile == nil { live.chooseBackground() } else { live.config.background = on }
-                }))
-                .help("Stellt dich ohne Greenscreen frei und zeigt ein Bild hinter dir")
-                Spacer()
-                Button(live.backgroundFile == nil ? "Bild wählen …" : "Anderes Bild …") { live.chooseBackground() }
-            }
-            if live.config.background == true {
-                HStack(spacing: 14) {
-                    LabeledSlider(title: "Kante", value: Binding(get: { live.config.backgroundEdge ?? 0.5 }, set: { live.config.backgroundEdge = $0 }),
-                                  range: 0.1...0.9, format: { "\(Int($0 * 100)) %" })
-                        .help("Höher: Der Rand liegt enger an dir, weniger vom Zimmer bleibt stehen. Niedriger: Mehr von Haaren und Rand bleibt erhalten.")
-                    LabeledSlider(title: "Beruhigen", value: Binding(get: { live.config.backgroundCalm ?? 0.5 }, set: { live.config.backgroundCalm = $0 }),
-                                  range: 0...0.9, format: { "\(Int($0 * 100)) %" })
-                        .help("Höher: Der Rand flackert weniger, zieht bei schnellen Bewegungen aber etwas nach.")
-                }
-            }
             if live.config.scene == .source, live.config.bubble {
                 LabeledSlider(title: "Größe der Webcam", value: $live.config.bubbleSize, range: 0.12...0.9, format: { "\(Int($0 * 100)) %" })
             }
+        }
+    }
+
+    /// Less often changed things, folded away so that the window stays small.
+    private var extras: some View {
+        DisclosureGroup(isExpanded: $extrasOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                if live.config.scene == .source {
+                    Picker("Rahmen", selection: $live.config.mockup) {
+                        Text("Ohne").tag(MockupKind?.none)
+                        ForEach(MockupKind.allCases) { Text($0.label).tag(Optional($0)) }
+                    }
+                    .help("Zeigt die Quelle auf einem Laptop, Tablet, Fernseher, im Theater, Kino oder Bilderrahmen")
+                }
+                HStack {
+                    Toggle("Virtueller Hintergrund", isOn: Binding(get: { live.config.background == true }, set: { on in
+                        if on && live.backgroundFile == nil { live.chooseBackground() } else { live.config.background = on }
+                    }))
+                    .help("Stellt dich ohne Greenscreen frei und zeigt ein Bild hinter dir")
+                    Spacer()
+                    Button(live.backgroundFile == nil ? "Bild wählen …" : "Anderes Bild …") { live.chooseBackground() }
+                }
+                if live.config.background == true {
+                    HStack(spacing: 14) {
+                        LabeledSlider(title: "Kante", value: Binding(get: { live.config.backgroundEdge ?? 0.5 }, set: { live.config.backgroundEdge = $0 }),
+                                      range: 0.1...0.9, format: { "\(Int($0 * 100)) %" })
+                            .help("Höher: Der Rand liegt enger an dir, weniger vom Zimmer bleibt stehen. Niedriger: Mehr von Haaren und Rand bleibt erhalten.")
+                        LabeledSlider(title: "Beruhigen", value: Binding(get: { live.config.backgroundCalm ?? 0.5 }, set: { live.config.backgroundCalm = $0 }),
+                                      range: 0...0.9, format: { "\(Int($0 * 100)) %" })
+                            .help("Höher: Der Rand flackert weniger, zieht bei schnellen Bewegungen aber etwas nach.")
+                    }
+                }
+                HStack {
+                    Toggle("Logo", isOn: Binding(get: { live.config.logoOn == true }, set: { on in
+                        if on && live.config.logo == nil { live.chooseLogo() } else { live.config.logoOn = on }
+                    }))
+                    Spacer()
+                    Button(live.config.logo == nil ? "Logo wählen …" : "Anderes Logo …") { live.chooseLogo() }
+                }
+                if live.config.logoOn == true, live.config.logo != nil {
+                    Picker("Ecke", selection: Binding(get: { live.config.logo?.corner ?? .topRight }, set: { live.config.logo?.corner = $0 })) {
+                        ForEach(CameraCorner.allCases) { Text($0.label).tag($0) }
+                    }
+                    LabeledSlider(title: "Größe des Logos", value: Binding(get: { live.config.logo?.size ?? 0.14 }, set: { live.config.logo?.size = $0 }),
+                                  range: 0.05...0.4, format: { "\(Int($0 * 100)) %" })
+                }
+            }
+            .padding(.top, 6)
+        } label: {
+            Text("Rahmen, Hintergrund und Logo").font(.subheadline.weight(.semibold))
         }
     }
 

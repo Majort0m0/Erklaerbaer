@@ -144,6 +144,8 @@ extension EditorModel {
     func importMedia(_ url: URL) -> String? {
         let folder = project.url.appendingPathComponent("media", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // Already in this project (library): used as it is.
+        if url.standardizedFileURL.deletingLastPathComponent() == folder.standardizedFileURL { return "media/\(url.lastPathComponent)" }
         let name = "media/\(UUID().uuidString.prefix(8))-\(url.lastPathComponent)"
         do {
             try FileManager.default.copyItem(at: url, to: project.url.appendingPathComponent(name))
@@ -416,11 +418,15 @@ extension EditorModel {
                 a.x = min(1 - a.width, max(0, p.x - a.width / 2)); a.y = min(1 - a.height, max(0, p.y - a.height / 2))
             case .touch:
                 a.x = p.x; a.y = p.y; a.width = 0.14; a.height = 0
+            case .step:
+                a.x = p.x; a.y = p.y; a.width = 0; a.height = 0
             }
         } else if kind == .arrow {
             a.x = 0.62; a.y = 0.62; a.width = -0.14; a.height = -0.14
         } else if kind == .touch {
             a.x = 0.5; a.y = 0.5; a.width = 0.14; a.height = 0
+        } else if kind == .step {
+            a.x = 0.5; a.y = 0.5; a.width = 0; a.height = 0
         }
         if kind == .touch { a.color = .blue }
         if kind == .spotlight { a.color = .white }
@@ -529,12 +535,22 @@ extension EditorModel {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
         field.placeholderString = "Name der Vorlage"
         field.stringValue = project.name
-        alert.accessoryView = field
+        let hasPack = settings.intro != nil || settings.outro != nil || settings.textDesign != nil
+        let pack = NSButton(checkboxWithTitle: "Vorspann, Abspann und Bauchbinden-Design mitsichern", target: nil, action: nil)
+        pack.state = hasPack ? .on : .off
+        pack.isEnabled = hasPack
+        let stack = NSStackView(frame: NSRect(x: 0, y: 0, width: 320, height: 52))
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.addArrangedSubview(field)
+        stack.addArrangedSubview(pack)
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        alert.accessoryView = stack
         alert.addButton(withTitle: "Sichern")
         alert.addButton(withTitle: "Abbrechen")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        _ = StyleLibrary.add(name: name.isEmpty ? "Mein Stil" : name, settings: settings, projectURL: project.url)
+        _ = StyleLibrary.add(name: name.isEmpty ? "Mein Stil" : name, settings: settings, projectURL: project.url, pack: pack.state == .on && hasPack)
         objectWillChange.send()
     }
 }

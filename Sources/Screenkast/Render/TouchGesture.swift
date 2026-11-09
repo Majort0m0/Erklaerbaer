@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import CoreImage
 
@@ -146,6 +147,32 @@ enum TouchArt {
         c.setStrokeColor(CGColor(gray: 0, alpha: 0.28))
         c.setLineWidth(r * 0.04)
         c.strokeEllipse(in: circle)
+        return finish(c).transformed(by: CGAffineTransform(translationX: -m, y: -m))
+    }
+
+    /// A numbered step, centered on the origin.
+    static func step(_ number: Int, r: CGFloat, color: (CGFloat, CGFloat, CGFloat)) -> CIImage {
+        let size = Int(r * 2.8)
+        guard let c = context(size) else { return .empty() }
+        let m = CGFloat(size) / 2
+        let circle = CGRect(x: m - r, y: m - r, width: 2 * r, height: 2 * r)
+        c.setShadow(offset: CGSize(width: 0, height: -r * 0.1), blur: r * 0.35, color: CGColor(gray: 0, alpha: 0.45))
+        c.setFillColor(CGColor(srgbRed: color.0, green: color.1, blue: color.2, alpha: 1))
+        c.fillEllipse(in: circle)
+        c.setShadow(offset: .zero, blur: 0)
+        c.setStrokeColor(CGColor(gray: 1, alpha: 1))
+        c.setLineWidth(r * 0.12)
+        c.strokeEllipse(in: circle.insetBy(dx: r * 0.06, dy: r * 0.06))
+        let light = color.0 * 0.3 + color.1 * 0.6 + color.2 * 0.1 > 0.75
+        let text = NSAttributedString(string: "\(number)", attributes: [
+            .font: NSFont.systemFont(ofSize: r * (number > 9 ? 1.0 : 1.2), weight: .bold),
+            .foregroundColor: light ? NSColor.black : NSColor.white,
+        ])
+        let bounds = text.size()
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: false)
+        text.draw(at: NSPoint(x: m - bounds.width / 2, y: m - bounds.height / 2))
+        NSGraphicsContext.restoreGraphicsState()
         return finish(c).transformed(by: CGAffineTransform(translationX: -m, y: -m))
     }
 

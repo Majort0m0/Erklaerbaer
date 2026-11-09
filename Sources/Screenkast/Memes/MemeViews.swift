@@ -33,6 +33,13 @@ struct MemeBoardView: View {
     private func key(_ i: Int) -> String { String((i + 1) % 10) }
 
     @ViewBuilder
+    private func lengthChoice(_ i: Int, _ slot: MemeSlot, _ value: Double?, _ title: String) -> some View {
+        Button { board.setShowFor(i, value) } label: {
+            if slot.showFor == value { Label(title, systemImage: "checkmark") } else { Text(title) }
+        }
+    }
+
+    @ViewBuilder
     private func tile(_ i: Int) -> some View {
         let slot = board.slots[i]
         let button = Button {
@@ -65,7 +72,12 @@ struct MemeBoardView: View {
         .contextMenu {
             Button("Meme suchen …") { MemeSearchWindow.shared.open(slot: i) }
             Button("Eigene Datei …") { board.chooseFile(for: i) }
-            if slot != nil {
+            if let slot {
+                Menu("Dauer im Live-Bild") {
+                    lengthChoice(i, slot, nil, "So lang wie der Clip (mindestens \(Int(MemeSlot.shortest)) s)")
+                    ForEach([3.0, 5, 8, 15], id: \.self) { lengthChoice(i, slot, $0, "\(Int($0)) Sekunden") }
+                    lengthChoice(i, slot, 0, "Bis zum erneuten Drücken")
+                }
                 Divider()
                 Button("Platz leeren") { board.clear(i) }
             }

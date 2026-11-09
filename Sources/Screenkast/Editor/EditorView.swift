@@ -420,10 +420,10 @@ struct MaskOverlay: View {
         GeometryReader { geo in
             if let mask = editor.selectedMask, editor.currentTime >= mask.start, editor.currentTime <= mask.end {
                 let g = PreviewGeometry(editor: editor, size: geo.size)
-                PreviewRectEditor(editor: editor, rect: g.view(CGRect(x: mask.x, y: mask.y, width: mask.width, height: mask.height)),
+                let at = mask.place(at: editor.currentTime)
+                PreviewRectEditor(editor: editor, rect: g.view(CGRect(x: at.x, y: at.y, width: mask.width, height: mask.height)),
                                   color: .orange, help: "Maske verschieben – Ecken ziehen ändert die Größe") { r in
-                    let n = g.normalized(r)
-                    editor.updateMask(id: mask.id) { $0.x = n.minX; $0.y = n.minY; $0.width = n.width; $0.height = n.height }
+                    editor.moveMask(mask.id, shownAt: at, to: g.normalized(r))
                 }
             }
         }
@@ -439,14 +439,14 @@ struct AnnotationHandle: View {
         GeometryReader { geo in
             if let a = editor.selectedAnnotation, editor.isVisibleNow(start: a.start, end: a.end) {
                 let g = PreviewGeometry(editor: editor, size: geo.size)
-                if a.kind == .touch, !a.hasTwoPoints {
+                if a.isPoint {
                     let at = g.view(CGPoint(x: a.x, y: a.y))
                     let (r, gr, b) = a.color.rgb
                     endpoint(at: at, color: Color(red: r, green: gr, blue: b))
                         .gesture(arrowDrag(a, g, tail: at, head: g.view(CGPoint(x: a.x + a.width, y: a.y + a.height))) { t, h, d in
                             (CGPoint(x: t.x + d.width, y: t.y + d.height), CGPoint(x: h.x + d.width, y: h.y + d.height))
                         })
-                        .help("Stelle der Berührung")
+                        .help(a.kind == .step ? "Schritt verschieben" : "Stelle der Berührung")
                 } else if a.hasTwoPoints {
                     let tail = g.view(CGPoint(x: a.x, y: a.y)), head = g.view(CGPoint(x: a.x + a.width, y: a.y + a.height))
                     let (r, gr, b) = a.color.rgb
@@ -516,17 +516,13 @@ struct ImageHandle: View {
     var body: some View {
         GeometryReader { geo in
             if let o = editor.selectedImage, editor.isVisibleNow(image: o),
-               let r = editor.renderer.imageFrame(o, out: editor.renderer.outputSize) {
+               let r = editor.renderer.imageFrame(editor.keyedImage(o), out: editor.renderer.outputSize) {
                 let out = editor.renderer.outputSize
                 let s = geo.size.width / max(1, out.width)
                 let view = CGRect(x: r.minX * s, y: (out.height - r.maxY) * s, width: r.width * s, height: r.height * s)
                 PreviewRectEditor(editor: editor, rect: view, color: .mint, aspect: view.height > 0 ? view.width / view.height : nil,
                                   help: "Bild verschieben – Ecken ziehen ändert die Größe") { n in
-                    editor.updateImage(id: o.id) {
-                        $0.x = n.midX / geo.size.width
-                        $0.y = n.midY / geo.size.height
-                        $0.width = n.width / geo.size.width
-                    }
+                    editor.place(.image(o.id), x: n.midX / geo.size.width, y: n.midY / geo.size.height, width: n.width / geo.size.width)
                 }
             }
         }
@@ -542,15 +538,11 @@ struct VideoOverlayHandle: View {
             if let o = editor.selectedVideoOverlay, editor.isVisibleNow(videoOverlay: o) {
                 let out = editor.renderer.outputSize
                 let s = geo.size.width / max(1, out.width)
-                let r = FrameRenderer.videoOverlayFrame(o, out: out)
+                let r = FrameRenderer.videoOverlayFrame(editor.keyedVideo(o), out: out)
                 let view = CGRect(x: r.minX * s, y: (out.height - r.maxY) * s, width: r.width * s, height: r.height * s)
                 PreviewRectEditor(editor: editor, rect: view, color: .yellow, aspect: view.height > 0 ? view.width / view.height : nil,
                                   help: "Video verschieben – Ecken ziehen ändert die Größe") { n in
-                    editor.updateVideoOverlay(id: o.id) {
-                        $0.x = n.midX / geo.size.width
-                        $0.y = n.midY / geo.size.height
-                        $0.width = n.width / geo.size.width
-                    }
+                    editor.place(.video(o.id), x: n.midX / geo.size.width, y: n.midY / geo.size.height, width: n.width / geo.size.width)
                 }
             }
         }
@@ -674,6 +666,15 @@ struct TransportBar: View {
                 }
                 Button { editor.chooseMusic() } label: { Label(editor.settings.music == nil ? "Hintergrundmusik …" : "Andere Musik …", systemImage: "music.note") }
                 Button { editor.addChapter() } label: { Label("Kapitelmarke (M)", systemImage: "bookmark") }
+                Menu {
+                    Button("Mit Rahmen") { editor.highlightClicks(with: .frame) }
+                    Button("Mit Pfeilen") { editor.highlightClicks(with: .arrow) }
+                    Button("Mit Finger") { editor.highlightClicks(with: .touch) }
+                    Button("Mit nummerierten Schritten") { editor.highlightClicks(with: .step) }
+                } label: {
+                    Label("Klicks hervorheben", systemImage: "cursorarrow.click.2")
+                }
+                .disabled(editor.project.cursor.clicks.isEmpty)
                 Divider()
                 Button { editor.setTrim(start: editor.currentTime) } label: { Label("Anfang hierher kürzen", systemImage: "arrow.right.to.line") }
                 Button { editor.setTrim(end: editor.currentTime) } label: { Label("Ende hierher kürzen", systemImage: "arrow.left.to.line") }
@@ -739,8 +740,8 @@ struct ShortcutHelp: View {
                         ("Q  /  W", "Anfang / Ende hierher kürzen"), ("⌥F", "Standbild (Ende des ausgewählten Teils)"),
                         ("⌘T", "Überblendung an der Schnittstelle"), ("⌥↑  /  ⌥↓", "Teil schneller / langsamer"),
                         ("⌘Z  /  ⇧⌘Z", "Widerrufen / Wiederholen"), ("⌘C  /  ⌘V", "Element kopieren / am Abspielkopf einfügen"),
-                        ("Esc", "Auswahl aufheben")]),
-        ("Hinzufügen", [("Z", "Zoom"), ("T", "Text"), ("X", "Maske"), ("A  /  R  /  P", "Pfeil / Rahmen / Spotlight"), ("F", "Finger-Geste"), ("E", "Meme-Board"), ("1 … 0", "Meme einsetzen"),
+                        ("⇧⌘→", "Alles rechts vom Abspielkopf auswählen"), ("Y", "Schnittmodus: Normal, Rollen, Slip"), ("Esc", "Auswahl aufheben")]),
+        ("Hinzufügen", [("Z", "Zoom"), ("T", "Text"), ("X", "Maske"), ("A  /  R  /  P", "Pfeil / Rahmen / Spotlight"), ("F", "Finger-Geste"), ("B", "Nummerierter Schritt"), ("E", "Meme-Board"), ("1 … 0", "Meme einsetzen"),
                         ("C", "Mauszeiger-Bereich"), ("I  /  O", "Bild / Video"), ("V", "Einsprechen"), ("M", "Kapitelmarke")]),
         ("Timeline", [("N", "Einrasten an/aus"), ("G", "Clips zusammenkleben an/aus"),
                       ("⌘+  /  ⌘−", "Hinein- / Herauszoomen"), ("⇧Z", "Alles zeigen"),

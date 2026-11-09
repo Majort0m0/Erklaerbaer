@@ -58,9 +58,12 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 - Bildschirm oder Fenster über ScreenCaptureKit (HEVC, 60 fps). Der Mauszeiger wird *nicht* mitgefilmt, er wird später gerendert.
 - Mikrofon, **Systemaudio** (ohne Erklärbär selbst) und **Kamera** mit Live-Vorschau, alles synchron auf der Host-Uhr.
 - **iPad und iPhone per Kabel**: Bildschirm und Ton des Geräts direkt aufnehmen (Quelle „iPad und iPhone am Kabel“), dazu auf Wunsch Mikrofon und Kamera des Macs.
-- **Live für Meetings**: Programm-Fenster zum Teilen in Zoom, Teams oder Meet, Steuerfenster außerhalb des geteilten Bilds, Szenen (Webcam, Bildschirm, Fenster, iPad, mit verschiebbarer Webcam-Bubble), Klick-Effekte, Mausspur, eingeblendete Tastenkürzel und Aufnahme nebenbei.
+- **Live für Meetings**: Programm-Fenster zum Teilen in Zoom, Teams oder Meet, Steuerfenster außerhalb des geteilten Bilds, Szenen (Webcam, Bildschirm, Fenster, iPad, mit verschiebbarer Webcam-Bubble), Rahmen wie Laptop oder Fernseher, Klick-Effekte, Mausspur, eingeblendete Tastenkürzel und Aufnahme nebenbei.
 - **Meme-Board**: zehn Plätze für kurze Clips, Suche in frei lizenzierten GIFs oder eigene Dateien, auf Knopfdruck live oder im Editor.
 - **Virtueller Hintergrund** für die Webcam, im Editor und live: Bild oder Grafik hinter der Person, ohne Greenscreen.
+- **Nummerierte Schritte** und **Klicks hervorheben**: aus aufgezeichneten Klicks werden automatisch Rahmen, Pfeile, Finger oder Schritte.
+- **Maske folgt dem Inhalt**, **Teleprompter** beim Einsprechen, **Vorlagen-Pakete** mit Vorspann, Abspann und Bauchbinden-Design.
+- **Schnitt**: bis zu vier Medienspuren, Keyframes für Position, Größe, Deckkraft und Lautstärke, Rollen und Slip, Bibliothek im Projekt, Auswahl per Rahmen und alles rechts vom Abspielkopf.
 - Cursor-Tracking mit 120 Hz mit den echten System-Cursorbildern, dazu Klicks und optional **Tastenkürzel**. Aufgezeichnet werden nur Kombinationen mit ⌘, ⌃ oder ⌥, normal getippter Text nie.
 - **Pausieren und Fortsetzen**: Alle Spuren bleiben synchron.
 - Start und Stopp von überall mit `⌘⇧2` oder über das ●-Symbol in der Menüleiste. Der Griff zum Stopp-Button wird automatisch weggeschnitten.
