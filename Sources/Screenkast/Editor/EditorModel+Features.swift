@@ -198,6 +198,12 @@ extension EditorModel {
 
     // Logo
 
+    func chooseCameraBackground() {
+        guard let url = chooseFile([.image], message: "Bild für den Hintergrund der Kamera wählen"), let file = importMedia(url) else { return }
+        commitUndoStep(); defer { commitUndoStep() }
+        settings.cameraBackground = file
+    }
+
     func chooseWatermark() {
         guard let url = chooseFile([.image], message: "Logo wählen (PNG mit transparentem Hintergrund eignet sich am besten)"),
               let file = importMedia(url) else { return }
@@ -397,7 +403,7 @@ extension EditorModel {
 
     func addAnnotation(_ kind: AnnotationKind, start: Double? = nil, length: Double = 3) {
         commitUndoStep(); defer { commitUndoStep() }
-        let r = sourceRange(from: start ?? currentTime, timelineLength: length)
+        let r = sourceRange(from: start ?? currentTime, timelineLength: kind == .touch ? min(length, 1.5) : length)
         let from = r.start
         var a = Annotation(kind: kind, start: r.start, end: r.end)
         // Near the cursor if it is on screen at that moment.
@@ -408,10 +414,15 @@ extension EditorModel {
             case .frame, .spotlight:
                 a.width = 0.22; a.height = 0.14
                 a.x = min(1 - a.width, max(0, p.x - a.width / 2)); a.y = min(1 - a.height, max(0, p.y - a.height / 2))
+            case .touch:
+                a.x = p.x; a.y = p.y; a.width = 0.14; a.height = 0
             }
         } else if kind == .arrow {
             a.x = 0.62; a.y = 0.62; a.width = -0.14; a.height = -0.14
+        } else if kind == .touch {
+            a.x = 0.5; a.y = 0.5; a.width = 0.14; a.height = 0
         }
+        if kind == .touch { a.color = .blue }
         if kind == .spotlight { a.color = .white }
         settings.annotations.append(a)
         selection = .annotation(a.id)

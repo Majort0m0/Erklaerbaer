@@ -82,6 +82,7 @@ private struct ControlBarView: View {
         case .display(let id): return model.displays.first { $0.displayID == id }.map(model.displayName) ?? "Bildschirm"
         case .window(let id): return (model.windows + model.otherWindows).first { $0.windowID == id }.map(model.windowName) ?? "Fenster"
         case .region(let id, let r): return model.regionName(id, r)
+        case .device(let id): return model.deviceName(id)
         case nil: return "Quelle wählen"
         }
     }
@@ -95,6 +96,13 @@ private struct ControlBarView: View {
                 }
             }
             Button("Bereich wählen …") { Task { await model.chooseRegion() } }
+            if !model.devices.isEmpty {
+                Section("iPad und iPhone am Kabel") {
+                    ForEach(model.devices, id: \.uniqueID) { d in
+                        Button(d.localizedName) { model.selection = .device(d.uniqueID) }
+                    }
+                }
+            }
             Section("Fenster") {
                 ForEach(model.windows, id: \.windowID) { w in
                     Button(model.windowName(w)) { model.selection = .window(w.windowID) }

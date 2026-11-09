@@ -671,8 +671,10 @@ extension EditorModel {
     func joinTransition(key: Double) -> JoinTransition? { settings.joinTransitions.first { abs($0.key - key) < 1e-4 } }
 
     /// True if a cut between these two parts already offers the transition.
-    func joinHasCut(after a: EditSettings.ClipPart, before b: EditSettings.ClipPart) -> Bool {
-        settings.cuts.contains { abs($0.start - a.range.upperBound) < 1e-3 && (abs($0.end - b.range.lowerBound) < 1e-3 || abs($0.end - b.key) < 1e-3) }
+    func joinHasCut(after a: EditSettings.ClipPart, before b: EditSettings.ClipPart) -> Bool { joinCut(after: a, before: b) != nil }
+
+    private func joinCut(after a: EditSettings.ClipPart, before b: EditSettings.ClipPart) -> CutRange? {
+        settings.cuts.first { abs($0.start - a.range.upperBound) < 1e-3 && (abs($0.end - b.range.lowerBound) < 1e-3 || abs($0.end - b.key) < 1e-3) }
     }
 
     func setJoinTransition(key: Double, length: Double) {
@@ -733,5 +735,136 @@ extension EditorModel {
         var p = settings.mockupPlacement
         change(&p)
         settings.mockupPlacements[key] = p == MockupPlacement() ? nil : p
+    }
+
+    // MARK: Toolbar and keyboard
+
+    /// Cuts the part before (or after) the playhead away, like the end handles.
+    func trimToPlayhead(start: Bool) {
+        commitUndoStep(); defer { commitUndoStep() }
+        guard currentTime >= 0, currentTime <= duration else { return }
+        if start { setTrim(start: currentTime) } else { setTrim(end: currentTime) }
+    }
+
+    static let tempoSteps = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 4, 8]
+
+    /// The part the tempo applies to: the selected one, else the one at the playhead.
+    var partForTempo: ClosedRange<Double>? { selectedSegment ?? segment(at: currentTime) }
+
+    func setTempo(_ rate: Double) {
+        guard let part = partForTempo else { return }
+        commitUndoStep(); defer { commitUndoStep() }
+        setSpeed(rate, for: part)
+    }
+
+    /// One step faster (or slower) for the selected part.
+    func changeSpeed(_ direction: Int) {
+        guard let part = partForTempo else { return }
+        let steps = Self.tempoSteps
+        let now = settings.speeds.first { $0.start <= part.lowerBound + 1e-3 && $0.end >= part.upperBound - 1e-3 }?.rate ?? 1
+        let i = steps.firstIndex { abs($0 - now) < 0.01 } ?? (steps.firstIndex { $0 > now } ?? 3)
+        setTempo(steps[min(steps.count - 1, max(0, i + direction))])
+    }
+
+    /// A transition at the selected join or cut, else at the join nearest to the playhead.
+    func addTransitionHere() {
+        commitUndoStep(); defer { commitUndoStep() }
+        if let cut = selectedCut, canDissolve(cut) {
+            if cut.dissolve < 0.05 { setDissolve(cutID: cut.id, 0.5) }
+            return
+        }
+        if let key = selectedJoinKey {
+            if joinTransition(key: key) == nil { setJoinTransition(key: key, length: 0.5) }
+            return
+        }
+        let parts = clipParts
+        guard parts.count > 1 else { return }
+        let T0 = display(currentTime)
+        let joins = parts.indices.dropFirst().compactMap { i -> (a: EditSettings.ClipPart, b: EditSettings.ClipPart, t: Double)? in
+            clipRun(parts[i]).map { (parts[i - 1], parts[i], $0.lowerBound) }
+        }
+        guard let near = joins.min(by: { abs($0.t - T0) < abs($1.t - T0) }) else { return }
+        setTransition(after: near.a, before: near.b, length: 0.5)
+    }
+
+    /// Sets the transition where part `a` meets part `b`, at a cut if there is one between them.
+    func setTransition(after a: EditSettings.ClipPart, before b: EditSettings.ClipPart, length: Double) {
+        if let cut = joinCut(after: a, before: b) {
+            setDissolve(cutID: cut.id, length)
+            selectedCutID = cut.id
+        } else {
+            setJoinTransition(key: b.key, length: length)
+            selection = .join(b.key)
+        }
+    }
+
+    // MARK: Pushing parts over each other
+
+    /// A part pushed onto its neighbor but not past its middle: how long they would dissolve.
+    func clipDragOverlap(_ drag: ClipDrag, minimum: Double) -> (after: EditSettings.ClipPart, before: EditSettings.ClipPart, length: Double, at: Double)? {
+        let parts = clipParts
+        guard clipDragKeys(drag.key).count == 1, abs(drag.dt) >= minimum, let i = parts.firstIndex(where: { $0.key == drag.key }),
+              clipDropIndex(drag) == i else { return nil }
+        let j = drag.dt < 0 ? i : i + 1
+        guard j > 0, j < parts.count, let left = clipRun(parts[j - 1]), let right = clipRun(parts[j]) else { return nil }
+        let room = min(left.upperBound - left.lowerBound, right.upperBound - right.lowerBound) / 2
+        return (parts[j - 1], parts[j], min(EditSettings.maxDissolve, room, abs(drag.dt)), right.lowerBound)
+    }
+
+    /// Ends the drag of a part: over its neighbor it dissolves, further away it moves there.
+    func finishClipDrag(_ drag: ClipDrag, minimum: Double) {
+        let overlap = clipDragOverlap(drag, minimum: minimum)
+        let index = clipDropIndex(drag)
+        clipDrag = nil
+        if let overlap {
+            commitUndoStep(); defer { commitUndoStep() }
+            setTransition(after: overlap.after, before: overlap.before, length: overlap.length)
+        } else if let index {
+            moveClip(key: drag.key, to: index)
+        }
+    }
+
+    // MARK: Gluing clips
+
+    /// Time ranges of the other clips on the lane of `id` (nothing for items that are not clips of a media file).
+    func laneNeighbours(of id: UUID) -> [ClosedRange<Double>] {
+        if let clip = settings.voiceOvers.first(where: { $0.id == id }) {
+            return settings.voiceOvers.filter { $0.id != id && $0.isMusic == clip.isMusic }.map { displayRange($0) }
+        }
+        guard settings.videoOverlays.contains(where: { $0.id == id && !$0.synced }) || settings.images.contains(where: { $0.id == id }) else { return [] }
+        return settings.videoOverlays.filter { $0.id != id && !$0.synced }.map { displayRange($0) }
+            + settings.images.filter { $0.id != id }.compactMap { displayRange(start: $0.start, end: $0.end, free: $0.isFree) }
+    }
+
+    /// `dt` of a dragged clip adjusted so that it sticks to the end of a neighbor when it comes close.
+    /// Pushed further it overlaps, and the two dissolve.
+    func magnetDelta(_ edge: SnapEdge, dt: Double, start: Double, end: Double, id: UUID, tolerance: Double) -> Double? {
+        guard magnet else { return nil }
+        var pairs: [(edge: Double, target: Double)] = []
+        for n in laneNeighbours(of: id) {
+            if edge != .end { pairs.append((start + dt, n.upperBound)) }
+            if edge != .start { pairs.append((end + dt, n.lowerBound)) }
+        }
+        guard let best = pairs.filter({ abs($0.target - $0.edge) <= tolerance }).min(by: { abs($0.target - $0.edge) < abs($1.target - $1.edge) }) else {
+            if !snapping, snapGuide != nil { snapGuide = nil }
+            return nil
+        }
+        if snapGuide != best.target { snapGuide = best.target }
+        return dt + best.target - best.edge
+    }
+
+    // MARK: Memes
+
+    /// Puts the meme of a place in the picture at the playhead (an empty place asks what to put there).
+    func pressMeme(_ index: Int) {
+        guard let slot = MemeBoard.shared.slots[index] else {
+            MemeSearchWindow.shared.open(slot: index)
+            return
+        }
+        addMeme(slot)
+    }
+
+    func addMeme(_ slot: MemeSlot) {
+        addVideoOverlay(url: MemeBoard.shared.url(of: slot), at: currentTime, center: CGPoint(x: 0.5, y: 0.5), name: slot.title, transparent: slot.transparent == true)
     }
 }

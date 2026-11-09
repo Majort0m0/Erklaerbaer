@@ -8,12 +8,15 @@ enum CaptureTarget {
     case window(SCWindow)
     /// Part of a display; rect in display points (origin top-left).
     case region(SCDisplay, CGRect)
+    /// An iPad or iPhone on a cable.
+    case device(id: String, name: String)
 
     var name: String {
         switch self {
         case .display(let d): return "Bildschirm \(d.width)×\(d.height)"
         case .region(_, let r): return "Bereich \(Int(r.width))×\(Int(r.height))"
         case .window(let w): return [w.owningApplication?.applicationName, w.title].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " – ")
+        case .device(_, let name): return name
         }
     }
 
@@ -23,6 +26,7 @@ enum CaptureTarget {
         case .display(let d): return d.frame
         case .window(let w): return w.frame
         case .region(let d, let r): return CGRect(x: d.frame.minX + r.minX, y: d.frame.minY + r.minY, width: r.width, height: r.height)
+        case .device: return .zero
         }
     }
 }
@@ -34,13 +38,16 @@ struct CaptureGeometry {
 }
 
 enum RecorderError: LocalizedError {
-    case noFrames, writerFailed(String), alreadyRunning
+    case noFrames, writerFailed(String), alreadyRunning, deviceMissing, deviceSilent, deviceLost
 
     var errorDescription: String? {
         switch self {
         case .noFrames: return "Es wurden keine Bilder aufgenommen. Bitte die Bildschirmaufnahme-Berechtigung in den Systemeinstellungen prüfen."
         case .writerFailed(let m): return "Video konnte nicht geschrieben werden: \(m)"
         case .alreadyRunning: return "Es läuft bereits eine Aufnahme."
+        case .deviceMissing: return "Das iPad ist nicht verbunden oder wird gerade von einer anderen App benutzt (z. B. QuickTime Player)."
+        case .deviceSilent: return "Das iPad liefert kein Bild. Bitte entsperren, auf dem iPad „Vertrauen“ bestätigen und QuickTime Player schließen, falls dort eine Aufnahme offen ist."
+        case .deviceLost: return "Die Verbindung zum iPad wurde getrennt."
         }
     }
 }
@@ -87,6 +94,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         case .region(let d, let r):
             filter = SCContentFilter(display: d, excludingApplications: excludedApps, exceptingWindows: [])
             region = r
+        case .device:
+            throw RecorderError.deviceMissing   // recorded by DeviceRecorder
         }
         let scale = Double(filter.pointPixelScale)
         let rect = region ?? filter.contentRect

@@ -91,7 +91,7 @@ struct EditorWorkspace: View {
     var body: some View {
         HStack(spacing: Theme.gap) {
             GeometryReader { geo in
-                let maxTimeline = max(160, geo.size.height - 280)
+                let maxTimeline = max(160, geo.size.height - 318)
                 VStack(spacing: 0) {
                     PreviewArea(editor: editor)
                         .padding(22)
@@ -102,6 +102,10 @@ struct EditorWorkspace: View {
                         TransportBar(editor: editor)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
+                        Rectangle().fill(Theme.stroke).frame(height: 1)
+                        EditToolbar(editor: editor)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
                         Rectangle().fill(Theme.stroke).frame(height: 1)
                         EditorTimeline(editor: editor)
                             .frame(height: min(editor.timelineHeight, maxTimeline))
@@ -435,7 +439,15 @@ struct AnnotationHandle: View {
         GeometryReader { geo in
             if let a = editor.selectedAnnotation, editor.isVisibleNow(start: a.start, end: a.end) {
                 let g = PreviewGeometry(editor: editor, size: geo.size)
-                if a.kind == .arrow {
+                if a.kind == .touch, !a.hasTwoPoints {
+                    let at = g.view(CGPoint(x: a.x, y: a.y))
+                    let (r, gr, b) = a.color.rgb
+                    endpoint(at: at, color: Color(red: r, green: gr, blue: b))
+                        .gesture(arrowDrag(a, g, tail: at, head: g.view(CGPoint(x: a.x + a.width, y: a.y + a.height))) { t, h, d in
+                            (CGPoint(x: t.x + d.width, y: t.y + d.height), CGPoint(x: h.x + d.width, y: h.y + d.height))
+                        })
+                        .help("Stelle der Berührung")
+                } else if a.hasTwoPoints {
                     let tail = g.view(CGPoint(x: a.x, y: a.y)), head = g.view(CGPoint(x: a.x + a.width, y: a.y + a.height))
                     let (r, gr, b) = a.color.rgb
                     ZStack {
@@ -448,13 +460,13 @@ struct AnnotationHandle: View {
                             .gesture(arrowDrag(a, g, tail: tail, head: head) { t, h, d in
                                 (CGPoint(x: t.x + d.width, y: t.y + d.height), CGPoint(x: h.x + d.width, y: h.y + d.height))
                             })
-                            .help("Pfeil verschieben")
+                            .help(a.kind == .arrow ? "Pfeil verschieben" : "Geste verschieben")
                         endpoint(at: tail, color: .white)
                             .gesture(arrowDrag(a, g, tail: tail, head: head) { t, h, d in (CGPoint(x: t.x + d.width, y: t.y + d.height), h) })
-                            .help("Anfang des Pfeils")
+                            .help(a.kind == .arrow ? "Anfang des Pfeils" : a.touchGesture.isPinch ? "Mitte zwischen den Fingern" : "Hier beginnt die Geste")
                         endpoint(at: head, color: Color(red: r, green: gr, blue: b))
                             .gesture(arrowDrag(a, g, tail: tail, head: head) { t, h, d in (t, CGPoint(x: h.x + d.width, y: h.y + d.height)) })
-                            .help("Spitze des Pfeils")
+                            .help(a.kind == .arrow ? "Spitze des Pfeils" : a.touchGesture.isPinch ? "Abstand der Finger" : "Hier endet die Geste")
                     }
                 } else {
                     PreviewRectEditor(editor: editor, rect: g.view(CGRect(x: a.x, y: a.y, width: a.width, height: a.height)),
@@ -547,8 +559,8 @@ struct VideoOverlayHandle: View {
 
 // MARK: - Transport
 
-/// Bar between preview and timeline, laid out like other editors: editing on the left
-/// (undo, split, delete), playback in the middle, adding and snapping on the right.
+/// Bar between preview and timeline: position on the left, playback in the middle, adding on
+/// the right. The editing tools are in `EditToolbar` right below.
 struct TransportBar: View {
     @ObservedObject var editor: EditorModel
 
@@ -565,7 +577,7 @@ struct TransportBar: View {
 
     private func bar(compact: Bool) -> some View {
         HStack(spacing: 0) {
-            editing(compact: compact)
+            position
                 .frame(maxWidth: .infinity, alignment: .leading)
             playback(compact: compact)
                 .fixedSize()
@@ -575,19 +587,17 @@ struct TransportBar: View {
         }
     }
 
-    private func editing(compact: Bool) -> some View {
+    private var position: some View {
         HStack(spacing: 4) {
-            ToolButton(icon: "arrow.uturn.backward", help: "Widerrufen (⌘Z)") { editor.undo() }
-                .disabled(!editor.canUndo)
-            ToolButton(icon: "arrow.uturn.forward", help: "Wiederholen (⇧⌘Z)") { editor.redo() }
-                .disabled(!editor.canRedo)
-            Rectangle().fill(Theme.stroke).frame(width: 1, height: 18).padding(.horizontal, 6)
-            ToolButton(icon: "scissors", title: compact ? nil : "Teilen", help: "Am Abspielkopf teilen (S) – danach den Teil auswählen und mit ⌫ entfernen") {
-                editor.splitAtPlayhead()
-            }
-            ToolButton(icon: "trash", help: "Auswahl löschen (⌫)") { editor.deleteSelection() }
-                .disabled(editor.selection == nil)
+            Text(formatTime(editor.outputTime)).foregroundStyle(.primary).fontWeight(.semibold)
+            Text("/").foregroundStyle(.tertiary)
+            Text(formatTime(editor.outputDuration)).foregroundStyle(.secondary)
         }
+        .font(.system(size: 12.5, design: .rounded).monospacedDigit())
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(Capsule().fill(Theme.lane))
+        .help("Position und Länge des fertigen Videos")
     }
 
     private func playback(compact: Bool) -> some View {
@@ -615,37 +625,11 @@ struct TransportBar: View {
                 ToolButton(icon: "forward.frame.fill", help: "Ein Bild vor (→)") { editor.perform(.step(frames: 1)) }
                 ToolButton(icon: "forward.end.fill", help: "Zum Ende (Ende)") { editor.perform(.end) }
             }
-            HStack(spacing: 4) {
-                Text(formatTime(editor.outputTime)).foregroundStyle(.primary).fontWeight(.semibold)
-                Text("/").foregroundStyle(.tertiary)
-                Text(formatTime(editor.outputDuration)).foregroundStyle(.secondary)
-            }
-            .font(.system(size: 12.5, design: .rounded).monospacedDigit())
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(Capsule().fill(Theme.lane))
-            .padding(.leading, 6)
-            .help("Position und Länge des fertigen Videos")
         }
     }
 
     private func adding(compact: Bool) -> some View {
         HStack(spacing: 6) {
-            Button {
-                editor.toggleVoiceOver()
-            } label: {
-                Group {
-                    switch editor.voiceOverState {
-                    case .idle, .saving: Label("Einsprechen", systemImage: "mic")
-                    case .countdown: Label("Abbrechen", systemImage: "xmark.circle")
-                    case .recording: Label("Stopp", systemImage: "stop.circle.fill").foregroundStyle(.red)
-                    }
-                }
-                .labelStyle(VariableLabelStyle(compact: compact))
-            }
-            .buttonStyle(GhostButtonStyle())
-            .help("Voice-over: spielt ab dem Abspielkopf ab und nimmt das Mikrofon auf (Leertaste stoppt)")
-
             Menu {
                 Button { editor.addZoomAtPlayhead() } label: { Label("Zoom", systemImage: "plus.magnifyingglass") }
                 Button { editor.addLowerThird() } label: { Label("Bauchbinde", systemImage: "text.below.photo") }
@@ -702,22 +686,6 @@ struct TransportBar: View {
             .tint(Theme.brand)
             .fixedSize()
             .help("Zoom, Text, Maske oder Standbild am Abspielkopf einfügen")
-
-            Rectangle().fill(Theme.stroke).frame(width: 1, height: 18).padding(.horizontal, 4)
-            Button {
-                editor.snapping.toggle()
-            } label: {
-                Image(systemName: "arrow.right.and.line.vertical.and.arrow.left").font(.system(size: 13))
-            }
-            .buttonStyle(GhostButtonStyle(active: editor.snapping))
-            .help(editor.snapping ? "Einrasten an (N) – Kanten rasten am Abspielkopf und an anderen Clips ein" : "Einrasten aus (N)")
-            Button {
-                editor.showShortcutHelp.toggle()
-            } label: {
-                Image(systemName: "keyboard")
-            }
-            .help("Tastenkürzel")
-            .popover(isPresented: $editor.showShortcutHelp, arrowEdge: .bottom) { ShortcutHelp() }
         }
     }
 }
@@ -767,11 +735,15 @@ struct ShortcutHelp: View {
         ("Abspielen", [("Leertaste", "Abspielen / Pause"), ("← →", "Ein Bild zurück / vor"), ("⇧← ⇧→", "Eine Sekunde"),
                        ("Pos1 / Ende", "Zum Anfang / Ende"),
                        ("J  /  K  /  L", "Rückwärts / Stopp / Vorwärts (mehrfach: schneller)")]),
-        ("Bearbeiten", [("S  oder  ⌘B", "Am Abspielkopf teilen"), ("⌥F", "Standbild (Ende des ausgewählten Teils)"),
-                        ("M", "Kapitelmarke am Abspielkopf"), ("⌫", "Auswahl löschen / Teil entfernen"),
+        ("Bearbeiten", [("S  oder  ⌘B", "Am Abspielkopf teilen"), ("⌫", "Auswahl löschen / Teil entfernen"),
+                        ("Q  /  W", "Anfang / Ende hierher kürzen"), ("⌥F", "Standbild (Ende des ausgewählten Teils)"),
+                        ("⌘T", "Überblendung an der Schnittstelle"), ("⌥↑  /  ⌥↓", "Teil schneller / langsamer"),
                         ("⌘Z  /  ⇧⌘Z", "Widerrufen / Wiederholen"), ("⌘C  /  ⌘V", "Element kopieren / am Abspielkopf einfügen"),
-                        ("Esc", "Auswahl aufheben"), ("N", "Einrasten an/aus")]),
-        ("Timeline", [("⌘+  /  ⌘−", "Hinein- / Herauszoomen"), ("⇧Z", "Alles zeigen"),
+                        ("Esc", "Auswahl aufheben")]),
+        ("Hinzufügen", [("Z", "Zoom"), ("T", "Text"), ("X", "Maske"), ("A  /  R  /  P", "Pfeil / Rahmen / Spotlight"), ("F", "Finger-Geste"), ("E", "Meme-Board"), ("1 … 0", "Meme einsetzen"),
+                        ("C", "Mauszeiger-Bereich"), ("I  /  O", "Bild / Video"), ("V", "Einsprechen"), ("M", "Kapitelmarke")]),
+        ("Timeline", [("N", "Einrasten an/aus"), ("G", "Clips zusammenkleben an/aus"),
+                      ("⌘+  /  ⌘−", "Hinein- / Herauszoomen"), ("⇧Z", "Alles zeigen"),
                       ("⌥ + Scrollen, Zwei-Finger-Zoom", "Zoomen um den Mauszeiger"), ("Seitlich wischen", "Verschieben")]),
         ("Export", [("⌘E", "Exportieren")]),
     ]

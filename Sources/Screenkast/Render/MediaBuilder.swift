@@ -184,6 +184,22 @@ struct MediaComposition {
                 }
             }
             if entry.role == "overlay" {
+                // Video clips pushed over each other: their sound crossfades over the overlap.
+                let others = overlayVolumes.filter { $0.key != entry.track.trackID }.values.flatMap { $0 }
+                for v in overlayVolumes[entry.track.trackID] ?? [] {
+                    guard let mine = settings.videoOverlays.first(where: { $0.id == v.overlay }), !mine.synced else { continue }
+                    let rivals = others.filter { other in
+                        settings.videoOverlays.contains { $0.id == other.overlay && !$0.synced && FrameRenderer.sameSpot($0, mine) }
+                    }
+                    for o in rivals where o.range.overlaps(v.range) {
+                        if o.range.lowerBound < v.range.lowerBound, o.range.upperBound < v.range.upperBound, o.range.upperBound - v.range.lowerBound > 0.02 {
+                            curves.append(.init(start: v.range.lowerBound, end: o.range.upperBound, shape: .equalPowerIn))
+                        }
+                        if o.range.upperBound > v.range.upperBound, o.range.lowerBound > v.range.lowerBound, v.range.upperBound - o.range.lowerBound > 0.02 {
+                            curves.append(.init(start: o.range.lowerBound, end: v.range.upperBound, shape: .equalPowerOut))
+                        }
+                    }
+                }
                 // Volume by overlay (the volume in settings may have changed since the build).
                 for v in overlayVolumes[entry.track.trackID] ?? [] {
                     let o = settings.videoOverlays.first { $0.id == v.overlay }

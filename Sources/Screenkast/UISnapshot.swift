@@ -8,6 +8,13 @@ enum UISnapshot {
     static func run(projectPath: String, outputPath: String) -> Int32 {
         _ = NSApplication.shared
         if projectPath == "home" { return home(outputPath: outputPath) }
+        if projectPath == "live" {
+            AppModel.snapshotMode = true
+            let app = AppModel()
+            let live = LiveModel(app: app)
+            live.source = nil
+            return (try? write(LiveControlView(live: live, app: app).background(Theme.panel), width: 400, height: 860, to: outputPath)) == nil ? 1 : 0
+        }
         if projectPath.hasPrefix("help") {
             HelpModel.shared.selection = projectPath.split(separator: ":").dropFirst().first.map(String.init) ?? "start"
             return (try? write(HelpView().frame(width: 1000, height: 740), width: 1000, height: 740, to: outputPath)) ?? 1

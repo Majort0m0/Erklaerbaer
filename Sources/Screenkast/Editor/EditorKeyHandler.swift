@@ -12,6 +12,8 @@ import SwiftUI
 enum EditorKeyCommand: Equatable {
     case step(frames: Int), stepSeconds(Double), home, end, zoomIn, zoomOut, zoomFit
     case split, undo, redo, toggleSnapping, deselect, freeze, chapter, copy, paste, shuttle(Int)
+    case trimStart, trimEnd, addZoom, addText, addMask, addArrow, addFrame, addSpotlight, addFinger, addCursor, addImage, addVideo
+    case voiceOver, toggleMagnet, transition, speed(Int), memeBoard, meme(Int)
 }
 
 struct EditorKeyHandler: NSViewRepresentable {
@@ -95,12 +97,17 @@ final class EditorKeyHandlerView: NSView {
             case "b": onCommand(.split)
             case "c": onCommand(.copy)
             case "v": onCommand(.paste)
+            case "t": onCommand(.transition)
             default: return event
             }
             return nil
         }
         if mods == [.option], event.keyCode == 3 {   // ⌥F: freeze frame
             onCommand(.freeze)
+            return nil
+        }
+        if mods == [.option], event.keyCode == 126 || event.keyCode == 125 {   // ⌥↑ ⌥↓: tempo
+            onCommand(.speed(event.keyCode == 126 ? 1 : -1))
             return nil
         }
         if mods == [.command, .shift], chars.lowercased() == "z" {
@@ -129,6 +136,10 @@ final class EditorKeyHandlerView: NSView {
         case 119: onCommand(.end)
         case 53: onCommand(.deselect)   // Esc
         default:
+            if chars.count == 1, let digit = Int(chars) {   // 1 … 9, 0: the places of the meme board
+                onCommand(.meme(digit == 0 ? 9 : digit - 1))
+                return nil
+            }
             switch chars.lowercased() {
             case "s": onCommand(.split)
             case "n": onCommand(.toggleSnapping)
@@ -136,6 +147,21 @@ final class EditorKeyHandlerView: NSView {
             case "j": onCommand(.shuttle(-1))
             case "k": onCommand(.shuttle(0))
             case "l": onCommand(.shuttle(1))
+            case "q": onCommand(.trimStart)
+            case "w": onCommand(.trimEnd)
+            case "z": onCommand(.addZoom)
+            case "t": onCommand(.addText)
+            case "x": onCommand(.addMask)
+            case "a": onCommand(.addArrow)
+            case "r": onCommand(.addFrame)
+            case "p": onCommand(.addSpotlight)
+            case "f": onCommand(.addFinger)
+            case "e": onCommand(.memeBoard)
+            case "c": onCommand(.addCursor)
+            case "i": onCommand(.addImage)
+            case "o": onCommand(.addVideo)
+            case "v": onCommand(.voiceOver)
+            case "g": onCommand(.toggleMagnet)
             default: return event
             }
         }

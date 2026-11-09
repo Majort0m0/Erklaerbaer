@@ -6,6 +6,8 @@ Diese Anleitung steckt auch in der App: Menü **Hilfe › Erklärbär-Hilfe** (�
 
 - [Erste Schritte](#erste-schritte)
 - [Aufnehmen](#aufnehmen)
+- [Live für Meetings](#live-für-meetings)
+- [Meme-Board](#meme-board)
 - [Eigenes Material](#eigenes-material)
 - [Der Editor im Überblick](#der-editor-im-überblick)
 - [Schneiden](#schneiden)
@@ -85,6 +87,59 @@ Der Griff zum Stopp-Knopf am Ende wird automatisch weggeschnitten.
 
 > 💡 **Tipp:** Absturzsicher: Erklärbär sichert die Aufnahme laufend. Stürzt der Mac oder die App ab, ist die Aufnahme beim nächsten Start als Projekt „… (wiederhergestellt)“ wieder da – höchstens ein bis zwei Sekunden fehlen.
 
+### iPad und iPhone per Kabel
+
+Erklärbär nimmt den Bildschirm und den Ton eines per Kabel verbundenen iPads oder iPhones direkt auf, ohne Abfilmen.
+
+1. iPad mit dem Kabel an den Mac anschließen, **entsperren** und beim ersten Mal auf dem iPad **Vertrauen** bestätigen.
+2. Unter **Quelle** erscheint es im Abschnitt **iPad und iPhone am Kabel**.
+3. iPad so halten, wie es aufgenommen werden soll (hoch oder quer), und die Aufnahme starten. Ein Fenster zeigt das iPad währenddessen live am Mac, es wird nicht mit aufgenommen. Beim ersten Mal fragt macOS nach der Kamera-Berechtigung: iPads gelten für macOS als Kamera.
+4. Mit dem Schalter **Ton vom iPad** kommt der Ton über das Kabel mit in die Systemaudio-Spur. Das Mikrofon des Macs funktioniert wie sonst auch.
+5. **Am Mac mithören** spielt den Ton während der Aufnahme live am Mac ab, denn das iPad kann dabei selbst verstummen. Nimmst du gleichzeitig mit dem Mikrofon auf, benutze am besten Kopfhörer, sonst kommt der Ton doppelt in die Aufnahme.
+
+> ℹ️ Die Bildgröße richtet sich nach dem ersten Bild. Drehst du das iPad während der Aufnahme, erscheint es verkleinert mit schwarzen Balken. QuickTime Player darf das iPad nicht gleichzeitig benutzen.
+
+> 💡 **Tipp:** Berührungen auf dem iPad werden nicht mit aufgezeichnet. Setze sie im Editor mit der Markierung **Finger** (F), siehe **Markierungen & Masken**.
+
+## Live für Meetings
+
+*Bildschirm, Fenster, iPad und Webcam live in Zoom, Teams oder Meet zeigen.*
+
+1. Auf der Startseite **Live für Meetings** wählen. Es öffnen sich das **Programm-Fenster** und die **Steuerung**.
+2. Im Meeting-Programm **Bildschirm teilen** wählen und das Fenster **Erklärbär – Programm** auswählen.
+3. In der Steuerung die Szene wählen: **Nur Webcam** (Q), **Quelle** (W) oder **Quelle + Webcam** (E). Das Bild blendet weich um.
+
+> ℹ️ Die Steuerung ist im geteilten Bild nie zu sehen, auch nicht, wenn du den ganzen Bildschirm teilst. Das Programm-Fenster darf verdeckt sein, aber nicht minimiert werden.
+
+### Was du einstellen kannst
+
+- **Quelle:** ein Bildschirm, ein Programmfenster oder ein iPad am Kabel.
+- **Webcam-Bubble:** in der kleinen Vorschau ziehen, am gelben Punkt die Größe ändern.
+- **Virtueller Hintergrund:** Du stehst vor einem Bild oder einer Grafik, ohne Greenscreen. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Gleichmäßiges Licht macht den Rand sauberer.
+- **Klick-Effekte**, **Mausspur** und **Tastenkürzel** lassen sich zuschalten (nicht beim iPad). Angezeigt werden nur Kombinationen mit ⌘, ⌃ oder ⌥, normales Tippen nie. Für die Tastenkürzel fragt macOS beim ersten Mal nach der Berechtigung **Bedienungshilfen**.
+- **Einklappen** (H, Knopf oben rechts): Die Steuerung fährt wie eine Schublade an den Bildschirmrand, ein kleiner Griff holt sie zurück. Das Live-Bild läuft weiter.
+- **Aufnehmen** (R) speichert das Live-Bild als neues Projekt, auf Wunsch mit dem Mikrofon. Beim iPad kommt auch dessen Ton mit.
+
+> 💡 **Tipp:** Den Ton wählt das Meeting-Programm selbst: Dein Mikrofon stellst du dort ein. Soll der Ton von iPad oder Memes mitgesendet werden, schalte dort **Computerton teilen** ein.
+
+> 💡 **Tipp:** Das Programm-Fenster lässt sich größer ziehen. Je größer es ist, desto schärfer kommt es im Meeting an.
+
+## Meme-Board
+
+*Zehn Plätze für kurze Clips, auf Knopfdruck im Editor und live.*
+
+1. Das Board findest du in der **Live-Steuerung** und im Editor in der Symbolleiste (**E**).
+2. Auf einen leeren Platz klicken und ein Meme **suchen**, oder eine **eigene Datei** wählen. GIFs, Bilder und Videos (MP4, MOV) lassen sich auch direkt auf einen Platz ziehen.
+3. Mit einem Klick oder den Tasten **1 bis 0** auslösen.
+
+- **Live** erscheint das Meme sofort im Bild; noch einmal drücken nimmt es weg. Die Position wählst du neben der Überschrift. Sein Ton kommt aus dem Mac.
+- Im **Editor** landet das Meme als Clip am Abspielkopf in der Medien-Spur und lässt sich dort wie jedes Video verschieben und kürzen.
+- Rechtsklick auf einen Platz: neu belegen oder leeren. Die Plätze bleiben auch nach dem Beenden erhalten.
+
+> ℹ️ Clips werden auf 12 Sekunden gekürzt, ein Bild steht 3 Sekunden. PNGs und GIFs mit transparenten Stellen bleiben transparent. Die Suche durchsucht frei lizenzierte GIFs von Openverse und Wikimedia Commons, englische Begriffe liefern meist mehr. Viele Lizenzen verlangen eine Quellenangabe: **Quellenangaben kopieren** unter dem Board fasst sie zusammen.
+
+> ℹ️ Bei einer Live-Aufnahme werden Memes im Bild mit aufgenommen, ihr Ton aber nicht.
+
 ## Eigenes Material
 
 *Videos schneiden, die nicht mit Erklärbär aufgenommen wurden.*
@@ -112,7 +167,8 @@ Der Griff zum Stopp-Knopf am Ende wird automatisch weggeschnitten.
 ### Aufbau
 
 - **Vorschau** (oben): das fertige Video, genau so, wie es exportiert wird.
-- **Werkzeugleiste** (darunter): links Widerrufen, Wiederholen, **Teilen** und Löschen; in der Mitte Abspielen und die Zeit des fertigen Videos; rechts **Einsprechen**, **Hinzufügen**, Einrasten und die Tastenkürzel-Übersicht.
+- **Steuerleiste** (darunter): links die Zeit des fertigen Videos, in der Mitte Abspielen, rechts **Hinzufügen** für alles, was seltener gebraucht wird (Titelkarten, Musik, Logo, Clips …).
+- **Symbolleiste** (direkt über der Timeline): alle Schnitt- und Einfüge-Werkzeuge in einer Reihe – Widerrufen, Teilen, Löschen, Kopieren, Kürzen, Standbild, Überblendung, Tempo, Zoom, Text, Maske, Pfeil, Rahmen, Spotlight, Bild, Video, Einsprechen, Einrasten und Zusammenkleben. Fährst du mit der Maus darüber, steht das **Tastenkürzel** dabei.
 - **Timeline** (unten): die Spuren Video, Kamera, Zoom, Cursor, Masken, Markierung, Text, Medien und die Tonspuren. Den Griff zwischen Vorschau und Timeline ziehen, um die Timeline größer oder kleiner zu machen.
 - **Inspektor** (rechts): ohne Auswahl die Seiten **Stil, Kamera, Cursor, Zoom, Audio, Text, Medien, Skript**; mit Auswahl nur die Einstellungen des gewählten Elements.
 - **Fensterleiste** (ganz oben): zurück zu den Aufnahmen, **Befehle** (⌘K), **Einfach**-Modus, **KI**, **Aufpolieren** und **Exportieren**.
@@ -136,6 +192,7 @@ Ausgewählte Masken, Rahmen, Spotlights, Bilder, Videos und Texte haben im Vorsc
 - Gezoomt seitlich wischen oder die Übersichtsleiste unten ziehen.
 - Ein Klick in eine **leere Spur** zeigt einen Geisterblock, wo ein neues Element landet (Zoom, Maske, Bauchbinde, Cursor-Bereich).
 - **Einrasten** (N): Kanten rasten am Abspielkopf und an anderen Elementen ein (gelbe Hilfslinie).
+- **Zusammenkleben** (G): Clips von Mediendateien (Bilder, Videos, Voice-over, Musik) haften an den Enden ihrer Nachbarn in derselben Spur, sobald sie in die Nähe kommen. Das geht auch, wenn Einrasten aus ist.
 
 > 💡 **Tipp:** **⌘K** öffnet die Befehlspalette: einfach lostippen, was du tun möchtest (z. B. „Untertitel“ oder „Zoom“).
 
@@ -183,6 +240,8 @@ Bei eigenen Videos mit einer Tonspur: Spur-Menü (…) › **Ton vom Video löse
 
 - Die Schnitt-Markierung anklicken und die runden Griffe wegziehen – oder den Regler im Inspektor benutzen. Die Teile davor und danach werden übereinandergeschoben und blenden weich über.
 - Stile: **Überblenden**, **Über Schwarz** oder **Schieben**.
+- **Schneller:** einen Teil auf seinen Nachbarn schieben (nicht über dessen Mitte hinaus) – beim Loslassen entsteht eine Überblendung in dieser Länge. Weiter gezogen wird der Teil umgestellt. Oder **⌘T** an der ausgewählten oder nächsten Schnittstelle.
+- Auch **Clips in der Medien-Spur** blenden über, wenn sie übereinandergeschoben werden und ungefähr an derselben Stelle im Bild liegen – mit Bild und Ton. Voice-over und Musik blenden sich beim Überlappen ebenfalls weich über.
 - **Überall, wo zwei Teile sich treffen:** Die kleine Raute unten an der Stelle anklicken und im Inspektor Stil und Länge einstellen – auch nach dem Umstellen und zwischen eingefügten Clips.
 - **Ein- und Ausblenden** des ganzen Videos aus und nach Schwarz: Inspektor › Stil.
 
@@ -232,6 +291,10 @@ In der Kamera-Spur legst du fest, wie die Kamera in einem Abschnitt erscheint: *
 
 > ℹ️ Im Hochformat (9:16) steht die Aufnahme oben und die Kamera groß darunter – das passt Erklärbär beim Formatwechsel automatisch an.
 
+### Virtueller Hintergrund
+
+Im Inspektor unter **Kamera** ein Bild wählen: Du stehst dann vor diesem Bild oder dieser Grafik, ohne Greenscreen. macOS stellt dich dafür automatisch frei. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Bei der Form **Freigestellt** gibt es keinen Hintergrund, dort liegst du direkt über dem Bild.
+
 ## Texte, Bilder & Videos
 
 *Bauchbinden, Titelkarten, Designs, Bilder, Logo und eigene Videos.*
@@ -242,6 +305,7 @@ In der Kamera-Spur legst du fest, wie die Kamera in einem Abschnitt erscheint: *
 - **Titelkarte:** **Hinzufügen › Titelkarte** – über dem Video, als **Vorspann** vor oder als **Abspann** nach der Aufnahme. Vorspann und Abspann lassen sich in der Timeline über die Aufnahme ziehen: dann blenden sie über.
 - **Designs:** zwölf Vorlagen (Akzentbalken, Glas, Etikett, Terminal …) und ein Design-Editor für Schrift, Farben, Box, Ecken und Schatten. „Auf alle Texte anwenden“ vereinheitlicht alles; eigene Designs lassen sich sichern.
 - In eine Bauchbinde kann ein **Bild oder Logo**.
+- **Animation** (im Inspektor, je für Eingang und Ausgang): Erscheinen, Ohne, von links, rechts, unten oder oben einfliegen, Ausrollen und Aufspringen.
 
 ### Bilder und Videos
 
@@ -263,6 +327,8 @@ In der Kamera-Spur legst du fest, wie die Kamera in einem Abschnitt erscheint: *
 ### Markierungen
 
 - **Hinzufügen › Markierung:** Pfeil, Rahmen oder **Spotlight** (dunkelt alles andere ab; Form eckig, abgerundet oder rund).
+- **Finger** (F): zeigt Gesten für iPad-Videos: **Tippen**, **Doppeltippen**, **Tippen und halten**, **Tippen und ziehen**, **Wischen**, **mit zwei Fingern ziehen**, **Zusammenziehen**, **Aufziehen** und **Drehen**. Im Inspektor wählst du die Geste und die Darstellung (Punkt oder Finger). Im Vorschaubild ziehst du die Geste an ihre Stelle, die Länge des Blocks bestimmt das Tempo.
+- Pfeil und Rahmen sehen **von Hand gezeichnet** aus und werden beim Einblenden **gezeichnet**; der Pfeil pulsiert danach leicht auf sein Ziel zu. Beides lässt sich im Inspektor abschalten.
 - Im Vorschaubild verschieben und an den Ecken ziehen; Farbe und Stärke im Inspektor.
 - Auch auf eingefügten Videoclips möglich: eine Markierung, die im Clip beginnt, gehört zu ihm.
 
@@ -471,18 +537,36 @@ Oben auf der Startseite und bei den Aufnahme-Einstellungen wählst du, wo neue A
 |---|---|
 | S  oder  ⌘B | Am Abspielkopf teilen |
 | ⌫ | Auswahl löschen / Teil entfernen / wiederherstellen |
+| Q / W | Anfang / Ende hierher kürzen |
 | ⌥F | Standbild |
-| M | Kapitelmarke |
+| ⌘T | Überblendung an der Schnittstelle |
+| ⌥↑ / ⌥↓ | Teil schneller / langsamer |
 | ⌘Z / ⇧⌘Z | Widerrufen / Wiederholen |
 | ⌘C / ⌘V | Element kopieren / am Abspielkopf einfügen |
-| Esc | Auswahl aufheben |
-| N | Einrasten an / aus |
 | ⌘K | Befehlspalette |
+
+### Hinzufügen
+
+| Taste | Funktion |
+|---|---|
+| Z | Zoom |
+| T | Text |
+| X | Maske |
+| A / R / P | Pfeil / Rahmen / Spotlight |
+| F | Finger-Geste |
+| E | Meme-Board |
+| 1 … 0 | Meme einsetzen |
+| C | Mauszeiger-Bereich |
+| I / O | Bild / Video |
+| V | Einsprechen |
+| M | Kapitelmarke |
 
 ### Timeline
 
 | Taste | Funktion |
 |---|---|
+| N | Einrasten an / aus |
+| G | Clips zusammenkleben an / aus |
 | ⌘+ / ⌘− | Hinein- / Herauszoomen |
 | ⇧Z | Alles zeigen |
 | ⌥ + Scrollen, Zwei-Finger-Zoom | Zoomen um den Mauszeiger |

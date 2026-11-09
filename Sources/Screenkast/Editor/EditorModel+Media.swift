@@ -78,7 +78,7 @@ extension EditorModel {
     }
 
     /// Video overlay from a file (copied into the project), starting at source time `at`.
-    func addVideoOverlay(url: URL, at: Double, center: CGPoint? = nil) {
+    func addVideoOverlay(url: URL, at: Double, center: CGPoint? = nil, name: String? = nil, transparent: Bool = false) {
         Task {
             let asset = AVURLAsset(url: url)
             guard let length = try? await asset.load(.duration).seconds, length > 0.1,
@@ -90,11 +90,16 @@ extension EditorModel {
             commitUndoStep(); defer { commitUndoStep() }
             let start = min(max(0, at), max(0, duration - 0.2))
             let available = max(0.2, timeMap.total - display(start))
-            var o = VideoOverlay(file: file, name: url.deletingPathExtension().lastPathComponent, start: start,
+            var o = VideoOverlay(file: file, name: name ?? url.deletingPathExtension().lastPathComponent, start: start,
                                  duration: min(length, available), fileDuration: length)
             o.aspect = abs(shown.width) / max(1, abs(shown.height))
             o.rotation = VideoRotation.degrees(transform)
             if let center { o.x = center.x; o.y = center.y }
+            // A frame or shadow would show as a box around a picture with see-through parts.
+            if transparent {
+                o.frame = .none
+                o.shadow = false
+            }
             settings.videoOverlays.append(adopted(o))
             selection = .videoOverlay(o.id)
             if isPlaying { pause() }
@@ -359,7 +364,10 @@ extension EditorModel {
         let n = renderer.normalizedPoint(fromOutput: q, at: t)
         let tolerance = 14 * k / max(1, out.width)
         for a in settings.annotations.reversed() where isVisibleNow(start: a.start, end: a.end) {
-            if a.kind == .arrow {
+            if a.kind == .touch {
+                let center = CGPoint(x: a.x, y: a.y), end = a.touchGesture.usesPath ? CGPoint(x: a.x + a.width, y: a.y + a.height) : center
+                if ShotDocument.distance(n, segment: center, end) < tolerance * 4 { return .annotation(a.id) }
+            } else if a.kind == .arrow {
                 let d = ShotDocument.distance(n, segment: CGPoint(x: a.x, y: a.y), CGPoint(x: a.x + a.width, y: a.y + a.height))
                 if d < tolerance * 2 { return .annotation(a.id) }
             } else if CGRect(x: min(a.x, a.x + a.width), y: min(a.y, a.y + a.height), width: abs(a.width), height: abs(a.height))

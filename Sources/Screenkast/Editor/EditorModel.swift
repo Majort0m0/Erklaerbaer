@@ -160,6 +160,7 @@ final class EditorModel: ObservableObject {
     var videoOverlayDragOrigin: VideoOverlay?
     var cursorRangeDragOrigin: CursorRange?
     @Published var showShortcutHelp = false
+    @Published var showMemeBoard = false
     let timelineHover = TimelineHover()
 
     // Undo / redo of the edit settings. Changes in quick succession (typing, a slider or
@@ -173,6 +174,10 @@ final class EditorModel: ObservableObject {
     private var applyingUndo = false
 
     /// Timeline edges snap to the playhead, split points and other items.
+    /// Clips on a lane pull together at their ends when dragged near each other.
+    @Published var magnet: Bool = UserDefaults.standard.object(forKey: "timelineMagnet") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(magnet, forKey: "timelineMagnet") }
+    }
     @Published var snapping: Bool = UserDefaults.standard.object(forKey: "timelineSnapping") as? Bool ?? true {
         didSet { UserDefaults.standard.set(snapping, forKey: "timelineSnapping") }
     }
@@ -535,7 +540,7 @@ final class EditorModel: ObservableObject {
         if wasInteracting || undoBurstStart != nil { commitUndoStep() }
     }
 
-    var clipboard: [(item: ClipboardItem, offset: Double)] = []
+    @Published var clipboard: [(item: ClipboardItem, offset: Double)] = []
     var shuttleRate: Float = 0
     /// A part of the video being dragged to another place.
     @Published var clipDrag: ClipDrag?
@@ -1615,6 +1620,24 @@ extension EditorModel {
         case .copy: copySelection()
         case .paste: pasteClipboard()
         case .shuttle(let direction): shuttle(direction)
+        case .trimStart: trimToPlayhead(start: true)
+        case .trimEnd: trimToPlayhead(start: false)
+        case .addZoom: addZoomAtPlayhead()
+        case .addText: addLowerThird()
+        case .addMask: addMaskAtPlayhead()
+        case .addArrow: addAnnotation(.arrow)
+        case .addFrame: addAnnotation(.frame)
+        case .addSpotlight: addAnnotation(.spotlight)
+        case .addFinger: addAnnotation(.touch)
+        case .memeBoard: showMemeBoard.toggle()
+        case .meme(let index): pressMeme(index)
+        case .addCursor: addCursorRangeAtPlayhead()
+        case .addImage: addImage()
+        case .addVideo: addVideoOverlay()
+        case .voiceOver: toggleVoiceOver()
+        case .toggleMagnet: magnet.toggle()
+        case .transition: addTransitionHere()
+        case .speed(let direction): changeSpeed(direction)
         }
     }
 }

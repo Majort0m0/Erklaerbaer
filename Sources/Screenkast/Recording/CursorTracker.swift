@@ -62,6 +62,12 @@ final class CursorTracker {
     /// Current track and cursor images without stopping (for crash-safe progress saving).
     func snapshot() -> (CursorTrack, [Data]) { (track, imagePNGs) }
 
+    /// Nothing to track (a recording of an iPad): the next `stop` returns an empty track.
+    func clear() {
+        track = CursorTrack()
+        imagePNGs = []
+    }
+
     private func recordKey(_ event: NSEvent) {
         guard running else { return }
         let t = now

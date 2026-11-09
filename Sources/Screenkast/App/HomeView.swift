@@ -82,6 +82,13 @@ struct HomeView: View {
                             Text(model.displayName(d)).tag(Optional(SourceSelection.display(d.displayID)))
                         }
                     }
+                    if !model.deviceChoices.isEmpty {
+                        Section("iPad und iPhone am Kabel") {
+                            ForEach(model.deviceChoices, id: \.id) { d in
+                                Text(d.name).tag(Optional(SourceSelection.device(d.id)))
+                            }
+                        }
+                    }
                     Section("Fenster") {
                         ForEach(model.windows, id: \.windowID) { w in
                             Text(model.windowName(w)).lineLimit(1).tag(Optional(SourceSelection.window(w.windowID)))
@@ -108,8 +115,16 @@ struct HomeView: View {
                         Text(mic.localizedName).tag(mic.uniqueID)
                     }
                 }
-                Toggle("Systemaudio", isOn: $model.systemAudio)
-                    .help("Ton von Apps und Browser mit aufnehmen")
+                Toggle(model.isDeviceSelected ? "Ton vom iPad" : "Systemaudio", isOn: $model.systemAudio)
+                    .help(model.isDeviceSelected ? "Den Ton des iPads über das Kabel mit aufnehmen " : "Ton von Apps und Browser mit aufnehmen")
+                if model.isDeviceSelected {
+                    Toggle("Am Mac mithören", isOn: $model.hearDevice)
+                        .help("Spielt den Ton des iPads während der Aufnahme live am Mac ab. Mit eingeschaltetem Mikrofon am besten Kopfhörer benutzen.")
+                    Text("iPad entsperren und vor dem Start so halten, wie es aufgenommen werden soll (hoch oder quer). Während der Aufnahme zeigt ein Fenster das iPad live am Mac. QuickTime Player darf das iPad nicht gleichzeitig benutzen.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Picker("Zweites Fenster", selection: $model.overlayWindowID) {
                     Text("Aus").tag(CGWindowID?.none)
                     ForEach(model.windows + model.otherWindows, id: \.windowID) { w in
@@ -194,6 +209,13 @@ struct HomeView: View {
                 .fixedSize()
                 .help("Bildschirmfoto mit Pfeilen, Text, Markierungen und Hintergrund (\(GlobalHotKey.screenshotDisplay) für einen Bereich)")
                 Spacer()
+                Button {
+                    Task { await model.startLive() }
+                } label: {
+                    Label("Live für Meetings", systemImage: "dot.radiowaves.left.and.right")
+                }
+                .disabled(model.isBusy || model.isRecording || model.live != nil)
+                .help("Live-Bild für Zoom, Teams oder Meet: Szenen umschalten, Webcam einblenden, nebenbei aufnehmen")
             }
 
             VStack(spacing: 0) {

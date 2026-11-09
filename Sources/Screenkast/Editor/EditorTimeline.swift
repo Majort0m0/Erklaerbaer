@@ -445,6 +445,7 @@ private struct TimelineContent: View {
     /// `dt` of a block drag adjusted for snapping.
     private func snapped(_ kind: RangeBlock.DragKind, _ dt: Double, _ start: Double, _ end: Double, _ id: UUID) -> Double {
         let edge: EditorModel.SnapEdge = kind == .move ? .move : kind == .start ? .start : .end
+        if let glued = editor.magnetDelta(edge, dt: dt, start: start, end: end, id: id, tolerance: Double(18 / scale.pps)) { return glued }
         return editor.snapDelta(edge, dt: dt, start: start, end: end, tolerance: snapTolerance, excluding: id)
     }
 
@@ -597,7 +598,19 @@ private struct TimelineContent: View {
         }
 
         // Where a dragged part would land
-        if let drag, let t = editor.clipDropPosition(drag) {
+        if let drag, let overlap = editor.clipDragOverlap(drag, minimum: overlapMinimum) {
+            // Pushed onto its neighbor: the two will dissolve.
+            Text(String(format: "Überblendung %.1f s", overlap.length))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(TimelineSelection.color))
+                .fixedSize()
+                .offset(x: scale.x(overlap.at) - 44, y: y + h / 2 - 11)
+                .allowsHitTesting(false)
+                .zIndex(6)
+        } else if let drag, let t = editor.clipDropPosition(drag) {
             RoundedRectangle(cornerRadius: 1.5)
                 .fill(TimelineSelection.color)
                 .frame(width: 3, height: h + 8)
@@ -632,6 +645,9 @@ private struct TimelineContent: View {
             .onEnded { _ in editor.endInteraction() }
     }
 
+    /// A part must be pushed at least this far onto its neighbor to dissolve (a slip of the mouse does nothing).
+    private var overlapMinimum: Double { max(0.12, Double(14 / scale.pps)) }
+
     /// Drag: moves the part to another place (with a single part: moves the playhead).
     /// Click: selects the part and puts the playhead there.
     private func moveGesture(_ part: EditSettings.ClipPart) -> some Gesture {
@@ -645,9 +661,7 @@ private struct TimelineContent: View {
             }
             .onEnded { v in
                 if let drag = editor.clipDrag {
-                    let index = editor.clipDropIndex(drag)
-                    editor.clipDrag = nil
-                    if let index { editor.moveClip(key: drag.key, to: index) }
+                    editor.finishClipDrag(drag, minimum: overlapMinimum)
                 } else if abs(v.translation.width) < 4 {
                     guard editor.voiceOverState == .idle else { return }
                     if editor.isPlaying { editor.pause() }
@@ -977,14 +991,14 @@ private struct TimelineContent: View {
     @ViewBuilder
     private var annotationLane: some View {
         laneBackground(height: layout.annotationH, opacity: 0.06,
-                       hint: editor.settings.annotations.isEmpty ? "Klicken: Rahmen – Pfeil und Spotlight über „Hinzufügen“" : nil,
+                       hint: editor.settings.annotations.isEmpty ? "Klicken: Rahmen – Pfeil (A) und Spotlight (P) über die Symbolleiste" : nil,
                        y: layout.annotationY, adds: .annotation) { editor.selection = nil }
         ForEach(editor.settings.annotations) { a in
             if let v = vis(a.start, a.end) {
                 let (r, g, b) = a.color.rgb
                 RangeBlock(visible: v, pps: scale.pps, height: layout.annotationH,
                            color: a.kind == .spotlight ? .gray : Color(red: r, green: g, blue: b), icon: a.kind.icon,
-                           label: a.kind.label,
+                           label: a.kind == .touch ? a.touchGesture.label : a.kind.label,
                            selected: editor.selection == .annotation(a.id) || editor.isInGroup(.annotation(a.id)),
                            onSelect: { editor.click(.annotation(a.id)) },
                            onDrag: { kind, dt in
@@ -1079,11 +1093,14 @@ private struct TimelineContent: View {
                        hint: editor.settings.images.isEmpty && editor.settings.videoOverlays.isEmpty
                            ? "Bilder und Videos hierher ziehen – oder klicken" : nil,
                        y: layout.mediaY, adds: .media) { editor.selection = nil }
+        let mediaFades = FrameRenderer.mediaDissolves(editor.settings, map: editor.timeMap)
         ForEach(editor.settings.videoOverlays) { o in
             let shown = editor.displayRange(o)
             if let v = scale.visible(shown.lowerBound, shown.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.mediaH, color: o.synced ? .orange : .yellow,
                            icon: o.synced ? "macwindow.on.rectangle" : "pip", label: o.name,
+                           fadeIn: mediaFades[o.id].flatMap { $0.fadeIn > 0 ? shown.lowerBound...(shown.lowerBound + $0.fadeIn) : nil },
+                           fadeOut: mediaFades[o.id].flatMap { $0.fadeOut > 0 ? (shown.upperBound - $0.fadeOut)...shown.upperBound : nil },
                            selected: editor.selection == .videoOverlay(o.id) || editor.isInGroup(.videoOverlay(o.id)),
                            onSelect: { editor.click(.videoOverlay(o.id)) },
                            onDrag: { kind, dt in
@@ -1119,6 +1136,8 @@ private struct TimelineContent: View {
             if let run = editor.displayRange(start: o.start, end: o.end, free: o.isFree), let v = scale.visible(run.lowerBound, run.upperBound) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.mediaH, color: .mint, icon: "photo",
                            label: URL(fileURLWithPath: o.file).deletingPathExtension().lastPathComponent,
+                           fadeIn: mediaFades[o.id].flatMap { $0.fadeIn > 0 ? run.lowerBound...(run.lowerBound + $0.fadeIn) : nil },
+                           fadeOut: mediaFades[o.id].flatMap { $0.fadeOut > 0 ? (run.upperBound - $0.fadeOut)...run.upperBound : nil },
                            selected: editor.selection == .image(o.id) || editor.isInGroup(.image(o.id)),
                            onSelect: { editor.click(.image(o.id)) },
                            onDrag: { kind, dt in

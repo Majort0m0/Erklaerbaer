@@ -32,6 +32,7 @@ enum ScreenshotCapture {
         case .display(let d): return d.frame
         case .window(let w): return w.isOnScreen ? w.frame : nil
         case .region(let d, let r): return r.offsetBy(dx: d.frame.minX, dy: d.frame.minY)
+        case .device: return nil
         }
     }
 
@@ -54,6 +55,8 @@ enum ScreenshotCapture {
         case .region(let d, let r):
             filter = SCContentFilter(display: d, excludingApplications: apps, exceptingWindows: [])
             region = r
+        case .device:
+            throw CocoaError(.featureUnsupported)
         }
         let scale = CGFloat(filter.pointPixelScale)
         let rect = region ?? filter.contentRect

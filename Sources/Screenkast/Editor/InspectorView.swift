@@ -393,16 +393,34 @@ struct InspectorView: View {
                             .onTapGesture { editor.updateAnnotation(id: a.id) { $0.color = c } }
                     }
                 }
-                LabeledSlider(title: "Linienstärke", value: Binding(get: { a.thickness }, set: { v in editor.updateAnnotation(id: a.id) { $0.thickness = v } }),
+                if a.kind == .touch {
+                    Picker("Geste", selection: Binding(get: { a.touchGesture }, set: { v in editor.updateAnnotation(id: a.id) { $0.gesture = v } })) {
+                        ForEach(TouchGesture.allCases) { Text($0.label).tag($0) }
+                    }
+                    Picker("Darstellung", selection: Binding(get: { a.touchLook }, set: { v in editor.updateAnnotation(id: a.id) { $0.look = v } })) {
+                        ForEach(TouchLook.allCases) { Text($0.label).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    if a.touchGesture.canRepeat {
+                        Toggle("Wiederholen, solange der Block läuft", isOn: Binding(get: { a.repeats ?? false }, set: { v in editor.updateAnnotation(id: a.id) { $0.repeats = v } }))
+                    }
+                }
+                LabeledSlider(title: a.kind == .touch ? "Größe" : "Linienstärke", value: Binding(get: { a.thickness }, set: { v in editor.updateAnnotation(id: a.id) { $0.thickness = v } }),
                               range: 0.4...3, format: { "\(Int($0 * 100)) %" })
+                if a.kind != .touch {
+                Toggle("Von Hand gezeichnet", isOn: Binding(get: { a.handDrawn ?? true }, set: { v in editor.updateAnnotation(id: a.id) { $0.handDrawn = v } }))
+                Toggle(a.kind == .arrow ? "Zeichnen und pulsieren" : "Beim Einblenden zeichnen",
+                       isOn: Binding(get: { a.animated ?? true }, set: { v in editor.updateAnnotation(id: a.id) { $0.animated = v } }))
+                }
             }
-            if a.kind != .arrow {
+            if a.kind != .arrow && a.kind != .touch {
                 Picker("Form", selection: Binding(get: { a.outline }, set: { v in editor.updateAnnotation(id: a.id) { $0.shape = v } })) {
                     ForEach(AnnotationShape.allCases) { Label($0.label, systemImage: $0.icon).tag($0) }
                 }
                 .pickerStyle(.segmented)
             }
-            Text(a.kind == .arrow ? "Im Vorschaubild Anfang und Spitze ziehen, an der Linie verschieben." : "Im Vorschaubild verschieben, an den Ecken die Größe ändern.")
+            Text(a.kind == .touch ? (a.touchGesture.isPinch ? "Im Vorschaubild die Mitte und den Abstand der Finger ziehen; die Länge des Blocks bestimmt das Tempo." : a.touchGesture.usesPath ? "Im Vorschaubild Anfang und Ende der Geste ziehen; die Länge des Blocks bestimmt das Tempo." : "Im Vorschaubild auf die Stelle ziehen, die berührt wird.")
+                 : a.kind == .arrow ? "Im Vorschaubild Anfang und Spitze ziehen, an der Linie verschieben." : "Im Vorschaubild verschieben, an den Ecken die Größe ändern.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -970,6 +988,27 @@ struct InspectorView: View {
                     ForEach(CameraShape.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                if editor.settings.cameraShape != .cutout {
+                    HStack {
+                        Text("Virtueller Hintergrund")
+                        Spacer()
+                        Button(editor.settings.cameraBackground == nil ? "Bild wählen …" : "Anderes Bild …") { editor.chooseCameraBackground() }
+                        if editor.settings.cameraBackground != nil {
+                            Button { editor.settings.cameraBackground = nil } label: { Image(systemName: "xmark.circle") }
+                                .buttonStyle(.borderless)
+                                .help("Hintergrund entfernen")
+                        }
+                    }
+                    .help("Stellt dich ohne Greenscreen frei und zeigt das Bild hinter dir")
+                    if editor.settings.cameraBackground != nil {
+                        LabeledSlider(title: "Kante", value: Binding(get: { editor.settings.cameraBackgroundEdge ?? 0.5 }, set: { editor.settings.cameraBackgroundEdge = $0 }),
+                                      range: 0.1...0.9, format: { "\(Int($0 * 100)) %" })
+                            .help("Höher: Der Rand liegt enger an dir, weniger vom Zimmer bleibt stehen. Niedriger: Mehr von Haaren und Rand bleibt erhalten.")
+                        LabeledSlider(title: "Beruhigen", value: Binding(get: { editor.settings.cameraBackgroundCalm ?? 0.5 }, set: { editor.settings.cameraBackgroundCalm = $0 }),
+                                      range: 0...0.9, format: { "\(Int($0 * 100)) %" })
+                            .help("Höher: Der Rand flackert weniger, zieht bei schnellen Bewegungen aber etwas nach.")
+                    }
+                }
                 LabeledSlider(title: "Größe", value: $editor.settings.cameraSize, range: 0.12...0.5, format: { "\(Int($0 * 100)) %" })
                 Picker("Ecke", selection: Binding(
                     get: { editor.settings.cameraX == nil ? editor.settings.cameraCorner : nil },
@@ -1138,6 +1177,16 @@ struct InspectorView: View {
                 LabeledSlider(title: "Textgröße", value: binding(\.size), range: 0.5...2, format: { "\(Int($0 * 100)) %" })
             }
             TextDesignPanel(editor: editor, text: text)
+            if text.placement == .overlay || text.kind == .lowerThird {
+                Section("Animation") {
+                    Picker("Eingang", selection: Binding(get: { text.motionIn ?? .standard }, set: { v in editor.updateText(id: id) { $0.motionIn = v == .standard ? nil : v } })) {
+                        ForEach(TextMotion.allCases) { Text($0.label).tag($0) }
+                    }
+                    Picker("Ausgang", selection: Binding(get: { text.motionOut ?? .standard }, set: { v in editor.updateText(id: id) { $0.motionOut = v == .standard ? nil : v } })) {
+                        ForEach(TextMotion.allCases) { Text($0.label).tag($0) }
+                    }
+                }
+            }
             if text.kind == .titleCard {
                 Section("Platzierung") {
                     Picker("Wo", selection: Binding(get: { text.placement }, set: { editor.setPlacement(id: id, $0) })) {

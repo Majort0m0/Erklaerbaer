@@ -25,7 +25,7 @@ enum ProjectFactory {
     }
 
     /// The look for own material: the full picture, no frame (it is not a screen recording).
-    private static func plainSettings(aspect: OutputAspect) -> EditSettings {
+    static func plainSettings(aspect: OutputAspect) -> EditSettings {
         var s = EditSettings()
         s.autoZoom = false
         s.zoomSegments = []

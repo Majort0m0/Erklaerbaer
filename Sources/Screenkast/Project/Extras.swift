@@ -127,7 +127,7 @@ struct CameraLayoutRange: Codable, Identifiable, Equatable {
 // MARK: - Annotations
 
 enum AnnotationKind: String, Codable, CaseIterable, Identifiable {
-    case arrow, frame, spotlight
+    case arrow, frame, spotlight, touch
     var id: String { rawValue }
 
     var label: String {
@@ -135,6 +135,7 @@ enum AnnotationKind: String, Codable, CaseIterable, Identifiable {
         case .arrow: return "Pfeil"
         case .frame: return "Rahmen"
         case .spotlight: return "Spotlight"
+        case .touch: return "Finger"
         }
     }
 
@@ -143,8 +144,41 @@ enum AnnotationKind: String, Codable, CaseIterable, Identifiable {
         case .arrow: return "arrow.up.right"
         case .frame: return "rectangle"
         case .spotlight: return "flashlight.on.fill"
+        case .touch: return "hand.point.up.left.fill"
         }
     }
+}
+
+/// What a finger marking shows.
+enum TouchGesture: String, Codable, CaseIterable, Identifiable {
+    case tap, doubleTap, hold, drag, swipe, twoFingerDrag, pinchIn, pinchOut, rotate
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .tap: return "Tippen"
+        case .doubleTap: return "Doppeltippen"
+        case .hold: return "Tippen und halten"
+        case .drag: return "Tippen und ziehen"
+        case .swipe: return "Wischen"
+        case .twoFingerDrag: return "Mit zwei Fingern ziehen"
+        case .pinchIn: return "Zusammenziehen (Pinch)"
+        case .pinchOut: return "Aufziehen (Pinch)"
+        case .rotate: return "Mit zwei Fingern drehen"
+        }
+    }
+
+    /// Has a second point: the end of the way, or one finger of a two-finger gesture.
+    var usesPath: Bool { self != .tap && self != .doubleTap && self != .hold }
+    var isPinch: Bool { self == .pinchIn || self == .pinchOut || self == .rotate }
+    var canRepeat: Bool { self == .tap || self == .doubleTap || self == .swipe }
+}
+
+/// How a finger marking looks.
+enum TouchLook: String, Codable, CaseIterable, Identifiable {
+    case dot, finger
+    var id: String { rawValue }
+    var label: String { self == .dot ? "Punkt" : "Finger" }
 }
 
 enum AnnotationColor: String, Codable, CaseIterable, Identifiable {
@@ -179,8 +213,20 @@ struct Annotation: Codable, Identifiable, Equatable {
     var thickness: Double = 1
     /// Outline of a frame or spotlight (nil: rounded rectangle).
     var shape: AnnotationShape? = nil
+    /// Arrow and frame: drawn by hand (nil: yes).
+    var handDrawn: Bool? = nil
+    /// Arrow and frame: drawn on screen when they appear; the arrow then pulses (nil: yes).
+    var animated: Bool? = nil
+    /// Finger marking: gesture, look and whether a short gesture is repeated.
+    var gesture: TouchGesture? = nil
+    var look: TouchLook? = nil
+    var repeats: Bool? = nil
 
     var outline: AnnotationShape { shape ?? .rounded }
+    var touchGesture: TouchGesture { gesture ?? .tap }
+    var touchLook: TouchLook { look ?? .dot }
+    /// Drawn with two points (arrow, or a finger gesture with a way).
+    var hasTwoPoints: Bool { kind == .arrow || (kind == .touch && touchGesture.usesPath) }
 }
 
 // MARK: - Own media

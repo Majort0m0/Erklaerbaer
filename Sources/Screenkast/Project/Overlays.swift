@@ -151,6 +151,26 @@ enum TextAlign: String, Codable, CaseIterable, Identifiable {
 }
 
 /// A lower third / text box, or a full-screen title card.
+/// How a text comes in or goes out.
+enum TextMotion: String, Codable, CaseIterable, Identifiable {
+    case standard, fade, none, fromLeft, fromRight, fromBottom, fromTop, wipe, pop
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .standard: return "Standard"
+        case .fade: return "Erscheinen"
+        case .none: return "Ohne"
+        case .fromLeft: return "Von links"
+        case .fromRight: return "Von rechts"
+        case .fromBottom: return "Von unten"
+        case .fromTop: return "Von oben"
+        case .wipe: return "Ausrollen"
+        case .pop: return "Aufspringen"
+        }
+    }
+}
+
 struct TextOverlay: Codable, Identifiable, Equatable {
     enum Kind: String, Codable {
         case lowerThird, titleCard
@@ -188,6 +208,9 @@ struct TextOverlay: Codable, Identifiable, Equatable {
     var design: TextDesign? = nil
     /// Picture or logo shown in the box next to the text (project file).
     var image: String? = nil
+    /// Animation when it comes in and goes out (nil: standard).
+    var motionIn: TextMotion? = nil
+    var motionOut: TextMotion? = nil
     /// Not tied to the video: `start` is a timeline position and stays put when parts of the video
     /// are cut or moved (nil: follows the moment of the video it was placed on).
     var free: Bool? = nil

@@ -9,6 +9,8 @@ enum SourceSelection: Hashable {
     case window(CGWindowID)
     /// Part of a display (rect in display points, origin top-left).
     case region(CGDirectDisplayID, CGRect)
+    /// An iPad or iPhone on a cable (unique id of the capture device).
+    case device(String)
 }
 
 extension CGRect: @retroactive Hashable {
@@ -42,6 +44,9 @@ final class AppModel: ObservableObject {
     /// Starts when logging in to the Mac (a login item).
     @Published var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @Published var selection: SourceSelection?
+    /// iPads and iPhones connected by cable.
+    @Published var devices: [AVCaptureDevice] = []
+    private var deviceNames: [String: String] = [:]
     @Published var microphones: [AVCaptureDevice] = []
     /// "" = microphone off
     @Published var microphoneID: String = UserDefaults.standard.string(forKey: "microphoneID") ?? "" {
@@ -49,6 +54,10 @@ final class AppModel: ObservableObject {
     }
     @Published var systemAudio: Bool = UserDefaults.standard.bool(forKey: "systemAudio") {
         didSet { UserDefaults.standard.set(systemAudio, forKey: "systemAudio") }
+    }
+    /// Plays the sound of an iPad on the Mac while recording it.
+    @Published var hearDevice: Bool = UserDefaults.standard.object(forKey: "hearDeviceAudio") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(hearDevice, forKey: "hearDeviceAudio") }
     }
     @Published var cameras: [AVCaptureDevice] = []
     /// "" = camera off
@@ -101,6 +110,10 @@ final class AppModel: ObservableObject {
 
     private var shareable: SCShareableContent?
     private let recorder = ScreenRecorder()
+    private let deviceRecorder = DeviceRecorder()
+    private let devicePreview = DevicePreviewPanel()
+    /// The running live mode.
+    @Published private(set) var live: LiveModel?
     private let pauseGate = PauseGate()
     let camera = CameraRecorder()
     private let cameraPanel = FloatingCameraPanel()
@@ -148,13 +161,24 @@ final class AppModel: ObservableObject {
         camera.pauseGate = pauseGate
         tracker.pauseGate = pauseGate
         windowRecorder.pauseGate = pauseGate
-        recorder.onStreamError = { [weak self] error in
+        let interrupted: (Error) -> Void = { [weak self] error in
             Task { @MainActor in
                 guard let self, self.isRecording else { return }
                 self.errorMessage = "Aufnahme unterbrochen: \(error.localizedDescription)"
                 await self.stopRecording()
             }
         }
+        recorder.onStreamError = interrupted
+        deviceRecorder.onStreamError = interrupted
+        deviceRecorder.pauseGate = pauseGate
+        // iPads appear a moment after this, and whenever one is plugged in.
+        DeviceRecorder.allowDevices()
+        for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshDevices() }
+            }
+        }
+        refreshDevices()
         reloadLibrary()
         Task { await recoverInterruptedRecordings() }
     }
@@ -215,7 +239,7 @@ final class AppModel: ObservableObject {
             watchPermission()
         }
         microphones = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external],
-                                                       mediaType: .audio, position: .unspecified).devices
+                                                       mediaType: .audio, position: .unspecified).devices.filter { !$0.hasMediaType(.muxed) }
         if !microphoneID.isEmpty && !microphones.contains(where: { $0.uniqueID == microphoneID }) {
             microphoneID = ""
         }
@@ -223,6 +247,30 @@ final class AppModel: ObservableObject {
         if !cameraID.isEmpty && !cameras.contains(where: { $0.uniqueID == cameraID }) {
             cameraID = ""
         }
+        refreshDevices()
+    }
+
+    func refreshDevices() {
+        guard !Self.snapshotMode else { return }
+        devices = DeviceRecorder.availableDevices()
+        for d in devices { deviceNames[d.uniqueID] = d.localizedName }
+    }
+
+    func deviceName(_ id: String) -> String {
+        guard let name = deviceNames[id] else { return "iPad" }
+        return devices.contains { $0.uniqueID == id } ? name : name + " (nicht verbunden)"
+    }
+
+    /// For the source menu: the connected devices, and the chosen one even while it is unplugged.
+    var deviceChoices: [(id: String, name: String)] {
+        var list = devices.map { (id: $0.uniqueID, name: $0.localizedName) }
+        if case .device(let id) = selection, !list.contains(where: { $0.id == id }) { list.append((id, deviceName(id))) }
+        return list
+    }
+
+    var isDeviceSelected: Bool {
+        if case .device = selection { return true }
+        return false
     }
 
     private var isSelectionValid: Bool {
@@ -230,6 +278,7 @@ final class AppModel: ObservableObject {
         case .display(let id): return displays.contains { $0.displayID == id }
         case .window(let id): return (windows + otherWindows).contains { $0.windowID == id }
         case .region(let id, _): return displays.contains { $0.displayID == id }
+        case .device: return true   // stays chosen if the cable is out for a moment
         case nil: return false
         }
     }
@@ -239,6 +288,7 @@ final class AppModel: ObservableObject {
         case .display(let id): return displays.first { $0.displayID == id }.map(CaptureTarget.display)
         case .window(let id): return (windows + otherWindows).first { $0.windowID == id }.map(CaptureTarget.window)
         case .region(let id, let rect): return displays.first { $0.displayID == id }.map { CaptureTarget.region($0, rect) }
+        case .device(let id): return devices.first { $0.uniqueID == id }.map { CaptureTarget.device(id: id, name: $0.localizedName) }
         case nil: return nil
         }
     }
@@ -281,13 +331,31 @@ final class AppModel: ObservableObject {
 
     func startRecording() async {
         guard !isRecording, !isBusy else { return }
+        guard live == nil else {
+            errorMessage = "Bitte zuerst den Live-Modus beenden."
+            return
+        }
         isBusy = true
         defer { isBusy = false }
         errorMessage = nil
 
         await refreshSources()
-        guard let chosen = target(for: selection), let content = shareable else {
+        if case .device(let id) = selection, !devices.contains(where: { $0.uniqueID == id }) {
+            errorMessage = "„\(deviceNames[id] ?? "Das iPad")“ ist nicht verbunden. Bitte per Kabel anschließen und entsperren."
+            return
+        }
+        guard let chosen = target(for: selection) else {
             errorMessage = permissionProblem ?? "Bitte eine Aufnahmequelle auswählen."
+            return
+        }
+        var deviceID: String?
+        if case .device(let id, _) = chosen { deviceID = id }
+        guard deviceID != nil || shareable != nil else {
+            errorMessage = permissionProblem ?? "Bitte eine Aufnahmequelle auswählen."
+            return
+        }
+        if deviceID != nil, !(await AVCaptureDevice.requestAccess(for: .video)) {
+            errorMessage = "Für die Aufnahme des iPads braucht Erklärbär die Kamera-Berechtigung (Systemeinstellungen › Datenschutz & Sicherheit › Kamera)."
             return
         }
         if !microphoneID.isEmpty {
@@ -333,7 +401,7 @@ final class AppModel: ObservableObject {
         if countdown {
             let display: CGDirectDisplayID? = switch target {
             case .display(let d), .region(let d, _): d.displayID
-            case .window: nil
+            case .window, .device: nil
             }
             await Countdown.run(on: display)
         }
@@ -344,12 +412,21 @@ final class AppModel: ObservableObject {
         isPaused = false
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            let ownApps = content.applications.filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
-            let (geo, host) = try await recorder.start(target: target,
-                                                      microphoneID: microphoneID.isEmpty ? nil : microphoneID,
-                                                      systemAudio: systemAudio,
-                                                      excludedApps: ownApps,
-                                                      outputURL: url.appendingPathComponent("screen.mov"))
+            let ownApps = (shareable?.applications ?? []).filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+            let (geo, host): (CaptureGeometry, Double)
+            if let deviceID {
+                (geo, host) = try await deviceRecorder.start(deviceID: deviceID, microphoneID: microphoneID.isEmpty ? nil : microphoneID,
+                                                             deviceAudio: systemAudio, monitor: hearDevice, outputURL: url.appendingPathComponent("screen.mov"))
+            } else {
+                (geo, host) = try await recorder.start(target: target,
+                                                       microphoneID: microphoneID.isEmpty ? nil : microphoneID,
+                                                       systemAudio: systemAudio,
+                                                       excludedApps: ownApps,
+                                                       outputURL: url.appendingPathComponent("screen.mov"))
+            }
+            if deviceID != nil, let session = deviceRecorder.captureSession {
+                devicePreview.show(session: session, pixelSize: geo.pixelSize, name: target.name)
+            }
             if useCamera {
                 cameraPanel.show(session: camera.session)
                 try? camera.startWriting(to: url.appendingPathComponent("camera.mov"),
@@ -370,7 +447,7 @@ final class AppModel: ObservableObject {
             if showNotes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 let display: CGDirectDisplayID? = switch target {
                 case .display(let d), .region(let d, _): d.displayID
-                case .window: nil
+                case .window, .device: nil
                 }
                 notesPanel.show(text: notes, on: display)
             }
@@ -378,13 +455,14 @@ final class AppModel: ObservableObject {
             firstHost = host
             menuOpenedHost = nil
             tracker.recordShortcuts = recordShortcuts && KeyShortcuts.isTrusted(prompt: false)
-            tracker.start(rect: geo.frame, hostStart: host)
+            // The mouse of the Mac has nothing to do with what happens on the iPad.
+            if deviceID != nil { tracker.clear() } else { tracker.start(rect: geo.frame, hostStart: host) }
             let progressInfo = RecordingInfo(pixelWidth: Int(geo.pixelSize.width), pixelHeight: Int(geo.pixelSize.height),
                                              pointPixelScale: geo.pointPixelScale, duration: 0, createdAt: Date(),
                                              sourceName: target.name,
-                                             hasMicrophone: recorder.audioTrackRoles.contains("mic"),
+                                             hasMicrophone: roles(deviceID != nil).contains("mic"),
                                              cameraFile: useCamera ? "camera.mov" : nil,
-                                             audioTracks: recorder.audioTrackRoles)
+                                             audioTracks: roles(deviceID != nil))
             progressWriter = try? RecordingProgressWriter(folder: url, info: progressInfo)
             updateControlBar()
             let saveTimer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
@@ -411,6 +489,33 @@ final class AppModel: ObservableObject {
             showMainWindow()
         }
     }
+
+    // MARK: Live
+
+    var ownApplications: [SCRunningApplication] {
+        (shareable?.applications ?? []).filter { $0.processID == ProcessInfo.processInfo.processIdentifier }
+    }
+
+    func startLive() async {
+        guard live == nil, !isRecording, !isBusy else { return }
+        await refreshSources()
+        guard shareable != nil else {
+            errorMessage = permissionProblem ?? "Erklärbär kann gerade keine Bildschirme lesen."
+            return
+        }
+        if !(await AVCaptureDevice.requestAccess(for: .video)) { cameraDenied = true }
+        let new = LiveModel(app: self)
+        switch selection {
+        case .display, .window, .device: new.source = selection
+        default: new.source = (displays.first { $0.displayID == CGMainDisplayID() } ?? displays.first).map { .display($0.displayID) }
+        }
+        live = new
+        new.begin()
+    }
+
+    func liveEnded() { live = nil }
+
+    private func roles(_ device: Bool) -> [String] { device ? deviceRecorder.audioTrackRoles : recorder.audioTrackRoles }
 
     /// Pauses or resumes all streams (screen, audio, camera, cursor) at the same host time.
     func togglePause() {
@@ -462,15 +567,17 @@ final class AppModel: ObservableObject {
         let windowOK = overlayWindowName != nil ? await windowRecorder.stop(end: cameraEnd) : false
         let windowSize = windowRecorder.size
         cameraPanel.hide()
+        devicePreview.hide()
         notesPanel.hide()
         updateControlBar()
         if !cameraPreviewWanted { camera.select(deviceID: nil) }
         do {
-            let duration = try await recorder.stop()
+            let isDevice: Bool = { if case .device = target { return true } else { return false } }()
+            let duration = try await isDevice ? deviceRecorder.stop() : recorder.stop()
 
             // Cut away the part where the user reached for the stop button in the menu bar.
             var cut: Double?
-            if let menuTime { cut = menuTime - 0.25 }
+            if let menuTime, !isDevice { cut = menuTime - 0.25 }
             let menuBarFraction = 40.0 / max(1, geo.frame.height)
             for click in track.clicks where click.t > duration - 4 {
                 let inMenuBar = (click.y < menuBarFraction && { if case .display = target { return true } else { return false } }()) || !click.isInsideCapture
@@ -496,9 +603,9 @@ final class AppModel: ObservableObject {
             var info = RecordingInfo(pixelWidth: Int(geo.pixelSize.width), pixelHeight: Int(geo.pixelSize.height),
                                      pointPixelScale: geo.pointPixelScale, duration: duration, createdAt: Date(),
                                      sourceName: target.name,
-                                     hasMicrophone: recorder.audioTrackRoles.contains("mic"),
+                                     hasMicrophone: roles(isDevice).contains("mic"),
                                      cameraFile: cameraOK ? "camera.mov" : nil,
-                                     audioTracks: recorder.audioTrackRoles)
+                                     audioTracks: roles(isDevice))
             if windowOK {
                 info.overlayVideoFile = "window2.mov"
                 info.overlaySourceName = overlayWindowName
@@ -507,6 +614,12 @@ final class AppModel: ObservableObject {
             var settings = EditSettings()
             if let c = cut, c > 1, c < duration { settings.trimEnd = c }
             settings.zoomSegments = AutoZoom.segments(for: track.clicks, duration: duration, scale: settings.defaultZoom)
+            if isDevice {
+                // No mouse on an iPad: finger gestures are added as markings.
+                settings.autoZoom = false
+                settings.showCursor = false
+                settings.clickEffect = false
+            }
             let project = Project(url: url, info: info, cursor: track, settings: settings)
             try project.saveAll()
             progressWriter?.finish()
@@ -529,10 +642,19 @@ final class AppModel: ObservableObject {
                 if showAssistant { editor?.showPolishSheet = true }
             }
         } catch {
-            errorMessage = error.localizedDescription
             progressWriter = nil
-            try? FileManager.default.removeItem(at: url)
-            showMainWindow()
+            // What reached the file is kept (it is written in pieces that stay readable).
+            if let saved = try? await RecordingRecovery.recover(url) {
+                errorMessage = "Die Aufnahme konnte nicht sauber beendet werden, der aufgenommene Teil ist aber gerettet. (\(error.localizedDescription))"
+                ProjectLocations.remember(saved)
+                reloadLibrary()
+                showMainWindow()
+                open(url: saved)
+            } else {
+                errorMessage = error.localizedDescription
+                try? FileManager.default.removeItem(at: url)
+                showMainWindow()
+            }
         }
         currentURL = nil
         currentTarget = nil
@@ -552,9 +674,10 @@ final class AppModel: ObservableObject {
         _ = tracker.stop()
         camera.cancelWriting()
         cameraPanel.hide()
+        devicePreview.hide()
         notesPanel.hide()
         await windowRecorder.cancel()
-        await recorder.cancel()
+        if case .device = currentTarget { await deviceRecorder.cancel() } else { await recorder.cancel() }
         updateControlBar()
         if let url = currentURL { try? FileManager.default.removeItem(at: url) }
         currentURL = nil

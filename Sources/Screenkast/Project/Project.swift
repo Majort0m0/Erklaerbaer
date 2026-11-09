@@ -264,6 +264,11 @@ struct EditSettings: Codable, Equatable {
     var annotations: [Annotation] = []
     var images: [ImageOverlay] = []
     var watermark: Watermark? = nil
+    /// Picture behind the person in the camera (project file, nil: the real room).
+    var cameraBackground: String? = nil
+    /// Outline of the person (0…1) and how much it is calmed over time (nil: 0.5).
+    var cameraBackgroundEdge: Double? = nil
+    var cameraBackgroundCalm: Double? = nil
     var inserts: [InsertClip] = []
     var chapters: [Chapter] = []
     /// Recognized words (for cutting via the transcript).
@@ -562,6 +567,9 @@ extension EditSettings {
         annotations = try v(.annotations, annotations)
         images = try v(.images, images)
         watermark = try c.decodeIfPresent(Watermark.self, forKey: .watermark)
+        cameraBackground = try c.decodeIfPresent(String.self, forKey: .cameraBackground)
+        cameraBackgroundEdge = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundEdge)
+        cameraBackgroundCalm = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundCalm)
         inserts = try v(.inserts, inserts)
         chapters = try v(.chapters, chapters)
         words = try v(.words, words)

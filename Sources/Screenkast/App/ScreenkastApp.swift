@@ -34,6 +34,12 @@ enum Entry {
         if let i = args.firstIndex(of: "--newproject"), i + 1 < args.count {
             exit(MainActor.assumeIsolated { ProjectFactory.commandLine(folder: args[i + 1], files: Array(args[(i + 2)...])) })
         }
+        if let i = args.firstIndex(of: "--livetest"), i + 2 < args.count {
+            exit(LiveEngine.commandLine(seconds: Int(args[i + 1]) ?? 10, picture: args[i + 2]))
+        }
+        if let i = args.firstIndex(of: "--devicetest"), i + 2 < args.count {
+            exit(DeviceRecorder.commandLine(seconds: Double(args[i + 1]) ?? 3, path: args[i + 2]))
+        }
         if let i = args.firstIndex(of: "--mockups"), i + 2 < args.count {
             exit(Analyze.mockups(projectPath: args[i + 1], outputFolder: args[i + 2]))
         }

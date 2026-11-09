@@ -14,6 +14,10 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     /// Shared pause state (set by the app before starting).
     var pauseGate: PauseGate?
+    /// Every picture, as it arrives (live mode).
+    var onFrame: ((CVPixelBuffer) -> Void)?
+    /// Ask for 1080p instead of 720p.
+    var preferFullHD = false
 
     // Writing state (sampleQueue only)
     private var writer: AVAssetWriter?
@@ -24,7 +28,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     static func availableDevices() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
-                                         mediaType: .video, position: .unspecified).devices
+                                         mediaType: .video, position: .unspecified).devices.filter { !$0.hasMediaType(.muxed) }
     }
 
     override init() {
@@ -47,7 +51,8 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
                let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) {
                 session.addInput(input)
                 if session.outputs.isEmpty, session.canAddOutput(output) { session.addOutput(output) }
-                session.sessionPreset = session.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .high
+                session.sessionPreset = preferFullHD && session.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080
+                    : session.canSetSessionPreset(.hd1280x720) ? .hd1280x720 : .high
                 currentDeviceID = deviceID
             }
             session.commitConfiguration()
@@ -103,6 +108,7 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        if let onFrame, sampleBuffer.isValid, let frame = CMSampleBufferGetImageBuffer(sampleBuffer) { onFrame(frame) }
         guard let writer, sampleBuffer.isValid else { return }
         // Convert the capture clock to the host clock used by ScreenCaptureKit.
         var pts = sampleBuffer.presentationTimeStamp

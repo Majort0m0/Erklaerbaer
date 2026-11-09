@@ -39,6 +39,7 @@ final class FrameRenderer: @unchecked Sendable {
     /// Project folder (images, logo) and caches for pictures and arrows.
     private let projectURL: URL
     private var imageCache: [String: CIImage] = [:]
+    private let maskSmoother = MaskSmoother()
     private var arrowCache: [String: CIImage] = [:]
     private var shapeCache: [String: CIImage] = [:]
     /// Frame size of each inserted clip (learned while rendering it; used by the preview handles).
@@ -125,6 +126,7 @@ final class FrameRenderer: @unchecked Sendable {
         let s = st.settings
         let out = Self.outputSize(info: st.info, settings: s)
         let outRect = CGRect(origin: .zero, size: out)
+        let rawCamera = rawCamera.map { backgrounded($0, settings: s, time: t) }
         let rawSource = maybeSource ?? CIImage(color: .black)
             .cropped(to: CGRect(x: 0, y: 0, width: st.info.pixelWidth, height: st.info.pixelHeight))
 
@@ -470,16 +472,55 @@ final class FrameRenderer: @unchecked Sendable {
             guard T >= a, T <= b else { continue }
             let fadeIn = min(1, (T - a) / TextOverlay.fade)
             let fadeOut = min(1, (b - T) / TextOverlay.fade)
-            let alpha = max(0, min(fadeIn, fadeOut))
+            let motionIn = o.motionIn ?? .standard, motionOut = o.motionOut ?? .standard
+            let window = max(0.01, min(0.5, (b - a) / 2))
+            let inP = min(1, max(0, (T - a) / window)), outP = min(1, max(0, (b - T) / window))
+            var layer: CIImage
+            var box: CGRect
             switch o.kind {
             case .lowerThird:
                 let block = lowerThirdBlock(o, out: out)
-                image = Self.withAlpha(Self.placeLowerThird(block, o, out: out, appear: fadeIn, short: short), alpha).composited(over: image)
+                layer = Self.placeLowerThird(block, o, out: out, appear: motionIn == .standard ? fadeIn : 1, short: short)
+                box = Self.lowerThirdRect(size: block.extent.size, o, out: out)
             case .titleCard:
-                image = Self.withAlpha(cardImage(o, settings: s, out: out, textAlpha: 1, rise: 0), alpha).composited(over: image)
+                layer = cardImage(o, settings: s, out: out, textAlpha: 1, rise: 0)
+                box = CGRect(origin: .zero, size: out)
             }
+            if motionIn != .standard, inP < 1 { layer = Self.moved(layer, motionIn, progress: inP, box: box, out: out) }
+            if motionOut != .standard, outP < 1 { layer = Self.moved(layer, motionOut, progress: outP, box: box, out: out) }
+            let alpha = max(0, min(motionIn == .standard ? fadeIn : Self.motionAlpha(motionIn, inP),
+                                   motionOut == .standard ? fadeOut : Self.motionAlpha(motionOut, outP)))
+            image = Self.withAlpha(layer, alpha).composited(over: image)
         }
         return image
+    }
+
+    private static func motionAlpha(_ motion: TextMotion, _ progress: Double) -> Double {
+        switch motion {
+        case .fade: return progress
+        case .pop: return min(1, progress * 2.5)
+        default: return 1
+        }
+    }
+
+    /// A text on its way in or out: `progress` 1 is its resting place.
+    private static func moved(_ layer: CIImage, _ motion: TextMotion, progress: Double, box: CGRect, out: CGSize) -> CIImage {
+        let e = CGFloat(1 - pow(1 - max(0, min(1, progress)), 3))
+        switch motion {
+        case .standard, .fade, .none: return layer
+        case .fromLeft: return layer.transformed(by: CGAffineTransform(translationX: -(box.maxX + 4) * (1 - e), y: 0))
+        case .fromRight: return layer.transformed(by: CGAffineTransform(translationX: (out.width - box.minX + 4) * (1 - e), y: 0))
+        case .fromBottom: return layer.transformed(by: CGAffineTransform(translationX: 0, y: -(box.maxY + 4) * (1 - e)))
+        case .fromTop: return layer.transformed(by: CGAffineTransform(translationX: 0, y: (out.height - box.minY + 4) * (1 - e)))
+        case .wipe: return layer.cropped(to: CGRect(x: box.minX, y: box.minY - 40, width: max(1, box.width * e), height: box.height + 80))
+        case .pop:
+            // Slightly past the full size, then settling.
+            let p = CGFloat(max(0, min(1, progress))) - 1
+            let scale = 0.65 + 0.35 * (1 + 2.7 * p * p * p + 1.7 * p * p)
+            return layer.transformed(by: CGAffineTransform(translationX: -box.midX, y: -box.midY)
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                .concatenating(CGAffineTransform(translationX: box.midX, y: box.midY)))
+        }
     }
 
     /// Where a lower third sits in the output (Core Image coordinates, bottom-left origin).
@@ -628,7 +669,12 @@ final class FrameRenderer: @unchecked Sendable {
             guard let stretch = map.run(a.start, a.end) else { continue }
             let a0 = stretch.lowerBound, a1 = stretch.upperBound
             guard T >= a0, T <= a1 else { continue }
-            let alpha = max(0, min(1, (T - a0) / 0.2, (a1 - T) / 0.2))
+            let animated = a.animated ?? true
+            let age = T - a0
+            let drawing = a.kind == .arrow ? 0.38 : 0.55
+            let progress = animated && a.kind != .spotlight ? min(1, age / drawing) : 1
+            // Drawn on screen instead of fading in; all go out with a short fade.
+            let alpha = max(0, min(1, animated && a.kind != .spotlight ? 1 : (T - a0) / 0.2, (a1 - T) / 0.2))
             let (r, g, b) = a.color.rgb
             let color = CIColor(red: r, green: g, blue: b)
             let rect = CGRect(x: min(a.x, a.x + a.width) * W, y: (1 - max(a.y, a.y + a.height)) * H,
@@ -637,15 +683,10 @@ final class FrameRenderer: @unchecked Sendable {
             switch a.kind {
             case .frame:
                 guard rect.width > 2, rect.height > 2 else { continue }
-                let radius = a.outline == .rectangle ? 0 : min(rect.width, rect.height) * 0.08
-                let ring = shape(a.outline, rect.insetBy(dx: -line / 2, dy: -line / 2), radius: radius + line / 2, color: color)
-                    .applyingFilter("CISourceOutCompositing", parameters: [
-                        kCIInputBackgroundImageKey: shape(a.outline, rect.insetBy(dx: line / 2, dy: line / 2), radius: max(0, radius - line / 2), color: .white)])
-                let shadow = ring.applyingFilter("CIColorMatrix", parameters: [
-                    "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
-                    "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0.45)])
-                    .applyingGaussianBlur(sigma: line * 0.8)
-                img = Self.withAlpha(ring.composited(over: shadow), alpha).composited(over: img).cropped(to: src.extent)
+                let eased = 1 - pow(1 - progress, 2)
+                let strokes = Sketch.outline(rect, shape: a.outline, line: line, handDrawn: a.handDrawn ?? true, seed: Sketch.seed(a.id))
+                let frame = sketchImage(a, strokes, progress: eased, line: line, halo: false, key: "\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width)),\(Int(rect.height))")
+                img = Self.withAlpha(frame, alpha).composited(over: img).cropped(to: src.extent)
             case .spotlight:
                 guard rect.width > 2, rect.height > 2 else { continue }
                 let mask = shape(a.outline, rect, radius: a.outline == .rectangle ? 0 : min(rect.width, rect.height) * 0.15, color: .white)
@@ -659,51 +700,99 @@ final class FrameRenderer: @unchecked Sendable {
             case .arrow:
                 let from = CGPoint(x: a.x * W, y: (1 - a.y) * H)
                 let to = CGPoint(x: (a.x + a.width) * W, y: (1 - a.y - a.height) * H)
-                guard hypot(to.x - from.x, to.y - from.y) > 4 else { continue }
-                img = Self.withAlpha(arrowImage(from: from, to: to, line: line * 1.4, color: a.color), alpha).composited(over: img)
+                let length = hypot(to.x - from.x, to.y - from.y)
+                guard length > 4 else { continue }
+                let eased = 1 - pow(1 - progress, 2)
+                let strokes = Sketch.arrow(from: from, to: to, line: line * 1.4, handDrawn: a.handDrawn ?? true, seed: Sketch.seed(a.id))
+                var arrow = sketchImage(a, strokes, progress: eased, line: line * 1.4, halo: true, key: "\(Int(from.x)),\(Int(from.y)),\(Int(to.x)),\(Int(to.y))")
+                // Once drawn it keeps nudging towards what it points at.
+                if animated, age > drawing {
+                    let push = line * 2.4 * (0.5 - 0.5 * cos((age - drawing) * 2 * .pi / 1.05))
+                    arrow = arrow.transformed(by: CGAffineTransform(translationX: (to.x - from.x) / length * push, y: (to.y - from.y) / length * push))
+                }
+                img = Self.withAlpha(arrow, alpha).composited(over: img)
+            case .touch:
+                let from = CGPoint(x: a.x * W, y: (1 - a.y) * H)
+                let to = CGPoint(x: (a.x + a.width) * W, y: (1 - a.y - a.height) * H)
+                img = touches(over: img, a, from: from, to: to, radius: 9 * unit * CGFloat(a.thickness), age: age, length: a1 - a0, alpha: alpha)
             }
+        }
+        // A marking reaching over the edge must not enlarge the picture: it would be placed differently.
+        return img.cropped(to: src.extent)
+    }
+
+    /// Finger gesture: the way it has come, ripples, the touch points and (optionally) the fingers.
+    private func touches(over base: CIImage, _ a: Annotation, from: CGPoint, to: CGPoint, radius r: CGFloat, age: Double, length: Double, alpha: Double) -> CIImage {
+        var img = base
+        let (cr, cg, cb) = a.color.rgb
+        let color = (CGFloat(cr), CGFloat(cg), CGFloat(cb))
+        let pose = TouchAnimation.pose(a.touchGesture, from: from, to: to, gap: r * 2.5, age: age, length: length, repeats: a.repeats ?? false)
+        let art = min(r, 96)
+        func cached(_ name: String, _ make: () -> CIImage) -> CIImage {
+            let key = "touch|\(name)|\(a.color.rawValue)|\(Int(art))"
+            if let image = lock.withLock({ arrowCache[key] }) { return image }
+            let image = make()
+            lock.withLock {
+                if arrowCache.count > 24 { arrowCache.removeAll() }
+                arrowCache[key] = image
+            }
+            return image
+        }
+        for trail in pose.trails {
+            let way = Sketch.image([trail], progress: 1, line: r * 0.42, color: color, halo: false)
+            img = Self.withAlpha(way, 0.55 * alpha * Double(pose.fingers.first?.alpha ?? 1)).composited(over: img)
+        }
+        for ripple in pose.ripples {
+            let scale = (0.75 + 1.5 * ripple.progress) * r / art
+            let ring = cached("ring") { TouchArt.ring(r: art, color: color) }
+                .transformed(by: CGAffineTransform(scaleX: scale, y: scale).concatenating(CGAffineTransform(translationX: ripple.at.x, y: ripple.at.y)))
+            img = Self.withAlpha(ring, Double(pow(1 - ripple.progress, 1.4)) * alpha).composited(over: img)
+        }
+        let showFinger = a.touchLook == .finger
+        let twoFingers = pose.fingers.count > 1
+        for (i, finger) in pose.fingers.enumerated() {
+            let scale = finger.scale * r / art * (showFinger ? 0.72 : 1)
+            let dot = cached("dot") { TouchArt.dot(r: art, color: color) }
+                .transformed(by: CGAffineTransform(scaleX: scale, y: scale).concatenating(CGAffineTransform(translationX: finger.at.x, y: finger.at.y)))
+            img = Self.withAlpha(dot, Double(finger.alpha) * alpha).composited(over: img)
+            if showFinger {
+                // From the lower right, like a right hand. (Turned by `turn`, the finger runs along (sin, -cos).)
+                var turn = 0.5
+                if a.touchGesture.isPinch, twoFingers {
+                    // Pointing away from the middle and a little downwards, like thumb and index finger.
+                    let m = CGPoint(x: pose.fingers.map(\.at.x).reduce(0, +) / 2, y: pose.fingers.map(\.at.y).reduce(0, +) / 2)
+                    let d = max(1, hypot(finger.at.x - m.x, finger.at.y - m.y))
+                    turn = Double(atan2((finger.at.x - m.x) / d, 0.8 - (finger.at.y - m.y) / d))
+                } else if twoFingers {
+                    turn = i == 0 ? 0.42 : 0.58
+                }
+                let size = finger.scale * r / art
+                let shape = cached("finger") { TouchArt.finger(r: art) }
+                    .transformed(by: CGAffineTransform(scaleX: size, y: size)
+                        .concatenating(CGAffineTransform(rotationAngle: CGFloat(turn)))
+                        .concatenating(CGAffineTransform(translationX: finger.at.x, y: finger.at.y)))
+                img = Self.withAlpha(shape, Double(finger.alpha) * alpha * 0.95).composited(over: img)
+            }
+        }
+        if let hold = pose.hold, let finger = pose.fingers.first {
+            let ring = (0...72).map { i -> CGPoint in
+                let t = CGFloat(i) / 72 * 2 * .pi + .pi / 2
+                return CGPoint(x: finger.at.x + cos(t) * r * 1.45, y: finger.at.y + sin(t) * r * 1.45)
+            }
+            img = Self.withAlpha(Sketch.image([ring], progress: hold, line: r * 0.2, color: color, halo: true), alpha).composited(over: img)
         }
         return img
     }
 
-    /// Arrow with a white outline, drawn with Core Graphics (cached per geometry).
-    private func arrowImage(from: CGPoint, to: CGPoint, line: CGFloat, color: AnnotationColor) -> CIImage {
-        let key = "\(Int(from.x)),\(Int(from.y)),\(Int(to.x)),\(Int(to.y)),\(Int(line)),\(color.rawValue)"
+    /// The finished line drawing is kept; the few frames while it is being drawn are made as needed.
+    private func sketchImage(_ a: Annotation, _ strokes: [Sketch.Stroke], progress: CGFloat, line: CGFloat, halo: Bool, key geometry: String) -> CIImage {
+        let (r, g, b) = a.color.rgb
+        guard progress >= 1 else { return Sketch.image(strokes, progress: progress, line: line, color: (r, g, b), halo: halo) }
+        let key = "\(a.id)|\(geometry)|\(Int(line * 4))|\(a.color.rawValue)|\(a.handDrawn ?? true)|\(a.outline.rawValue)"
         if let cached = lock.withLock({ arrowCache[key] }) { return cached }
-        let head = line * 4.2
-        let margin = head + line * 2
-        let box = CGRect(x: min(from.x, to.x) - margin, y: min(from.y, to.y) - margin,
-                         width: abs(to.x - from.x) + 2 * margin, height: abs(to.y - from.y) + 2 * margin).integral
-        guard box.width > 0, box.height > 0, box.width < 8000, box.height < 8000,
-              let ctx = CGContext(data: nil, width: Int(box.width), height: Int(box.height), bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return .empty() }
-        ctx.translateBy(x: -box.minX, y: -box.minY)
-        let angle = atan2(to.y - from.y, to.x - from.x)
-        let shaftEnd = CGPoint(x: to.x - cos(angle) * head * 0.8, y: to.y - sin(angle) * head * 0.8)
-        let headPath = CGMutablePath()
-        headPath.move(to: to)
-        headPath.addLine(to: CGPoint(x: to.x - cos(angle - 0.45) * head, y: to.y - sin(angle - 0.45) * head))
-        headPath.addLine(to: CGPoint(x: to.x - cos(angle + 0.45) * head, y: to.y - sin(angle + 0.45) * head))
-        headPath.closeSubpath()
-        let (r, g, b) = color.rgb
-        let outline = color == .white ? CGColor(gray: 0, alpha: 0.85) : CGColor(gray: 1, alpha: 0.95)
-        ctx.setLineCap(.round)
-        ctx.setLineJoin(.round)
-        for (stroke, width) in [(outline, line + line * 0.9), (CGColor(red: r, green: g, blue: b, alpha: 1), line)] {
-            ctx.setStrokeColor(stroke)
-            ctx.setFillColor(stroke)
-            ctx.setLineWidth(width)
-            ctx.move(to: from)
-            ctx.addLine(to: shaftEnd)
-            ctx.strokePath()
-            ctx.addPath(headPath)
-            ctx.drawPath(using: .fillStroke)
-        }
-        guard let cg = ctx.makeImage() else { return .empty() }
-        let image = CIImage(cgImage: cg).transformed(by: CGAffineTransform(translationX: box.minX, y: box.minY))
+        let image = Sketch.image(strokes, progress: 1, line: line, color: (r, g, b), halo: halo)
         lock.withLock {
-            if arrowCache.count > 50 { arrowCache.removeAll() }
+            if arrowCache.count > 24 { arrowCache.removeAll() }
             arrowCache[key] = image
         }
         return image
@@ -714,7 +803,7 @@ final class FrameRenderer: @unchecked Sendable {
     /// A picture from the project folder (cached).
     func picture(_ file: String) -> CIImage? {
         if let cached = lock.withLock({ imageCache[file] }) { return cached }
-        guard let image = CIImage(contentsOf: projectURL.appendingPathComponent(file)) else { return nil }
+        guard let image = CIImage(contentsOf: projectURL.appendingPathComponent(file), options: [.applyOrientationProperty: true]) else { return nil }
         let normalized = image.transformed(by: CGAffineTransform(translationX: -image.extent.minX, y: -image.extent.minY))
         lock.withLock { imageCache[file] = normalized }
         return normalized
@@ -744,11 +833,12 @@ final class FrameRenderer: @unchecked Sendable {
     private func imageOverlays(over base: CIImage, time T: Double, settings s: EditSettings, map: TimeMap, out: CGSize) -> CIImage {
         var image = base
         let short = min(out.width, out.height)
-        for o in s.images {
+        let dissolves = Self.mediaDissolves(s, map: map)
+        for o in s.images.sorted(by: { Self.imageStart($0, map) < Self.imageStart($1, map) }) {
             guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { continue }
             let a = r.lowerBound, b = r.upperBound
             guard T >= a, T <= b, let img = picture(o.file), let rect = imageFrame(o, out: out) else { continue }
-            let fade = max(0, min(1, (T - a) / 0.3, (b - T) / 0.3))
+            let fade = max(0, min(1, (T - a) / max(0.3, dissolves[o.id]?.fadeIn ?? 0), (b - T) / max(0.3, dissolves[o.id]?.fadeOut ?? 0)))
             let framed = framedPicture(img, in: rect, frame: o.frame ?? .none, shadow: o.shadow ?? false, short: short)
             image = Self.withAlpha(framed, fade * o.opacity).composited(over: image)
         }
@@ -763,6 +853,55 @@ final class FrameRenderer: @unchecked Sendable {
             .transformed(by: CGAffineTransform(scaleX: rect.width / img.extent.width, y: rect.height / img.extent.height))
             .transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
         return Self.withAlpha(placed, w.opacity).composited(over: base)
+    }
+
+    private static func imageStart(_ o: ImageOverlay, _ map: TimeMap) -> Double { o.isFree ? o.start : (map.run(o.start, o.end)?.lowerBound ?? 0) }
+    private static func overlayStart(_ o: VideoOverlay, _ map: TimeMap) -> Double { o.isFree ? o.start : map.timeline(o.start) }
+
+    private static func spot(_ x: Double, _ y: Double, _ w: Double) -> CGRect { CGRect(x: x - w / 2, y: y - w / 2, width: w, height: w) }
+
+    private static func sameSpot(_ a: CGRect, _ b: CGRect) -> Bool {
+        let common = a.intersection(b)
+        return !common.isNull && common.width * common.height >= 0.4 * min(a.width * a.height, b.width * b.height)
+    }
+
+    /// True if two video clips cover about the same place, so that they replace each other.
+    static func sameSpot(_ a: VideoOverlay, _ b: VideoOverlay) -> Bool { sameSpot(spot(a.x, a.y, a.width), spot(b.x, b.y, b.width)) }
+
+    /// Clips pushed over each other on the media lane dissolve into each other: the one on top
+    /// fades over the length of the overlap. (Pictures lie above videos, so a picture that ends
+    /// over a later video fades out instead.) Clips at different places in the picture stay apart.
+    static func mediaDissolves(_ s: EditSettings, map: TimeMap) -> [UUID: (fadeIn: Double, fadeOut: Double)] {
+        guard s.images.count + s.videoOverlays.count > 1 else { return [:] }
+        struct Item { let id: UUID; let start: Double; let end: Double; let isImage: Bool; let box: CGRect }
+        var items: [Item] = s.images.compactMap { o in
+            guard let r = o.isFree ? o.start...max(o.start, o.end) : map.run(o.start, o.end) else { return nil }
+            return Item(id: o.id, start: r.lowerBound, end: r.upperBound, isImage: true, box: spot(o.x, o.y, o.width))
+        }
+        items += s.videoOverlays.filter { !$0.synced }.compactMap { o in
+            var a = o.start, b = o.start + o.duration
+            if !o.isFree {
+                let pieces = s.linkedPieces(start: o.start, duration: o.duration, map: s.timeMap(duration: map.duration), kept: s.keptSegments(duration: map.duration))
+                guard let first = pieces.first, let last = pieces.last else { return nil }
+                a = first.timeline.lowerBound
+                b = last.timeline.upperBound
+            }
+            return Item(id: o.id, start: a, end: b, isImage: false, box: spot(o.x, o.y, o.width))
+        }
+        var result: [UUID: (fadeIn: Double, fadeOut: Double)] = [:]
+        let sorted = items.sorted { ($0.start, $0.id.uuidString) < ($1.start, $1.id.uuidString) }
+        for (i, a) in sorted.enumerated() {
+            for b in sorted[(i + 1)...] where b.start < a.end - 0.01 && b.end > a.end + 0.01 {
+                guard sameSpot(a.box, b.box) else { continue }
+                let overlap = min(EditSettings.maxDissolve, a.end - b.start)
+                if a.isImage && !b.isImage {
+                    result[a.id, default: (0, 0)].fadeOut = max(result[a.id]?.fadeOut ?? 0, overlap)
+                } else {
+                    result[b.id, default: (0, 0)].fadeIn = max(result[b.id]?.fadeIn ?? 0, overlap)
+                }
+            }
+        }
+        return result
     }
 
     // MARK: Video overlays
@@ -780,7 +919,8 @@ final class FrameRenderer: @unchecked Sendable {
         guard !frames.isEmpty else { return base }
         var image = base
         let short = min(out.width, out.height)
-        for o in s.videoOverlays {
+        let dissolves = Self.mediaDissolves(s, map: map)
+        for o in s.videoOverlays.sorted(by: { (Self.overlayStart($0, map), $0.id.uuidString) < (Self.overlayStart($1, map), $1.id.uuidString) }) {
             var a = o.start, b = o.start + o.duration
             if !o.isFree {
                 let pieces = s.linkedPieces(start: o.start, duration: o.duration, map: s.timeMap(duration: map.duration), kept: s.keptSegments(duration: map.duration))
@@ -791,7 +931,7 @@ final class FrameRenderer: @unchecked Sendable {
             guard T >= a, T <= b, let raw = frames[o.id], raw.extent.width > 1 else { continue }
             var frame = raw.transformed(by: CGAffineTransform(translationX: -raw.extent.minX, y: -raw.extent.minY))
             if s.color.applyToMedia, !s.color.isNeutral { frame = Self.graded(frame, s.color) }
-            let fade = max(0, min(1, (T - a) / 0.25, (b - T) / 0.25))
+            let fade = max(0, min(1, (T - a) / max(0.25, dissolves[o.id]?.fadeIn ?? 0), (b - T) / max(0.25, dissolves[o.id]?.fadeOut ?? 0)))
             let rect = Self.videoOverlayFrame(o, out: out)
             image = Self.withAlpha(framedPicture(frame, in: rect, frame: o.frame, shadow: o.shadow, short: short), fade * o.opacity)
                 .composited(over: image)
@@ -1038,15 +1178,38 @@ final class FrameRenderer: @unchecked Sendable {
     }
 
     /// Mask of the person in a camera frame (Vision, on the Mac), scaled to the frame.
-    private func personMask(_ cam: CIImage) -> CIImage? {
+    private func personMask(_ cam: CIImage, calm: Double? = nil, time: Double = 0) -> CIImage? {
         let request = VNGeneratePersonSegmentationRequest()
         request.qualityLevel = .balanced
         request.outputPixelFormat = kCVPixelFormatType_OneComponent8
         let handler = VNImageRequestHandler(ciImage: cam, options: [:])
-        guard (try? handler.perform([request])) != nil, let buffer = request.results?.first?.pixelBuffer else { return nil }
-        let mask = CIImage(cvPixelBuffer: buffer)
+        guard (try? handler.perform([request])) != nil, let found = request.results?.first?.pixelBuffer else { return nil }
+        let mask: CIImage
+        if let calm {
+            mask = LiveCompositor.maskImage(maskSmoother.blend(found, calm: calm, time: time))
+        } else {
+            mask = CIImage(cvPixelBuffer: found)
+        }
         return mask.transformed(by: CGAffineTransform(scaleX: cam.extent.width / mask.extent.width, y: cam.extent.height / mask.extent.height))
             .transformed(by: CGAffineTransform(translationX: cam.extent.minX, y: cam.extent.minY))
+    }
+
+    /// The camera with the picture behind the person (no green screen: the person is found by macOS).
+    private func backgrounded(_ cam: CIImage, settings s: EditSettings, time: Double) -> CIImage {
+        guard s.cameraShape != .cutout, let file = s.cameraBackground, let back = picture(file),
+              let found = personMask(cam, calm: s.cameraBackgroundCalm ?? 0.5, time: time) else { return cam }
+        let mask = LiveCompositor.sharpened(found, edge: s.cameraBackgroundEdge ?? 0.5)
+        let e = cam.extent
+        let scale = max(e.width / max(1, back.extent.width), e.height / max(1, back.extent.height))
+        var filled = back.transformed(by: CGAffineTransform(translationX: -back.extent.midX, y: -back.extent.midY)
+            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+            .concatenating(CGAffineTransform(translationX: e.midX, y: e.midY)))
+        // A mirrored camera must not mirror the writing on the picture.
+        if s.cameraMirror { filled = filled.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 2 * e.midX, ty: 0)) }
+        return cam.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: filled.cropped(to: e),
+            kCIInputMaskImageKey: mask.clampedToExtent().applyingGaussianBlur(sigma: 1.2).cropped(to: e),
+        ]).cropped(to: e)
     }
 
     /// The camera filling the whole frame (aspect fill).

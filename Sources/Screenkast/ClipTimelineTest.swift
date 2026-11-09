@@ -1,6 +1,10 @@
 import Foundation
 import AVFoundation
 import CoreImage
+import AppKit
+import ImageIO
+import QuartzCore
+import UniformTypeIdentifiers
 
 /// Selftests for the clip timeline (closed gaps, moved parts, ripple trim), clips tied to the
 /// video or free, music across joins, and moving projects.
@@ -14,6 +18,13 @@ enum ClipTimelineTest {
         try await compositionTest(base, dir)
         try mockupTest(base)
         try locationTest(base, dir)
+        try await MainActor.run { try toolbarTest(base) }
+        try motionTest(base, dir)
+        try touchTest(base)
+        try markingEdgeTest(base)
+        try await liveTest(dir)
+        try await memeTest(base, dir)
+        try await deviceWriterTest(dir)
     }
 
     private static func project(_ base: Project, _ change: (inout EditSettings) -> Void) -> Project {
@@ -423,5 +434,619 @@ enum ClipTimelineTest {
               ProjectLocations.known.contains(moved), ProjectLocations.destination(for: moved, in: b).lastPathComponent == "Film 2.\(Project.fileExtension)",
               Project.listProjects(in: b) == [moved] else { throw fail("move project: \(moved.path)") }
         print("✓ projects: moved to another folder, still loadable and listed, an existing name is never overwritten")
+    }
+
+    /// Gluing clips, pushing them over each other, and the commands of the toolbar.
+    @MainActor
+    private static func toolbarTest(_ base: Project) throws {
+        let d = base.info.duration
+        guard d >= 3.9 else { print("– toolbar skipped (short test video)"); return }
+        func voice(_ start: Double, _ length: Double) -> VoiceOverClip {
+            var c = VoiceOverClip(file: "voiceover/a.m4a", fileOffset: 0, start: start, duration: length)
+            c.free = true
+            return c
+        }
+        let glue = EditorModel(project: project(base) { $0.voiceOvers = [voice(0, 1), voice(2, 1)] })
+        let savedMagnet = glue.magnet, savedSnapping = glue.snapping
+        defer { glue.magnet = savedMagnet; glue.snapping = savedSnapping }
+        glue.magnet = true
+        let moving = glue.settings.voiceOvers[1].id
+        // 0.9 s to the left would end 0.1 s away from the neighbor: it sticks to its end.
+        guard let stuck = glue.magnetDelta(.move, dt: -0.9, start: 2, end: 3, id: moving, tolerance: 0.2), near(stuck, -1) else { throw fail("magnet: \(String(describing: glue.magnetDelta(.move, dt: -0.9, start: 2, end: 3, id: moving, tolerance: 0.2)))") }
+        // Pushed further it is not held, so that the clips overlap.
+        guard glue.magnetDelta(.move, dt: -1.5, start: 2, end: 3, id: moving, tolerance: 0.2) == nil else { throw fail("magnet holds an overlap") }
+        glue.magnet = false
+        guard glue.magnetDelta(.move, dt: -0.9, start: 2, end: 3, id: moving, tolerance: 0.2) == nil else { throw fail("magnet is off but holds") }
+        glue.perform(.toggleMagnet)
+        guard glue.magnet else { throw fail("key G") }
+        // Items that are not clips of a file have no neighbors.
+        guard glue.laneNeighbours(of: UUID()).isEmpty else { throw fail("magnet on other items") }
+
+        // A part pushed onto its neighbor dissolves; dragged past the middle it moves.
+        let editor = EditorModel(project: project(base) { s in s.splits = [1.5] })
+        let parts = editor.clipParts
+        guard parts.count == 2 else { throw fail("two parts: \(parts.count)") }
+        let slip = EditorModel.ClipDrag(key: parts[1].key, dt: -0.1)
+        guard editor.clipDragOverlap(slip, minimum: 0.15) == nil else { throw fail("a slip of the mouse dissolves") }
+        let push = EditorModel.ClipDrag(key: parts[1].key, dt: -0.6)
+        guard let overlap = editor.clipDragOverlap(push, minimum: 0.15), near(overlap.length, 0.6), overlap.before.key == parts[1].key else { throw fail("no overlap when pushing") }
+        editor.finishClipDrag(push, minimum: 0.15)
+        guard let join = editor.joinTransition(key: parts[1].key), near(join.length, 0.6), editor.clipParts.map(\.key) == parts.map(\.key), editor.clipDrag == nil else {
+            throw fail("pushing does not dissolve: \(editor.settings.joinTransitions)")
+        }
+        guard editor.canUndo else { throw fail("pushing cannot be undone") }
+        editor.undo()
+        guard editor.settings.joinTransitions.isEmpty else { throw fail("undo pushing") }
+        let far = EditorModel.ClipDrag(key: parts[1].key, dt: -3)
+        guard editor.clipDragOverlap(far, minimum: 0.15) == nil else { throw fail("far drag dissolves") }
+        editor.finishClipDrag(far, minimum: 0.15)
+        guard editor.clipParts.map(\.key) == [parts[1].key, parts[0].key], editor.settings.joinTransitions.isEmpty else { throw fail("far drag does not move") }
+
+        // A removed piece between the parts: the transition belongs to the cut.
+        let cutEditor = EditorModel(project: project(base) { s in s.cuts = [CutRange(start: 1, end: 2)] })
+        let cutParts = cutEditor.clipParts
+        cutEditor.finishClipDrag(EditorModel.ClipDrag(key: cutParts[1].key, dt: -0.4), minimum: 0.15)
+        guard near(cutEditor.settings.cuts[0].dissolve, 0.4), cutEditor.settings.joinTransitions.isEmpty else { throw fail("pushing at a cut: \(cutEditor.settings.cuts)") }
+
+        // Toolbar commands.
+        let tools = EditorModel(project: project(base) { s in s.splits = [1.5] })
+        tools.seek(to: 1)
+        tools.perform(.addZoom); tools.perform(.addText); tools.perform(.addMask); tools.perform(.addArrow); tools.perform(.addFrame); tools.perform(.addSpotlight)
+        guard !tools.settings.zoomSegments.isEmpty, !tools.settings.texts.isEmpty, !tools.settings.masks.isEmpty, tools.settings.annotations.count == 3 else {
+            throw fail("add commands: zoom \(tools.settings.zoomSegments.count), text \(tools.settings.texts.count), annotations \(tools.settings.annotations.count)")
+        }
+        tools.perform(.transition)
+        guard tools.settings.joinTransitions.count == 1, near(tools.settings.joinTransitions[0].length, 0.5) else { throw fail("transition command") }
+        tools.selection = nil
+        tools.seek(to: 1)
+        tools.perform(.speed(1))
+        guard let rate = tools.settings.speeds.first?.rate, near(rate, 1.25) else { throw fail("tempo step: \(tools.settings.speeds)") }
+        tools.perform(.trimEnd)
+        guard near(tools.trimEnd, 1, 0.05) else { throw fail("trim end: \(tools.trimEnd)") }
+        print("✓ timeline: clips glue at their ends, pushed further they overlap, a pushed part dissolves, the toolbar commands work")
+    }
+
+    /// Clips over each other dissolve; drawn markings and text animations.
+    private static func motionTest(_ base: Project, _ dir: URL) throws {
+        // Overlap on the media lane.
+        func overlay(_ start: Double, x: Double) -> VideoOverlay {
+            var o = VideoOverlay(file: "a.mov", name: "a", start: start, duration: 2, fileDuration: 2)
+            o.free = true
+            o.x = x
+            return o
+        }
+        let same = project(base) { $0.videoOverlays = [overlay(1, x: 0.5), overlay(0, x: 0.5)] }
+        let map = same.settings.editMap(duration: base.info.duration)
+        let fades = FrameRenderer.mediaDissolves(same.settings, map: map)
+        let later = same.settings.videoOverlays[0].id
+        guard let fade = fades[later], near(fade.fadeIn, 1), fades.count == 1 else { throw fail("overlap dissolve: \(fades)") }
+        let apart = project(base) { $0.videoOverlays = [overlay(1, x: 0.2), overlay(0, x: 0.8)] }
+        guard FrameRenderer.mediaDissolves(apart.settings, map: map).isEmpty else { throw fail("clips at different places dissolve") }
+
+        // Drawn step by step, with a bent line and no change from frame to frame.
+        let id = UUID()
+        let strokes = Sketch.arrow(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 900, y: 500), line: 8, handDrawn: true, seed: Sketch.seed(id))
+        let again = Sketch.arrow(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 900, y: 500), line: 8, handDrawn: true, seed: Sketch.seed(id))
+        let straight = Sketch.arrow(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 900, y: 500), line: 8, handDrawn: false, seed: 0)
+        func off(_ points: [CGPoint]) -> CGFloat {
+            points.map { abs(($0.y - 100) - ($0.x - 100) * 0.5) }.max() ?? 0
+        }
+        guard strokes.count == 3, strokes == again, off(strokes[0]) > 8, off(straight[0]) < 1 else { throw fail("sketch arrow: bend \(off(strokes[0])), straight \(off(straight[0]))") }
+        for shape in AnnotationShape.allCases {
+            let outline = Sketch.outline(CGRect(x: 100, y: 100, width: 600, height: 300), shape: shape, line: 8, handDrawn: true, seed: 3)
+            guard outline.count == 1, outline[0].count > 40 else { throw fail("sketch frame \(shape)") }
+        }
+
+        let green = CIImage(color: CIColor(red: 0, green: 0.6, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: base.info.pixelWidth, height: base.info.pixelHeight))
+        let context = CIContext()
+        func pixels(_ image: CIImage) -> [UInt8] {
+            let w = 320, h = 180
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            let scaled = image.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / image.extent.width, y: CGFloat(h) / image.extent.height))
+            context.render(scaled, toBitmap: &px, rowBytes: w * 4, bounds: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return px
+        }
+        /// How many pixels differ between two pictures.
+        func difference(_ a: [UInt8], _ b: [UInt8]) -> Int {
+            stride(from: 0, to: a.count, by: 4).filter { i in (0..<3).contains { abs(Int(a[i + $0]) - Int(b[i + $0])) > 16 } }.count
+        }
+        let frames = ProcessInfo.processInfo.environment["SCREENKAST_TEST_FRAMES"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        if let frames { try FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true) }
+        func save(_ image: CIImage, _ name: String) throws {
+            guard let frames else { return }
+            try context.writePNGRepresentation(of: image, to: frames.appendingPathComponent(name + ".png"), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        }
+        func plain(_ change: (inout EditSettings) -> Void) -> FrameRenderer {
+            FrameRenderer(project: project(base) { s in
+                s.exportShortSide = 720
+                s.showCursor = false
+                s.clickEffect = false
+                change(&s)
+            })
+        }
+        let empty = pixels(plain { _ in }.render(source: green, camera: nil, time: 2))
+        var arrow = Annotation(kind: .arrow, start: 1, end: 3)
+        arrow.x = 0.2; arrow.y = 0.25; arrow.width = 0.45; arrow.height = 0.4
+        var frame = Annotation(kind: .frame, start: 1, end: 3)
+        frame.x = 0.25; frame.y = 0.3; frame.width = 0.5; frame.height = 0.4
+        for (name, item) in [("arrow", arrow), ("frame", frame)] {
+            let r = plain { $0.annotations = [item] }
+            let early = difference(pixels(r.render(source: green, camera: nil, time: 1.05)), empty)
+            let done = difference(pixels(r.render(source: green, camera: nil, time: 1.8)), empty)
+            guard early * 2 < done, done > 50 else { throw fail("\(name) is not drawn on: \(early) of \(done)") }
+            for t in [1.05, 1.2, 1.8, 2.3] { try save(r.render(source: green, camera: nil, time: t), "\(name)-\(t)") }
+        }
+        // Without the animation it is complete at once (after the short fade).
+        var still = arrow
+        still.animated = false
+        let drawnAtOnce = plain { $0.annotations = [still] }
+        guard difference(pixels(drawnAtOnce.render(source: green, camera: nil, time: 1.25)), pixels(drawnAtOnce.render(source: green, camera: nil, time: 2.5))) == 0 else {
+            throw fail("an arrow without animation moves")
+        }
+
+        // Each animation: at the start it is not at its place yet; at rest it is the same picture.
+        var text = TextOverlay(kind: .lowerThird, start: 1, end: 3, title: "Titel der Einblendung", subtitle: "Untertitel")
+        text.free = true
+        let rest = pixels(plain { $0.texts = [text] }.render(source: green, camera: nil, time: 2))
+        let size = difference(rest, empty)
+        guard size > 50 else { throw fail("text not visible") }
+        for motion in TextMotion.allCases where motion != .standard {
+            var t = text
+            t.motionIn = motion
+            t.motionOut = motion
+            let r = plain { $0.texts = [t] }
+            let settled = difference(pixels(r.render(source: green, camera: nil, time: 2)), rest)
+            let moved = difference(pixels(r.render(source: green, camera: nil, time: 1.04)), rest)
+            let leaving = difference(pixels(r.render(source: green, camera: nil, time: 2.96)), rest)
+            try save(r.render(source: green, camera: nil, time: 1.12), "text-\(motion.rawValue)")
+            guard settled == 0 else { throw fail("\(motion) at rest differs: \(settled)") }
+            if motion == .none {
+                guard moved == 0, leaving == 0 else { throw fail("none animates: \(moved), \(leaving)") }
+            } else {
+                guard moved * 10 > size * 3, leaving * 10 > size * 3 else { throw fail("\(motion) already in place: \(moved), \(leaving) of \(size)") }
+            }
+        }
+        print("✓ motion: overlapping clips dissolve, arrows and frames are drawn on and hand-drawn, text animations work")
+    }
+
+    /// Finger gestures: where the fingers are during each gesture.
+    private static func touchTest(_ base: Project) throws {
+        let from = CGPoint(x: 100, y: 100), to = CGPoint(x: 500, y: 100)
+        func pose(_ g: TouchGesture, _ age: Double, length: Double = 2, repeats: Bool = false) -> TouchPose {
+            TouchAnimation.pose(g, from: from, to: to, gap: 40, age: age, length: length, repeats: repeats)
+        }
+        func distance(_ p: TouchPose) -> CGFloat { hypot(p.fingers[0].at.x - p.fingers[1].at.x, p.fingers[0].at.y - p.fingers[1].at.y) }
+        guard pose(.tap, 0.05).fingers.first.map({ $0.alpha < 1 && $0.scale > 1 }) == true else { throw fail("tap does not arrive") }
+        guard pose(.tap, 0.25).fingers.first.map({ $0.scale < 0.9 }) == true, pose(.tap, 0.33).ripples.count == 1 else { throw fail("tap does not press") }
+        guard pose(.tap, 1.6).fingers.isEmpty else { throw fail("tap does not end") }
+        guard pose(.tap, 1.6, length: 6, repeats: true).ripples.count == 1, pose(.tap, 1.6, length: 6).ripples.isEmpty else { throw fail("tap repeat") }
+        guard pose(.doubleTap, 0.62).ripples.count == 2 else { throw fail("double tap: \(pose(.doubleTap, 0.62).ripples.count)") }
+        let hold = pose(.hold, 1)
+        guard hold.fingers.first.map({ $0.scale < 0.9 }) == true, let ring = hold.hold, ring > 0.3, ring < 0.8, pose(.hold, 0.05).hold == nil else { throw fail("hold") }
+        let xs = stride(from: 0.2, through: 1.72, by: 0.1).map { pose(.drag, $0).fingers[0].at.x }
+        guard near(Double(xs[0]), 100, 1), Double(xs.last ?? 0) > 490, zip(xs, xs.dropFirst()).allSatisfy({ $0 <= $1 }), !pose(.drag, 1).trails.isEmpty else { throw fail("drag: \(xs)") }
+        guard pose(.swipe, 0.5).fingers[0].at.x > 150, pose(.swipe, 0.5).fingers.count == 1 else { throw fail("swipe") }
+        guard pose(.twoFingerDrag, 1).fingers.count == 2, near(Double(distance(pose(.twoFingerDrag, 1))), 40, 0.01) else { throw fail("two fingers") }
+        guard distance(pose(.pinchIn, 0.2)) > distance(pose(.pinchIn, 1.7)) * 3 else { throw fail("pinch in") }
+        guard distance(pose(.pinchOut, 0.2)) * 3 < distance(pose(.pinchOut, 1.7)) else { throw fail("pinch out") }
+        let turnA = pose(.rotate, 0.2), turnB = pose(.rotate, 1.7)
+        guard near(Double(distance(turnA)), Double(distance(turnB)), 0.01), abs(turnA.fingers[0].at.y - turnB.fingers[0].at.y) > 100 else { throw fail("rotate") }
+
+        // Projects from before have no gesture; a saved one comes back.
+        var saved = Annotation(kind: .touch, start: 1, end: 2)
+        saved.gesture = .pinchOut
+        saved.look = .finger
+        let old = try JSONDecoder().decode(Annotation.self, from: Data(#"{"id":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F","kind":"arrow","start":1,"end":2,"x":0.1,"y":0.1,"width":0.1,"height":0.1,"color":"red","thickness":1}"#.utf8))
+        guard try JSONDecoder().decode(Annotation.self, from: JSONEncoder().encode(saved)) == saved, old.touchGesture == .tap, old.touchLook == .dot else { throw fail("touch saved") }
+
+        // Drawn on a white picture, as on the screen of an iPad.
+        let white = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: base.info.pixelWidth, height: base.info.pixelHeight))
+        let folder = ProcessInfo.processInfo.environment["SCREENKAST_TEST_FRAMES"].map { URL(fileURLWithPath: $0).appendingPathComponent("touch", isDirectory: true) }
+        if let folder { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        let context = CIContext()
+        func plain(_ a: [Annotation]) -> FrameRenderer {
+            FrameRenderer(project: project(base) { s in
+                s.exportShortSide = 720; s.showCursor = false; s.clickEffect = false; s.padding = 0; s.cornerRadius = 0; s.shadow = 0
+                s.annotations = a
+            })
+        }
+        func grey(_ image: CIImage) -> Int {
+            let w = 320, h = 180
+            var px = [UInt8](repeating: 0, count: w * h * 4)
+            let scaled = image.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / image.extent.width, y: CGFloat(h) / image.extent.height))
+            context.render(scaled, toBitmap: &px, rowBytes: w * 4, bounds: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return stride(from: 0, to: px.count, by: 4).filter { px[$0] < 235 }.count
+        }
+        let nothing = grey(plain([]).render(source: white, camera: nil, time: 0.5))
+        for look in TouchLook.allCases {
+            for g in TouchGesture.allCases {
+                var a = Annotation(kind: .touch, start: 1, end: 3)
+                a.gesture = g; a.look = look; a.color = .blue
+                a.x = 0.5; a.y = 0.5; a.width = g.isPinch ? 0.16 : 0.22; a.height = 0
+                let r = plain([a])
+                let image = r.render(source: white, camera: nil, time: g == .tap || g == .doubleTap ? 1.34 : g == .swipe ? 1.45 : 2)
+                guard grey(image) > nothing + 15 else { throw fail("\(g) \(look) is not visible: \(grey(image)) of \(nothing)") }
+                if let folder {
+                    try context.writePNGRepresentation(of: image, to: folder.appendingPathComponent("\(look.rawValue)-\(g.rawValue).png"), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                }
+            }
+        }
+        print("✓ finger gestures: tap, double tap, hold, drag, swipe, two fingers, pinch and rotate, visible on a white screen")
+    }
+
+    /// The writer of the iPad recording: the picture keeps its size when the device is turned.
+    private static func deviceWriterTest(_ dir: URL) async throws {
+        guard DeviceRecorder.allowDevices() else { throw fail("devices not allowed") }
+        _ = DeviceRecorder.availableDevices()
+        func frame(_ w: Int, _ h: Int) throws -> CVPixelBuffer {
+            var out: CVPixelBuffer?
+            CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary, &out)
+            guard let out else { throw fail("no pixel buffer") }
+            CIContext().render(CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: w, height: h)), to: out)
+            return out
+        }
+        let url = dir.appendingPathComponent("device.mov")
+        let writer = try DeviceMovieWriter(url: url, width: 640, height: 481, deviceAudio: true, microphone: true)
+        guard writer.canvas == CGSize(width: 640, height: 480), writer.audioRoles == ["system", "mic"] else { throw fail("device canvas: \(writer.canvas), \(writer.audioRoles)") }
+        try writer.start(at: CMTime(seconds: 100, preferredTimescale: 600))
+        let wide = try frame(640, 480), tall = try frame(480, 640)
+        var written = 0
+        for i in 0..<20 {
+            let t = CMTime(seconds: 100 + Double(i) / 10, preferredTimescale: 600)
+            for _ in 0..<100 where !writer.append(i < 10 ? wide : tall, at: t) { try await Task.sleep(for: .milliseconds(5)) }
+            written += 1
+        }
+        guard writer.hasFrames, !writer.append(wide, at: CMTime(seconds: 100.5, preferredTimescale: 600)) else { throw fail("device writer takes an old frame") }
+        let length = try await writer.finish(end: CMTime(seconds: 103, preferredTimescale: 600))
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first, try await track.load(.naturalSize) == CGSize(width: 640, height: 480), near(length, 3, 0.01) else {
+            throw fail("device movie, length \(length)")
+        }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let image = try await generator.image(at: CMTime(seconds: 2.5, preferredTimescale: 600)).image
+        var px = [UInt8](repeating: 0, count: 4 * 640 * 480)
+        let drawn = CGContext(data: &px, width: 640, height: 480, bitsPerComponent: 8, bytesPerRow: 4 * 640, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        drawn?.draw(image, in: CGRect(x: 0, y: 0, width: 640, height: 480))
+        let row = 4 * 240 * 640
+        let side = px[row + 4 * 10 + 1], middle = px[row + 4 * 320 + 1]
+        guard side < 40, middle > 180 else { throw fail("turned device: side \(side), middle \(middle)") }
+        print("✓ iPad recording: the movie keeps its size when the device is turned, frames in order, last picture stands until the end")
+    }
+
+    /// Markings that reach over the edge of the recording must not move the recording.
+    private static func markingEdgeTest(_ base: Project) throws {
+        let w = CGFloat(base.info.pixelWidth), h = CGFloat(base.info.pixelHeight)
+        let left = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: w / 2, height: h))
+        let right = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: w / 2, y: 0, width: w / 2, height: h))
+        let source = right.composited(over: left)
+        let context = CIContext()
+        func render(_ annotations: [Annotation], at t: Double) -> [UInt8] {
+            let r = FrameRenderer(project: project(base) { s in
+                s.exportShortSide = 720; s.showCursor = false; s.clickEffect = false
+                s.annotations = annotations
+            })
+            let image = r.render(source: source, camera: nil, time: t)
+            let cw = 320, ch = 180
+            var px = [UInt8](repeating: 0, count: cw * ch * 4)
+            let scaled = image.transformed(by: CGAffineTransform(scaleX: CGFloat(cw) / image.extent.width, y: CGFloat(ch) / image.extent.height))
+            context.render(scaled, toBitmap: &px, rowBytes: cw * 4, bounds: CGRect(x: 0, y: 0, width: cw, height: ch), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return px
+        }
+        let plain = render([], at: 2)
+        // The upper left quarter is far from the marking, which sits in the lower right corner.
+        func moved(_ px: [UInt8]) -> Int {
+            var count = 0
+            for y in 0..<90 { for x in 0..<160 {
+                let i = (y * 320 + x) * 4
+                if (0..<3).contains(where: { abs(Int(px[i + $0]) - Int(plain[i + $0])) > 24 }) { count += 1 }
+            } }
+            return count
+        }
+        for g in TouchGesture.allCases {
+            for look in TouchLook.allCases {
+                var a = Annotation(kind: .touch, start: 1, end: 3)
+                a.gesture = g; a.look = look
+                a.x = 0.9; a.y = 0.9; a.width = g.isPinch ? 0.12 : 0.09; a.height = 0.08
+                for t in [1.4, 2.0, 2.6, 2.75] {
+                    let n = moved(render([a], at: t))
+                    guard n == 0 else { throw fail("\(g) \(look) moves the picture at \(t): \(n) pixels") }
+                }
+            }
+        }
+        var arrow = Annotation(kind: .arrow, start: 1, end: 3)
+        arrow.x = 0.8; arrow.y = 0.8; arrow.width = 0.2; arrow.height = 0.2
+        guard moved(render([arrow], at: 2)) == 0 else { throw fail("an arrow at the edge moves the picture") }
+        print("✓ markings over the edge of the recording leave it where it is")
+    }
+
+    private static func colored(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat, _ w: Int, _ h: Int) throws -> CVPixelBuffer {
+        var out: CVPixelBuffer?
+        CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary, &out)
+        guard let out else { throw fail("no pixel buffer") }
+        CIContext().render(CIImage(color: CIColor(red: red, green: green, blue: blue)).cropped(to: CGRect(x: 0, y: 0, width: w, height: h)), to: out)
+        return out
+    }
+
+    /// The live picture: scenes, bubble, effects and memes, and that it is always the same size.
+    private static func liveTest(_ dir: URL) async throws {
+        let context = CIContext()
+        func pixel(_ image: CIImage, _ x: CGFloat, _ y: CGFloat) -> (Int, Int, Int) {
+            var px = [UInt8](repeating: 0, count: 4)
+            context.render(image, toBitmap: &px, rowBytes: 4, bounds: CGRect(x: x, y: y, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return (Int(px[0]), Int(px[1]), Int(px[2]))
+        }
+        func isRed(_ p: (Int, Int, Int)) -> Bool { p.0 > 200 && p.1 < 60 && p.2 < 60 }
+        func isGreen(_ p: (Int, Int, Int)) -> Bool { p.1 > 200 && p.0 < 60 && p.2 < 60 }
+        func isBlue(_ p: (Int, Int, Int)) -> Bool { p.2 > 200 && p.0 < 60 && p.1 < 60 }
+        let canvas = LiveCompositor.canvas
+        let source = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let camera = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 1280, height: 720))
+        var config = LiveConfig()
+        config.bubble = false
+
+        // A 4:3 source lies in the middle with bars beside it.
+        var image = LiveCompositor.compose(config: config, source: source, camera: camera)
+        guard image.extent == canvas, isRed(pixel(image, 960, 540)), !isRed(pixel(image, 20, 540)) else { throw fail("live source: \(pixel(image, 960, 540)), \(pixel(image, 20, 540))") }
+        // Only the webcam fills everything.
+        config.scene = .webcam
+        image = LiveCompositor.compose(config: config, source: source, camera: camera)
+        guard isGreen(pixel(image, 5, 5)), isGreen(pixel(image, 1915, 1075)) else { throw fail("live webcam") }
+        // The bubble is round, in its place, and always completely in the picture.
+        config.scene = .source
+        config.bubble = true
+        image = LiveCompositor.compose(config: config, source: source, camera: camera)
+        let bubble = LiveCompositor.bubbleRect(config)
+        guard isGreen(pixel(image, bubble.midX, bubble.midY)), !isGreen(pixel(image, bubble.minX + 4, bubble.minY + 4)), isRed(pixel(image, 960, 700)) else { throw fail("live bubble") }
+        var corner = config
+        corner.bubbleX = 1
+        corner.bubbleY = 1
+        guard canvas.contains(LiveCompositor.bubbleRect(corner)) else { throw fail("bubble outside") }
+
+        // Mouse marks, also over the edge, do not change the size of the picture.
+        config.bubble = false
+        config.trail = true
+        let far = LiveEffects(trail: [(CGPoint(x: 0.5, y: 0.5), 0.1), (CGPoint(x: 1.5, y: -0.5), 0)], clicks: [(CGPoint(x: 0.5, y: 0.5), 0.1), (CGPoint(x: 2, y: 2), 0.1)])
+        image = LiveCompositor.compose(config: config, source: source, camera: nil, effects: far)
+        guard image.extent == canvas else { throw fail("live effects extent") }
+        let clicked = LiveCompositor.compose(config: config, source: source, camera: nil, effects: LiveEffects(clicks: [(CGPoint(x: 0.5, y: 0.5), 0.1)]))
+        let ringAt = 64 * (0.45 + 1.1 * (0.1 / LiveCompositor.clickLife))
+        guard !isRed(pixel(clicked, 960 + ringAt, 540)) else { throw fail("no click ring") }
+
+        // Memes: in their corner, on every scene.
+        let meme = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 400, height: 300))
+        config.memeSpot = .topRight
+        image = LiveCompositor.compose(config: config, source: source, camera: nil, meme: (meme, 1, false))
+        let spot = LiveCompositor.memeRect(config, size: meme.extent.size)
+        guard isBlue(pixel(image, spot.midX, spot.midY)), spot.maxX <= canvas.maxX - 39, spot.maxY <= canvas.maxY - 39, image.extent == canvas else { throw fail("meme place: \(spot)") }
+        config.scene = .webcam
+        guard isBlue(pixel(LiveCompositor.compose(config: config, source: nil, camera: camera, meme: (meme, 1, false)), spot.midX, spot.midY)) else { throw fail("meme over webcam") }
+        guard try JSONDecoder().decode(LiveConfig.self, from: JSONEncoder().encode(config)) == config else { throw fail("live config") }
+        // Masks are mixed over time, but not across a jump to another place.
+        func gray(_ value: UInt8) throws -> CVPixelBuffer {
+            var out: CVPixelBuffer?
+            CVPixelBufferCreate(nil, 16, 16, kCVPixelFormatType_OneComponent8, [kCVPixelBufferIOSurfacePropertiesKey as String: [:]] as CFDictionary, &out)
+            guard let out else { throw fail("mask buffer") }
+            CVPixelBufferLockBaseAddress(out, [])
+            memset(CVPixelBufferGetBaseAddress(out), Int32(value), CVPixelBufferGetDataSize(out))
+            CVPixelBufferUnlockBaseAddress(out, [])
+            return out
+        }
+        func value(_ b: CVPixelBuffer) -> Int {
+            CVPixelBufferLockBaseAddress(b, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(b, .readOnly) }
+            return Int(CVPixelBufferGetBaseAddress(b)!.assumingMemoryBound(to: UInt8.self)[0])
+        }
+        // The outline moves with the threshold: a mask value of 40 % counts as person only for a low one.
+        let grey = LiveCompositor.maskImage(try gray(102))
+        guard pixel(LiveCompositor.sharpened(grey, edge: 0.15), 8, 8).1 > 240, pixel(LiveCompositor.sharpened(grey, edge: 0.8), 8, 8).1 < 15 else {
+            throw fail("mask threshold: \(pixel(LiveCompositor.sharpened(grey, edge: 0.15), 8, 8)), \(pixel(LiveCompositor.sharpened(grey, edge: 0.8), 8, 8))")
+        }
+        let smoother = MaskSmoother()
+        _ = smoother.blend(try gray(0), calm: 0.5, time: 1)
+        let mixed = value(smoother.blend(try gray(200), calm: 0.5, time: 1.03))
+        let jumped = value(smoother.blend(try gray(200), calm: 0.5, time: 9))
+        let off = value(smoother.blend(try gray(40), calm: 0, time: 9.03))
+        guard abs(mixed - 100) < 25, jumped == 200, off == 40 else { throw fail("mask calming: \(mixed), \(jumped), \(off)") }
+        // Where the mask is white the person stays, elsewhere the picture is behind.
+        let halfMask = CIImage(color: .white).cropped(to: CGRect(x: 0, y: 0, width: 80, height: 120)).composited(over: CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 160, height: 120)))
+        let person = LiveCompositor.person(camera, mask: halfMask, background: source)
+        guard person.extent == camera.extent, isGreen(pixel(person, 200, 360)), isRed(pixel(person, 1080, 360)) else { throw fail("virtual background") }
+
+        // The engine draws pictures of the right size and records them.
+        let engine = LiveEngine()
+        var run = LiveConfig()
+        run.scene = .source
+        engine.setConfig(run)
+        let red = try colored(1, 0, 0, 800, 600), green = try colored(0, 1, 0, 640, 360)
+        guard let first = engine.renderForTest(source: red, camera: green), CVPixelBufferGetWidth(first) == 1920, CVPixelBufferGetHeight(first) == 1080 else { throw fail("live engine") }
+        let url = dir.appendingPathComponent("live.mov")
+        _ = try engine.startRecording(to: url, microphoneID: nil)
+        for _ in 0..<12 {
+            _ = engine.renderForTest(source: red, camera: green)
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        let length = try await engine.stopRecording()
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first, try await track.load(.naturalSize) == CGSize(width: 1920, height: 1080), length > 0.3 else { throw fail("live recording: \(length)") }
+        await engine.stop()
+        // A shortcut appears at the bottom and is gone later.
+        var shortcut = LiveConfig()
+        shortcut.keys = true
+        shortcut.bubble = false
+        let shown = LiveCompositor.compose(config: shortcut, source: source, camera: nil, effects: LiveEffects(key: ("⌘S", 0.5)))
+        let gone = LiveCompositor.compose(config: shortcut, source: source, camera: nil, effects: LiveEffects(key: ("⌘S", 5)))
+        guard shown.extent == canvas, !isRed(pixel(shown, canvas.midX, 80)), isRed(pixel(gone, canvas.midX, 80)) else { throw fail("shortcut in the live picture") }
+        // The drawer goes to the nearer edge, and the handle stays on the screen.
+        let screen = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let near_ = LiveDrawer.frames(panel: NSRect(x: 1000, y: 200, width: 400, height: 660), screen: screen, visible: screen)
+        let farSide = LiveDrawer.frames(panel: NSRect(x: 40, y: 800, width: 400, height: 660), screen: screen, visible: screen)
+        guard near_.atRight, near_.hidden.minX >= screen.maxX, screen.contains(near_.handle), near_.handle.maxX == screen.maxX,
+              !farSide.atRight, farSide.hidden.maxX <= screen.minX, screen.contains(farSide.handle), farSide.handle.minX == screen.minX else { throw fail("drawer: \(near_), \(farSide)") }
+        print("✓ live picture: scenes, bubble, mouse marks, memes and recording, always the same size")
+    }
+
+    /// The board: own files become movies, places are remembered, search answers are read.
+    private static func memeTest(_ base: Project, _ dir: URL) async throws {
+        let folder = dir.appendingPathComponent("memes", isDirectory: true)
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func image(_ color: CGColor) -> CGImage? {
+            let c = CGContext(data: nil, width: 301, height: 200, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            c?.setFillColor(color)
+            c?.fill(CGRect(x: 0, y: 0, width: 301, height: 200))
+            return c?.makeImage()
+        }
+        let gif = folder.appendingPathComponent("tanz.gif")
+        guard let destination = CGImageDestinationCreateWithURL(gif as CFURL, "com.compuserve.gif" as CFString, 5, nil) else { throw fail("gif") }
+        for i in 0..<5 {
+            guard let frame = image(CGColor(srgbRed: CGFloat(i) / 4, green: 0.5, blue: 0.2, alpha: 1)) else { throw fail("gif frame") }
+            CGImageDestinationAddImage(destination, frame, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]] as CFDictionary)
+        }
+        guard CGImageDestinationFinalize(destination) else { throw fail("gif write") }
+        let png = folder.appendingPathComponent("bild.png")
+        guard let still = image(CGColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)) else { throw fail("png") }
+        try NSBitmapImageRep(cgImage: still).representation(using: .png, properties: [:])?.write(to: png)
+
+        let store = folder.appendingPathComponent("board", isDirectory: true)
+        let board = await MainActor.run { MemeBoard(folder: store) }
+        await board.assign(0, file: gif, credit: "Autor – CC BY 4.0")
+        await board.assign(9, file: png)
+        let junk = folder.appendingPathComponent("kaputt.gif")
+        try Data("kein bild".utf8).write(to: junk)
+        await board.assign(4, file: junk)
+        let (first, last, broken, problem, credits) = await MainActor.run { (board.slots[0], board.slots[9], board.slots[4], board.problem, board.credits) }
+        guard let first, let last, broken == nil, problem != nil, credits == "Autor – CC BY 4.0" else { throw fail("meme places: \(String(describing: first)), \(String(describing: last)), \(String(describing: problem))") }
+        guard near(first.duration, 1, 0.05), near(last.duration, MemeConverter.stillLength, 0.05), first.width == 300, first.title == "tanz" else { throw fail("meme lengths: \(first.duration), \(last.duration), \(first.width)") }
+        for slot in [first, last] {
+            let url = await MainActor.run { board.url(of: slot) }
+            let asset = AVURLAsset(url: url)
+            let length = try await asset.load(.duration).seconds
+            guard try await asset.loadTracks(withMediaType: .video).count == 1, near(length, slot.duration, 0.05) else { throw fail("meme movie: \(length)") }
+            guard FileManager.default.fileExists(atPath: store.appendingPathComponent(slot.thumb).path) else { throw fail("meme thumbnail") }
+        }
+        // A photo stored sideways and a sideways movie with a note how to turn them come out upright.
+        if let sideways = image(CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)), let target = CGImageDestinationCreateWithURL(folder.appendingPathComponent("foto.jpg") as CFURL, UTType.jpeg.identifier as CFString, 1, nil) {
+            CGImageDestinationAddImage(target, sideways, [kCGImagePropertyOrientation: 6] as CFDictionary)
+            guard CGImageDestinationFinalize(target) else { throw fail("photo") }
+            await board.assign(5, file: folder.appendingPathComponent("foto.jpg"))
+            let photo = await MainActor.run { board.slots[5] }
+            guard let photo, photo.height > photo.width else { throw fail("photo not upright: \(String(describing: photo))") }
+        }
+        let turned = folder.appendingPathComponent("gedreht.mov")
+        let movie = try AVAssetWriter(outputURL: turned, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 640, AVVideoHeightKey: 360])
+        input.transform = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 360, ty: 0)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
+        movie.add(input)
+        guard movie.startWriting() else { throw fail("turned movie") }
+        movie.startSession(atSourceTime: .zero)
+        let pixels = try colored(0, 1, 0, 640, 360)
+        for i in 0..<8 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
+            adaptor.append(pixels, withPresentationTime: CMTime(value: Int64(i), timescale: 10))
+        }
+        input.markAsFinished()
+        await movie.finishWriting()
+        await board.assign(6, file: turned)
+        let upright = await MainActor.run { board.slots[6] }
+        guard let upright, upright.height > upright.width else { throw fail("turned movie: \(String(describing: upright))") }
+        let file = await MainActor.run { board.url(of: upright) }
+        guard let track = try await AVURLAsset(url: file).loadTracks(withMediaType: .video).first, try await track.load(.preferredTransform).isIdentity,
+              try await track.load(.naturalSize).height > track.load(.naturalSize).width else { throw fail("the turned movie still needs turning") }
+        await MainActor.run { board.clear(5); board.clear(6) }
+
+        // A picture that can be seen through stays so: live and in the finished video.
+        let ctx = CGContext(data: nil, width: 400, height: 200, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        ctx?.setFillColor(CGColor(srgbRed: 1, green: 0, blue: 1, alpha: 1))
+        ctx?.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+        guard let halfImage = ctx?.makeImage() else { throw fail("transparent picture") }
+        let halfFile = folder.appendingPathComponent("halb.png")
+        try NSBitmapImageRep(cgImage: halfImage).representation(using: .png, properties: [:])?.write(to: halfFile)
+        await board.assign(7, file: halfFile)
+        guard let glass = await MainActor.run(body: { board.slots[7] }), glass.transparent == true, glass.thumb.hasSuffix(".png") else { throw fail("transparent meme") }
+        let glassURL = await MainActor.run { board.url(of: glass) }
+        let liveAlpha = try await Task { @MainActor () throws -> (Int, Int) in
+            let item = AVPlayerItem(url: glassURL)
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+            item.add(output)
+            let player = AVPlayer(playerItem: item)
+            player.play()
+            var frame: CVPixelBuffer?
+            for _ in 0..<150 where frame == nil {
+                try await Task.sleep(for: .milliseconds(20))
+                let time = output.itemTime(forHostTime: CACurrentMediaTime())
+                if output.hasNewPixelBuffer(forItemTime: time) { frame = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) }
+            }
+            player.pause()
+            guard let frame else { throw fail("no live frame of the transparent meme") }
+            CVPixelBufferLockBaseAddress(frame, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(frame, .readOnly) }
+            let row = CVPixelBufferGetBaseAddress(frame)!.assumingMemoryBound(to: UInt8.self) + CVPixelBufferGetBytesPerRow(frame) * CVPixelBufferGetHeight(frame) / 2
+            let w = CVPixelBufferGetWidth(frame)
+            return (Int(row[(w / 4) * 4 + 3]), Int(row[(w * 3 / 4) * 4 + 3]))
+        }.value
+        guard liveAlpha.0 > 200, liveAlpha.1 < 40 else { throw fail("live meme alpha: \(liveAlpha)") }
+        // In the composition of the editor and the export.
+        let media = base.url.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        let inProject = media.appendingPathComponent("glas.mov")
+        try? FileManager.default.removeItem(at: inProject)
+        try FileManager.default.copyItem(at: glassURL, to: inProject)
+        func picture(_ overlays: [VideoOverlay]) async throws -> CGImage {
+            let p = project(base) { $0.videoOverlays = overlays; $0.showCursor = false; $0.exportShortSide = 720 }
+            let built = try await MediaBuilder.make(project: p, renderer: FrameRenderer(project: p), fps: 30)
+            let generator = AVAssetImageGenerator(asset: built.asset)
+            generator.videoComposition = built.videoComposition
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            return try await generator.image(at: CMTime(seconds: 1.5, preferredTimescale: 600)).image
+        }
+        var over = VideoOverlay(file: "media/glas.mov", name: "glas", start: 1, duration: glass.duration, fileDuration: glass.duration)
+        over.free = true
+        over.x = 0.5; over.y = 0.5; over.width = 0.6; over.aspect = 2
+        over.frame = .none
+        over.shadow = false
+        let without = try await picture([]), with = try await picture([over])
+        func rgb(_ image: CGImage, _ fx: CGFloat) -> (Int, Int, Int) {
+            var px = [UInt8](repeating: 0, count: 4)
+            let c = CGContext(data: &px, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            c?.draw(image, in: CGRect(x: -fx * CGFloat(image.width), y: -CGFloat(image.height) / 2, width: CGFloat(image.width), height: CGFloat(image.height)))
+            return (Int(px[0]), Int(px[1]), Int(px[2]))
+        }
+        // 0.35 of the width is the solid half, 0.65 the part to see through.
+        let solid = rgb(with, 0.35), seeThrough = rgb(with, 0.65), behind = rgb(without, 0.65)
+        guard solid.0 > 180, solid.1 < 90, solid.2 > 180, abs(seeThrough.0 - behind.0) < 30, abs(seeThrough.1 - behind.1) < 30, abs(seeThrough.2 - behind.2) < 30 else {
+            throw fail("editor meme alpha: solid \(solid), through \(seeThrough), behind \(behind)")
+        }
+        await MainActor.run { board.clear(7) }
+
+        let reloaded = await MainActor.run { MemeBoard(folder: store).slots[9] }
+        guard reloaded == last else { throw fail("meme not remembered") }
+        await MainActor.run { board.clear(0) }
+        guard await MainActor.run(body: { board.slots[0] == nil }), !FileManager.default.fileExists(atPath: store.appendingPathComponent(first.file).path) else { throw fail("meme clear") }
+
+        // Answers of the two search services.
+        let openverse = Data(#"{"results":[{"title":"Katze","url":"https://a.example/k.gif","thumbnail":"https://a.example/t","license":"by-sa","license_version":"4.0","creator":"Ada","foreign_landing_url":"https://a.example/p"},{"title":"ohne Bild"}]}"#.utf8)
+        let parsed = MemeSearch.parseOpenverse(openverse)
+        guard parsed.count == 1, parsed[0].license == "CC BY-SA 4.0", parsed[0].credit == "Katze – Ada – CC BY-SA 4.0 – https://a.example/p" else { throw fail("openverse: \(parsed)") }
+        let commons = Data(#"{"query":{"pages":{"7":{"index":2,"title":"File:Zwei.gif","imageinfo":[{"url":"https://c.example/2.gif","thumburl":"https://c.example/t2","descriptionurl":"https://c.example/p2","extmetadata":{"LicenseShortName":{"value":"CC0"}}}]},"3":{"index":1,"title":"File:Eins.gif","imageinfo":[{"url":"https://c.example/1.gif","thumburl":"https://c.example/t1","extmetadata":{"LicenseShortName":{"value":"Public domain"},"Artist":{"value":"<a href=\"x\">Bob</a>"}}}]}}}}"#.utf8)
+        let pages = MemeSearch.parseCommons(commons)
+        guard pages.map(\.title) == ["Eins", "Zwei"], pages[0].creator == "Bob", pages[0].license == "Public domain" else { throw fail("commons: \(pages)") }
+
+        // In the editor a meme lands at the playhead, under its name.
+        let keep = await MainActor.run { board.url(of: last) }
+        let editor = await MainActor.run { EditorModel(project: project(base) { _ in }) }
+        await MainActor.run { editor.addVideoOverlay(url: keep, at: 1, center: CGPoint(x: 0.5, y: 0.5), name: "Mein Meme") }
+        var placed: VideoOverlay?
+        for _ in 0..<250 where placed == nil {
+            placed = await MainActor.run { editor.settings.videoOverlays.first }
+            if placed == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        guard let o = placed else { throw fail("meme not in the editor") }
+        let found = o.name == "Mein Meme" && near(o.x, 0.5) && near(o.duration, last.duration, 0.05)
+        guard found else { throw fail("meme in the editor") }
+        print("✓ meme board: own files and pictures become clips, places are remembered, search answers are read, memes reach the editor")
     }
 }

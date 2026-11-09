@@ -441,6 +441,7 @@ struct CommandPalette: View {
             .init(title: "Maske hinzufügen", icon: "square.grid.3x3", keywords: "verpixeln blur") { e.addMaskAtPlayhead() },
             .init(title: "Pfeil hinzufügen", icon: "arrow.up.right", keywords: "markierung") { e.addAnnotation(.arrow) },
             .init(title: "Rahmen hinzufügen", icon: "rectangle", keywords: "markierung") { e.addAnnotation(.frame) },
+            .init(title: "Finger-Geste hinzufügen", icon: "hand.point.up.left.fill", keywords: "markierung tippen ipad pinch wischen") { e.addAnnotation(.touch) },
             .init(title: "Spotlight hinzufügen", icon: "flashlight.on.fill", keywords: "markierung") { e.addAnnotation(.spotlight) },
             .init(title: "Bild einblenden …", icon: "photo", keywords: "logo grafik") { e.addImage() },
             .init(title: "Video als Bild im Bild …", icon: "pip", keywords: "overlay") { e.addVideoOverlay() },
