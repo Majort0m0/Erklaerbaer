@@ -91,7 +91,10 @@ extension AppModel {
                     if now.isOnScreen { break }
                 }
             }
-            try? await Task.sleep(for: .milliseconds(150))   // the end of the animation
+            // Stage Manager moves it in from the side and the others out: wait until all stand still.
+            await WindowsSettle.wait(minimum: 0.45)
+            if let settled = (try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false))?.windows
+                .first(where: { $0.windowID == w.windowID }) { fresh = settled }
             target = .window(fresh)
         case .region:
             // The display under the mouse; our windows step aside while the area is dragged.
@@ -101,12 +104,24 @@ extension AppModel {
             guard let display = content.displays.first(where: { $0.displayID == id }) ?? content.displays.first else { return }
             let hidden = NSApp.windows.filter { $0.isVisible && $0.level == .normal }
             hidden.forEach { $0.orderOut(nil) }
-            try? await Task.sleep(for: .milliseconds(150))
+            // With Stage Manager the other windows come back from the side: the area is chosen on the settled screen.
+            await WindowsSettle.wait(minimum: hidden.isEmpty ? 0.1 : 0.35)
             let rect = await RegionSelector.select(on: display.displayID, initial: nil, title: "Bereich für den Screenshot aufziehen")
-            hidden.forEach { $0.orderFront(nil) }
-            guard let rect else { return }
-            try? await Task.sleep(for: .milliseconds(120))   // the selection overlay is gone
-            target = .region(display, rect)
+            guard let rect else {
+                hidden.forEach { $0.orderFront(nil) }
+                return
+            }
+            await WindowsSettle.wait(minimum: 0.12)   // the selection overlay is gone
+            // Our windows come back only after the picture is taken: showing them earlier sets Stage Manager moving.
+            do {
+                let image = try await ScreenshotCapture.capture(.region(display, rect), excluding: own)
+                hidden.forEach { $0.orderFront(nil) }
+                ScreenshotWindows.open(image: image)
+            } catch {
+                hidden.forEach { $0.orderFront(nil) }
+                errorMessage = ScreenshotCapture.explain(error)
+            }
+            return
         }
         guard let target else { return }
         do {

@@ -7,9 +7,35 @@ func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
     NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID }
 }
 
-/// Borderless window that can take keyboard input (Esc/Return in the region selector).
-private final class KeyWindow: NSWindow {
+/// Borderless panel that takes keyboard input (Esc/Return in the region selector) without making
+/// Erklärbär the active app: with Stage Manager, an app coming forward pushes the other windows
+/// to the side, and a screenshot would catch them on their way.
+private final class KeyWindow: NSPanel {
     override var canBecomeKey: Bool { true }
+}
+
+/// Waits until the windows on the screen have stopped moving (Stage Manager, Mission Control …).
+enum WindowsSettle {
+    private static func snapshot() -> [String] {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return list.compactMap { info in
+            guard let number = info[kCGWindowNumber as String] as? Int, let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds) else { return nil }
+            return "\(number):\(Int(rect.minX)),\(Int(rect.minY)),\(Int(rect.width)),\(Int(rect.height))"
+        }
+    }
+
+    /// At least `minimum` seconds, then until two looks in a row are the same (at most about 1.5 s more).
+    static func wait(minimum: Double) async {
+        try? await Task.sleep(for: .seconds(minimum))
+        var last = snapshot()
+        for _ in 0..<15 {
+            try? await Task.sleep(for: .milliseconds(100))
+            let now = snapshot()
+            if now == last { return }
+            last = now
+        }
+    }
 }
 
 // MARK: - Region selection
@@ -35,7 +61,10 @@ enum RegionSelector {
         let model = Model()
         model.title = title
         if let initial { model.start = initial.origin; model.end = CGPoint(x: initial.maxX, y: initial.maxY) }
-        let window = KeyWindow(contentRect: screen.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = KeyWindow(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        window.isFloatingPanel = true
+        window.becomesKeyOnlyIfNeeded = false
+        window.hidesOnDeactivate = false
         window.level = .screenSaver
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -43,7 +72,6 @@ enum RegionSelector {
         window.sharingType = .none
         window.contentView = NSHostingView(rootView: RegionView(model: model))
         window.setFrame(screen.frame, display: true)
-        NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         let result: CGRect? = await withCheckedContinuation { cont in
             model.finish = { rect in
