@@ -83,24 +83,42 @@ struct BlurMask: Codable, Identifiable, Equatable {
     var width: Double = 0.3
     var height: Double = 0.12
     var style: Style = .pixelate
-    /// Where the mask has followed its content to (nil: it stays in place).
+    /// Keyframes, set by hand or found by following the content (nil: it stays in place).
     var track: [MaskPoint]? = nil
 
+    /// The mask at source time `t` (top left corner and size, fractions of the picture).
+    /// Between keyframes it moves evenly; before the first and after the last it stands still.
+    func rect(at t: Double) -> CGRect {
+        func box(_ p: MaskPoint) -> CGRect { CGRect(x: p.x, y: p.y, width: p.width ?? width, height: p.height ?? height) }
+        guard let track, let first = track.first, let last = track.last else { return CGRect(x: x, y: y, width: width, height: height) }
+        if t <= first.t { return box(first) }
+        if t >= last.t { return box(last) }
+        guard let i = track.firstIndex(where: { $0.t > t }), i > 0 else { return box(last) }
+        let a = box(track[i - 1]), b = box(track[i]), p = (t - track[i - 1].t) / max(1e-6, track[i].t - track[i - 1].t)
+        func mix(_ u: CGFloat, _ v: CGFloat) -> CGFloat { u + (v - u) * p }
+        return CGRect(x: mix(a.minX, b.minX), y: mix(a.minY, b.minY), width: mix(a.width, b.width), height: mix(a.height, b.height))
+    }
+
     /// Top left corner of the mask at source time `t`.
-    func place(at t: Double) -> CGPoint {
-        guard let track, let first = track.first, let last = track.last else { return CGPoint(x: x, y: y) }
-        if t <= first.t { return CGPoint(x: first.x, y: first.y) }
-        if t >= last.t { return CGPoint(x: last.x, y: last.y) }
-        guard let i = track.firstIndex(where: { $0.t > t }), i > 0 else { return CGPoint(x: last.x, y: last.y) }
-        let a = track[i - 1], b = track[i], p = (t - a.t) / max(1e-6, b.t - a.t)
-        return CGPoint(x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p)
+    func place(at t: Double) -> CGPoint { rect(at: t).origin }
+
+    /// The same mask, earlier or later in the recording (its keyframes come along).
+    func shifted(by dt: Double) -> BlurMask {
+        var copy = self
+        copy.start += dt
+        copy.end += dt
+        copy.track = track?.map { var p = $0; p.t += dt; return p }
+        return copy
     }
 }
 
+/// A keyframe of a mask: where it is at a moment of the recording, and how big (nil: its usual size).
 struct MaskPoint: Codable, Equatable {
     var t: Double
     var x: Double
     var y: Double
+    var width: Double? = nil
+    var height: Double? = nil
 }
 
 /// A part of the recording that is removed in the output (source time).

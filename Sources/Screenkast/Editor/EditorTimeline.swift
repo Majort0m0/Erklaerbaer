@@ -1004,6 +1004,7 @@ private struct TimelineContent: View {
             if let v = vis(mask.start, mask.end) {
                 RangeBlock(visible: v, pps: scale.pps, height: layout.maskH,
                            color: .orange, icon: mask.style == .pixelate ? "square.grid.3x3.fill" : "drop.fill",
+                           markers: (mask.track?.count ?? 0) <= 40 ? (mask.track ?? []).map { T($0.t) } : [],
                            selected: editor.selectedMaskID == mask.id || editor.isInGroup(.mask(mask.id)),
                            onSelect: { editor.click(.mask(mask.id)) },
                            onDrag: { kind, dt in
@@ -1013,7 +1014,11 @@ private struct TimelineContent: View {
                                }
                                guard let o = editor.maskDragOrigin else { return }
                                let r = dragged(kind, dt, start: o.start, end: o.end, minLength: 0.1, id: mask.id)
-                               editor.updateMask(id: mask.id) { m in m.start = r.start; m.end = r.end }
+                               editor.updateMask(id: mask.id) { m in
+                                   // Moved as a whole, its keyframes come along.
+                                   if kind == .move { m.track = o.shifted(by: r.start - o.start).track }
+                                   m.start = r.start; m.end = r.end
+                               }
                            },
                            onDragEnd: { editor.endInteraction() })
                     .offset(x: v.x, y: layout.maskY)

@@ -483,7 +483,9 @@ extension EditorModel {
                 added.append(.image(o.id))
             case .mask(var m):
                 m.id = UUID()
-                (m.start, m.end) = pasted(start: m.start, end: m.end, at: T)
+                let range = pasted(start: m.start, end: m.end, at: T)
+                m = m.shifted(by: range.start - m.start)
+                (m.start, m.end) = range
                 settings.masks.append(m)
                 added.append(.mask(m.id))
             case .annotation(var a):
@@ -618,7 +620,9 @@ extension EditorModel {
                 }
             case .mask(let id):
                 if let i = origin.masks.firstIndex(where: { $0.id == id }), let n = s.masks.firstIndex(where: { $0.id == id }) {
-                    (s.masks[n].start, s.masks[n].end) = moved(origin.masks[i].start, origin.masks[i].end)
+                    let range = moved(origin.masks[i].start, origin.masks[i].end)
+                    s.masks[n].track = origin.masks[i].shifted(by: range.0 - origin.masks[i].start).track
+                    (s.masks[n].start, s.masks[n].end) = range
                 }
             case .annotation(let id):
                 if let i = origin.annotations.firstIndex(where: { $0.id == id }), let n = s.annotations.firstIndex(where: { $0.id == id }) {

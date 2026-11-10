@@ -647,8 +647,8 @@ final class FrameRenderer: @unchecked Sendable {
         var img = src
         let W = src.extent.width, H = src.extent.height
         for m in masks where t >= m.start && t <= m.end {
-            let at = m.place(at: t)
-            let r = CGRect(x: at.x * W, y: (1 - at.y - m.height) * H, width: m.width * W, height: m.height * H)
+            let at = m.rect(at: t)
+            let r = CGRect(x: at.minX * W, y: (1 - at.minY - at.height) * H, width: at.width * W, height: at.height * H)
                 .integral.intersection(src.extent)
             guard !r.isNull, r.width > 2, r.height > 2 else { continue }
             let effect: CIImage

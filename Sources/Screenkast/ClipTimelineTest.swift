@@ -1188,6 +1188,27 @@ enum ClipTimelineTest {
         var mask = BlurMask(start: 0, end: 2)
         mask.track = [MaskPoint(t: 0, x: 0.1, y: 0.1), MaskPoint(t: 2, x: 0.5, y: 0.3)]
         guard near(Double(mask.place(at: 1).x), 0.3), near(Double(mask.place(at: 5).y), 0.3), near(Double(mask.place(at: -1).x), 0.1) else { throw fail("mask place") }
+        // Keyframes set by hand, also for the size; moving the block takes them along.
+        try await MainActor.run {
+            let hand = EditorModel(project: project(base) { $0.masks = [BlurMask(start: 0.5, end: 3)] })
+            let id = hand.settings.masks[0].id
+            hand.seek(to: 1)
+            hand.addMaskKey(id)
+            hand.seek(to: 2)
+            let shown = hand.settings.masks[0].rect(at: 2)
+            hand.moveMask(id, shownAt: shown, to: CGRect(x: 0.6, y: 0.5, width: 0.2, height: 0.3))
+            let m = hand.settings.masks[0]
+            guard m.track?.count == 2, near(Double(m.rect(at: 1.5).minX), (0.35 + 0.6) / 2, 0.001), near(Double(m.rect(at: 1.5).width), (0.3 + 0.2) / 2, 0.001),
+                  near(Double(m.rect(at: 2.5).height), 0.3, 0.001), hand.maskKey(id) != nil else { throw fail("mask keyframes: \(String(describing: m.track))") }
+            hand.moveMask(id, shownAt: m.rect(at: 2), to: m.rect(at: 2).offsetBy(dx: 0.05, dy: 0), wholePath: true)
+            guard near(hand.settings.masks[0].track?[0].x ?? 0, 0.4, 0.001), near(hand.settings.masks[0].track?[1].x ?? 0, 0.65, 0.001) else { throw fail("mask whole path") }
+            hand.jumpMaskKey(id, forward: false)
+            guard near(hand.currentTime, 1, 0.01) else { throw fail("jump to keyframe: \(hand.currentTime)") }
+            let later = hand.settings.masks[0].shifted(by: 1)
+            guard near(later.start, 1.5), near(later.track?[0].t ?? 0, 2) else { throw fail("mask shifted") }
+            hand.removeMaskKey(id)
+            guard hand.settings.masks[0].track?.count == 1 else { throw fail("remove mask keyframe") }
+        }
         let moving = dir.appendingPathComponent("moving.mov")
         try? FileManager.default.removeItem(at: moving)
         let writer = try AVAssetWriter(outputURL: moving, fileType: .mov)

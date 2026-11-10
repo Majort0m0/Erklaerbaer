@@ -36,22 +36,41 @@ struct MotionSection: View {
     }
 }
 
-/// Lets a mask follow what it covers.
+/// Keyframes of a mask: set by hand, or found by following the content.
 struct MaskFollowRow: View {
     @ObservedObject var editor: EditorModel
     let mask: BlurMask
 
     var body: some View {
-        Section("Inhalt verfolgen") {
+        let count = mask.track?.count ?? 0
+        let here = editor.maskKey(mask.id) != nil
+        Section("Bewegung") {
+            Button { editor.addMaskKey(mask.id) } label: { Label(here ? "Keyframe hier neu setzen" : "Keyframe am Abspielkopf", systemImage: "diamond") }
+            if count == 0 {
+                Text("Für etwas, das sich bewegt: an zwei oder mehr Stellen einen Keyframe setzen und die Maske dort im Vorschaubild verschieben und in der Größe ändern. Dazwischen wandert sie gleichmäßig mit.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack {
+                    Button { editor.jumpMaskKey(mask.id, forward: false) } label: { Image(systemName: "chevron.left") }
+                        .help("Zum vorigen Keyframe")
+                    Text("\(count) Keyframe\(count == 1 ? "" : "s")").monospacedDigit()
+                    Button { editor.jumpMaskKey(mask.id, forward: true) } label: { Image(systemName: "chevron.right") }
+                        .help("Zum nächsten Keyframe")
+                    Spacer()
+                    if here {
+                        Button("Hier löschen") { editor.removeMaskKey(mask.id) }
+                    }
+                }
+                Text("Verschieben oder Größe ändern im Vorschaubild setzt einen Keyframe an der Stelle des Abspielkopfs. Mit gedrückter ⌥-Taste wandert der ganze Weg mit.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Button("Alle Keyframes entfernen", role: .destructive) { editor.clearMaskKeys(mask.id) }
+            }
             if editor.trackingMask == mask.id {
                 ProgressView("Wird verfolgt …").controlSize(.small)
             } else {
-                Button { editor.trackMask(mask.id) } label: { Label(mask.track == nil ? "Maske dem Inhalt folgen lassen" : "Neu verfolgen", systemImage: "scope") }
+                Button { editor.trackMask(mask.id) } label: { Label("Automatisch verfolgen", systemImage: "scope") }
                     .disabled(editor.trackingMask != nil)
-                    .help("Setze die Maske am Anfang ihres Bereichs auf den Inhalt. Sie wandert dann mit, wenn er sich bewegt, zum Beispiel beim Scrollen.")
-                if mask.track != nil {
-                    Button("Verfolgung entfernen", role: .destructive) { editor.updateMask(id: mask.id) { $0.track = nil } }
-                }
+                    .help("Setzt Keyframes, indem es dem Inhalt folgt. Klappt gut bei ruhigen Bewegungen; bei schnellen danach von Hand nachbessern.")
             }
             if let message = editor.maskMessage {
                 Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)

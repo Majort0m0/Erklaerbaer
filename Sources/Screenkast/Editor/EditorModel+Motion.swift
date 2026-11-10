@@ -160,17 +160,80 @@ extension EditorModel {
         }
     }
 
-    /// Moves a mask from where it is shown at the moment; a followed path moves along.
-    func moveMask(_ id: UUID, shownAt shown: CGPoint, to rect: CGRect) {
+    /// Moves or resizes a mask where it is shown at the playhead. With keyframes this sets the
+    /// keyframe there (a new one if there is none close by); `wholePath` moves all of them instead.
+    func moveMask(_ id: UUID, shownAt shown: CGRect, to rect: CGRect, wholePath: Bool = false) {
+        let t = currentTime
         updateMask(id: id) { m in
-            let dx = Double(rect.minX - shown.x), dy = Double(rect.minY - shown.y)
-            m.track = m.track?.map { MaskPoint(t: $0.t, x: min(1 - m.width, max(0, $0.x + dx)), y: min(1 - m.height, max(0, $0.y + dy))) }
-            if m.track == nil {
-                m.x = Double(rect.minX)
-                m.y = Double(rect.minY)
+            guard var track = m.track, !track.isEmpty else {
+                m.x = Double(rect.minX); m.y = Double(rect.minY); m.width = Double(rect.width); m.height = Double(rect.height)
+                return
             }
-            m.width = Double(rect.width)
-            m.height = Double(rect.height)
+            if wholePath {
+                let dx = Double(rect.minX - shown.minX), dy = Double(rect.minY - shown.minY)
+                let sx = Double(rect.width / max(0.001, shown.width)), sy = Double(rect.height / max(0.001, shown.height))
+                track = track.map { p in
+                    var q = p
+                    q.x += dx; q.y += dy
+                    q.width = (p.width ?? m.width) * sx
+                    q.height = (p.height ?? m.height) * sy
+                    return q
+                }
+                m.width *= sx
+                m.height *= sy
+            } else {
+                track.removeAll { abs($0.t - t) < 0.04 }
+                track.append(MaskPoint(t: t, x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width), height: Double(rect.height)))
+                track.sort { $0.t < $1.t }
+            }
+            m.track = track
+        }
+    }
+
+    /// A keyframe at the playhead, holding where the mask is right now.
+    func addMaskKey(_ id: UUID) {
+        guard let m = settings.masks.first(where: { $0.id == id }) else { return }
+        commitUndoStep(); defer { commitUndoStep() }
+        let r = m.rect(at: currentTime)
+        updateMask(id: id) { m in
+            var track = (m.track ?? []).filter { abs($0.t - self.currentTime) >= 0.04 }
+            track.append(MaskPoint(t: self.currentTime, x: Double(r.minX), y: Double(r.minY), width: Double(r.width), height: Double(r.height)))
+            m.track = track.sorted { $0.t < $1.t }
+        }
+    }
+
+    /// The keyframe right at the playhead, if there is one.
+    func maskKey(_ id: UUID) -> MaskPoint? {
+        settings.masks.first { $0.id == id }?.track?.first { abs($0.t - currentTime) < 0.04 }
+    }
+
+    func removeMaskKey(_ id: UUID) {
+        commitUndoStep(); defer { commitUndoStep() }
+        let t = currentTime
+        updateMask(id: id) { m in
+            m.track?.removeAll { abs($0.t - t) < 0.04 }
+            if m.track?.isEmpty == true { m.track = nil }
+        }
+    }
+
+    func clearMaskKeys(_ id: UUID) {
+        guard let m = settings.masks.first(where: { $0.id == id }) else { return }
+        commitUndoStep(); defer { commitUndoStep() }
+        let r = m.rect(at: currentTime)
+        updateMask(id: id) { m in
+            m.track = nil
+            m.x = Double(r.minX); m.y = Double(r.minY); m.width = Double(r.width); m.height = Double(r.height)
+        }
+    }
+
+    /// Puts the playhead on the previous or next keyframe of a mask.
+    func jumpMaskKey(_ id: UUID, forward: Bool) {
+        guard let track = settings.masks.first(where: { $0.id == id })?.track else { return }
+        let times = track.map(\.t)
+        let target = forward ? times.first { $0 > currentTime + 0.04 } : times.last { $0 < currentTime - 0.04 }
+        if let target {
+            if isPlaying { pause() }
+            seek(to: target)
         }
     }
 

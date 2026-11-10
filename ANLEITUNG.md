@@ -374,9 +374,11 @@ Masken **verpixeln** oder **weichzeichnen** einen Bereich, z. B. Passwörter ode
 - **Schritt** (B): ein Kreis mit Nummer. Die Nummern ergeben sich von selbst aus der Reihenfolge in der Timeline.
 - **Hinzufügen › Klicks hervorheben:** Aus den aufgezeichneten Klicks entstehen automatisch Rahmen, Pfeile, Finger oder Schritte an der richtigen Stelle.
 
-### Maske folgt dem Inhalt
+### Masken, die sich bewegen
 
-Setze die Maske am Anfang ihres Bereichs auf den Inhalt und wähle im Inspektor **Maske dem Inhalt folgen lassen**. Sie wandert dann mit, zum Beispiel beim Scrollen. Am besten klappt das mit einer nicht zu kleinen Maske um etwas Markantes. Sieh dir das Ergebnis trotzdem an, bevor du Vertrauliches veröffentlichst.
+Für etwas, das sich bewegt, bekommt die Maske **Keyframes**: Abspielkopf an eine Stelle, im Inspektor **Keyframe am Abspielkopf**, weiter zur nächsten Stelle und die Maske dort im Vorschaubild verschieben oder in der Größe ändern. Das setzt dort automatisch einen weiteren Keyframe. Dazwischen wandert die Maske gleichmäßig mit. Mit ⌥ beim Ziehen wandert der ganze Weg mit. Die Pfeile springen von Keyframe zu Keyframe.
+
+**Automatisch verfolgen** setzt die Keyframes selbst, indem es dem Inhalt folgt. Das klappt bei ruhigen Bewegungen wie Scrollen gut. Bei schnellen danach an einzelnen Stellen von Hand nachbessern. Sieh dir das Ergebnis an, bevor du Vertrauliches veröffentlichst.
 
 ## Ton
 

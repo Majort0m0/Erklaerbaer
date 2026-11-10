@@ -420,10 +420,11 @@ struct MaskOverlay: View {
         GeometryReader { geo in
             if let mask = editor.selectedMask, editor.currentTime >= mask.start, editor.currentTime <= mask.end {
                 let g = PreviewGeometry(editor: editor, size: geo.size)
-                let at = mask.place(at: editor.currentTime)
-                PreviewRectEditor(editor: editor, rect: g.view(CGRect(x: at.x, y: at.y, width: mask.width, height: mask.height)),
-                                  color: .orange, help: "Maske verschieben – Ecken ziehen ändert die Größe") { r in
-                    editor.moveMask(mask.id, shownAt: at, to: g.normalized(r))
+                let at = mask.rect(at: editor.currentTime)
+                PreviewRectEditor(editor: editor, rect: g.view(at), color: .orange,
+                                  help: mask.track == nil ? "Maske verschieben – Ecken ziehen ändert die Größe"
+                                      : "Keyframe an dieser Stelle setzen oder ändern – mit ⌥ wandert der ganze Weg mit") { r in
+                    editor.moveMask(mask.id, shownAt: at, to: g.normalized(r), wholePath: NSEvent.modifierFlags.contains(.option))
                 }
             }
         }

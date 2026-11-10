@@ -69,6 +69,9 @@ enum LiveCompositor {
         return CGRect(x: area.midX - w / 2, y: area.midY - h / 2, width: w, height: h)
     }
 
+    /// Distance of the white edge from the webcam picture (pixels of the live picture).
+    static let bubbleRim: CGFloat = 3
+
     /// Where the bubble lies (Core Image coordinates); it always stays completely in the picture.
     static func bubbleRect(_ c: LiveConfig) -> CGRect {
         let d = canvas.height * CGFloat(min(0.9, max(0.1, c.bubbleSize)))
@@ -124,7 +127,7 @@ enum LiveCompositor {
         let rect = bubbleRect(config), r = rect.width / 2
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let shadow = disc(center: CGPoint(x: center.x, y: center.y - 6), inner: r, outer: r + 22, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.4))
-        let edge = disc(center: center, inner: r + 2.5, outer: r + 3.5, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+        let edge = disc(center: center, inner: r + bubbleRim - 0.5, outer: r + bubbleRim + 0.5, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.9))
         let mask = disc(center: center, inner: r - 1, outer: r, color: .white)
         let round = place(camera, filling: rect).applyingFilter("CIBlendWithAlphaMask", parameters: [
             kCIInputBackgroundImageKey: CIImage.empty(), kCIInputMaskImageKey: mask,

@@ -85,13 +85,15 @@ struct LiveControlView: View {
         let rect = LiveCompositor.bubbleRect(live.config)
         let scale = size.width / LiveCompositor.canvas.width
         let d = rect.width * scale
+        // The ring lies on the white edge the live picture draws around the webcam.
+        let ring = (rect.width + 2 * LiveCompositor.bubbleRim) * scale
         let center = CGPoint(x: rect.midX * scale, y: size.height - rect.midY * scale)
-        let handle = CGPoint(x: center.x + d / 2 * 0.707, y: center.y + d / 2 * 0.707)
+        let handle = CGPoint(x: center.x + ring / 2 * 0.707, y: center.y + ring / 2 * 0.707)
         return ZStack(alignment: .topLeading) {
             Circle()
-                .strokeBorder(Theme.focus, lineWidth: 1.5)
+                .stroke(Theme.focus, lineWidth: 1.5)
                 .contentShape(Circle())
-                .frame(width: d, height: d)
+                .frame(width: max(d, ring), height: max(d, ring))
                 .pointerStyle(.grabIdle)
                 .position(center)
                 .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .named("livePreview"))
