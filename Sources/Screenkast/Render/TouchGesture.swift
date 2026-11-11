@@ -121,6 +121,46 @@ enum TouchAnimation {
     }
 }
 
+/// Which way a finger points: from the lower right like a right hand, but turned (preferably
+/// counterclockwise, as a right hand would) where it would stick out of the picture.
+enum FingerTurn {
+    /// Turn of the finger image (it runs along (sin, −cos) from the tip); `length` is the visible
+    /// length of the finger, `area` the picture (Core Image coordinates).
+    static func angle(tip: CGPoint, length: CGFloat, area: CGRect) -> Double {
+        let preferred = 0.5
+        // The finger is about a quarter as wide as it is long: both of its sides must fit too.
+        let half = length * 0.24
+        func outside(_ turn: Double) -> Int {
+            let along = CGPoint(x: CGFloat(sin(turn)), y: -CGFloat(cos(turn))), across = CGPoint(x: -along.y, y: along.x)
+            return (1...6).reduce(0) { count, i in
+                let d = length * CGFloat(i) / 6
+                let middle = CGPoint(x: tip.x + along.x * d, y: tip.y + along.y * d)
+                return count + [-1.0, 0, 1].filter { side in
+                    !area.contains(CGPoint(x: middle.x + across.x * half * CGFloat(side), y: middle.y + across.y * half * CGFloat(side)))
+                }.count
+            }
+        }
+        var best = (turn: preferred, cost: Double.infinity)
+        for step in -48...48 {
+            let turn = preferred + Double(step) * 0.05
+            // Out of the picture weighs most; then a small turn, counterclockwise a bit cheaper.
+            let away = turn - preferred
+            let cost = Double(outside(turn)) * 10 + abs(away) * (away >= 0 ? 1 : 1.4)
+            if cost < best.cost { best = (turn, cost) }
+        }
+        // Turned at all: a little further, so that it comes clearly from above and not along the edge.
+        let away = best.turn - preferred
+        guard abs(away) > 0.01, outside(best.turn) == 0 else { return best.turn }
+        var turn = best.turn
+        for _ in 0..<7 {
+            let next = turn + (away > 0 ? 0.05 : -0.05)
+            guard outside(next) == 0 else { break }
+            turn = next
+        }
+        return turn
+    }
+}
+
 /// The pictures of a touch: drawn once, then scaled.
 enum TouchArt {
     private static func context(_ size: Int) -> CGContext? {

@@ -234,6 +234,10 @@ struct EditSettings: Codable, Equatable {
     var showShortcuts: Bool = true
     var captionSize: Double = 1
     var captionLanguage: String = "de-DE"
+    /// Captions are shown only from this timeline time on (nil: from the start).
+    var captionsFrom: Double? = nil
+    /// The voice edited in another program, in place of the microphone (nil: the recording's own).
+    var importedVoice: ImportedVoice? = nil
 
     var background: BackgroundStyle = .gradient(0)
     var backgroundBlur: Double = 0
@@ -566,6 +570,8 @@ extension EditSettings {
         showShortcuts = try v(.showShortcuts, showShortcuts)
         captionSize = try v(.captionSize, captionSize)
         captionLanguage = try v(.captionLanguage, captionLanguage)
+        captionsFrom = try c.decodeIfPresent(Double.self, forKey: .captionsFrom)
+        importedVoice = try c.decodeIfPresent(ImportedVoice.self, forKey: .importedVoice)
         background = try v(.background, background)
         backgroundBlur = try v(.backgroundBlur, backgroundBlur)
         aspect = try v(.aspect, aspect)

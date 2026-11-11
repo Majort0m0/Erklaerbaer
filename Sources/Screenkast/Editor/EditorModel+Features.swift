@@ -455,7 +455,9 @@ extension EditorModel {
         change(&a)
         a.thickness = min(3, max(0.4, a.thickness))
         (a.start, a.end) = clampedRange(a.start, a.end, minLength: 0.2)
-        if a.kind != .arrow {
+        // Frames and spotlights are rectangles inside the picture; arrows and fingers are a point and
+        // a direction, which may point anywhere as long as both ends stay in the picture.
+        if a.kind != .arrow && a.kind != .touch && a.kind != .step {
             a.width = min(1, max(0.02, a.width))
             a.height = min(1, max(0.02, a.height))
             a.x = min(1 - a.width, max(0, a.x))

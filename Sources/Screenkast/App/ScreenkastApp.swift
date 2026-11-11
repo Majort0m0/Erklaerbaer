@@ -31,6 +31,9 @@ enum Entry {
         if let i = args.firstIndex(of: "--voice"), i + 1 < args.count {
             exit(Analyze.voice(projectPath: args[i + 1]))
         }
+        if let i = args.firstIndex(of: "--voicealign"), i + 2 < args.count {
+            exit(Analyze.voiceAlign(referencePath: args[i + 1], voicePath: args[i + 2]))
+        }
         if let i = args.firstIndex(of: "--newproject"), i + 1 < args.count {
             exit(MainActor.assumeIsolated { ProjectFactory.commandLine(folder: args[i + 1], files: Array(args[(i + 2)...])) })
         }
@@ -118,6 +121,10 @@ struct ScreenkastApp: App {
                     model.toggleRecording()
                 }
                 Button("Neues Projekt aus eigenem Video …") { model.newProjectFromVideo() }
+                Button("Projekt umbenennen …") {
+                    if let url = model.editor?.project.url { model.renameProject(url) }
+                }
+                .disabled(model.editor == nil)
                 Menu("Neues leeres Projekt") {
                     Button("Querformat 16:9") { model.newEmptyProject(aspect: .wide) }
                     Button("Hochformat 9:16") { model.newEmptyProject(aspect: .vertical) }

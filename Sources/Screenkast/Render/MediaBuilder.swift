@@ -491,9 +491,15 @@ enum MediaBuilder {
             keepAlive.append(cleanAsset)
             cleanMic = try? await cleanAsset.loadTracks(withMediaType: .audio).first
         }
-        // Enhanced voice (noise reduction, loudness) replaces the microphone when it is ready.
+        // Enhanced voice (noise reduction, loudness) replaces the microphone when it is ready, a
+        // voice edited in another program replaces it in any case.
         let voiceMicURL = VoiceProcessor.micURL(for: project, settings: settings)
-        if settings.voice.enhancesMic, roles.contains("mic"), FileManager.default.fileExists(atPath: voiceMicURL.path) {
+        let importedMic = VoiceProcessor.importedMicURL(for: project, settings: settings)
+        if let importedMic, roles.contains("mic") {
+            let asset = AVURLAsset(url: importedMic)
+            keepAlive.append(asset)
+            if let track = try? await asset.loadTracks(withMediaType: .audio).first { cleanMic = track }
+        } else if settings.voice.enhancesMic, roles.contains("mic"), FileManager.default.fileExists(atPath: voiceMicURL.path) {
             let voiceAsset = AVURLAsset(url: voiceMicURL)
             keepAlive.append(voiceAsset)
             if let track = try? await voiceAsset.loadTracks(withMediaType: .audio).first { cleanMic = track }
@@ -509,7 +515,7 @@ enum MediaBuilder {
         // The microphone without noise reduction (same loudness): mixed with the enhanced one by
         // the strength of the enhancement, overall and per range.
         let dryURL = VoiceProcessor.micDryURL(for: project, settings: settings)
-        if settings.voice.enhancesMic, roles.contains("mic"), FileManager.default.fileExists(atPath: voiceMicURL.path),
+        if importedMic == nil, settings.voice.enhancesMic, roles.contains("mic"), FileManager.default.fileExists(atPath: voiceMicURL.path),
            FileManager.default.fileExists(atPath: dryURL.path) {
             let dryAsset = AVURLAsset(url: dryURL)
             if let dry = try? await dryAsset.loadTracks(withMediaType: .audio).first, let range = try? await dry.load(.timeRange),

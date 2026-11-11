@@ -42,7 +42,7 @@ enum EditorFeatureTest {
     }
 
     /// Mixed audio of the tracks with `role` (48 kHz mono), with the project's audio mix.
-    private static func mixedAudio(_ media: MediaComposition, settings: EditSettings, role: String) async throws -> [Float] {
+    static func mixedAudio(_ media: MediaComposition, settings: EditSettings, role: String) async throws -> [Float] {
         let tracks = media.audioTracks.filter { $0.role == role }.map(\.track)
         guard !tracks.isEmpty else { throw fail("no \(role) track in composition") }
         let reader = try AVAssetReader(asset: media.asset)

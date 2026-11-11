@@ -455,6 +455,18 @@ struct CommandPalette: View {
             .init(title: "Pausen kürzen", icon: "pause", keywords: "stille") { e.removePauses() },
             .init(title: "Pegel angleichen", icon: "slider.horizontal.3", keywords: "lautstärke audio") { Task { await e.autoLevel() } },
             .init(title: "Video exportieren …", icon: "square.and.arrow.up", keywords: "export mp4") { e.showExportSheet = true },
+            .init(title: "Video von einer Adresse laden …", icon: "link", keywords: "url link internet youtube vimeo herunterladen download bibliothek") {
+                e.showURLImport = true
+            },
+            .init(title: "Projekt umbenennen …", icon: "pencil", keywords: "name umbenennen titel ordner") { DispatchQueue.main.async { e.renameProject?() } },
+            .init(title: "Inspektor: Bereiche wie am Anfang auf- und zuklappen", icon: "sidebar.right", keywords: "inspektor aufklappen zuklappen bereiche") {
+                InspectorFolds.shared.restoreDefaults()
+            },
+            .init(title: "Auf YouTube hochladen …", icon: "play.rectangle", keywords: "youtube upload studio hochladen veröffentlichen") {
+                // With an exported video the upload helper, else the export first.
+                e.showYouTubeAssistant = e.exportResult.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+                e.showExportSheet = true
+            },
             .init(title: e.simpleMode ? "Profi-Modus (alle Spuren)" : "Einfach-Modus (weniger Spuren)", icon: "slider.horizontal.below.square.filled.and.square",
                   keywords: "ansicht modus") { e.simpleMode.toggle() },
         ]

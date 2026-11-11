@@ -186,6 +186,28 @@ extension Analyze {
         return code
     }
 
+    /// `--voicealign <reference> <voice>`: where the voice lies against the reference (and with a
+    /// lead-in of 0.5 s and an MP3 delay added).
+    static func voiceAlign(referencePath: String, voicePath: String) -> Int32 {
+        let sem = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                let reference = try await VoiceProcessor.readFile(URL(fileURLWithPath: referencePath))
+                let voice = try await VoiceProcessor.readFile(URL(fileURLWithPath: voicePath))
+                let start = Date()
+                let plain = VoiceExchange.place(voice, against: reference)
+                let lead = Int(0.5 * VoiceProcessor.sampleRate) + 1105
+                let led = VoiceExchange.place([Float](repeating: 0, count: lead) + voice, against: reference)
+                print("so: \(plain)  mit Vorlauf \(lead): \(led)  (\(String(format: "%.2f", Date().timeIntervalSince(start) / 2)) s je Ausrichtung)")
+            } catch {
+                print("Fehler: \(error.localizedDescription)")
+            }
+            sem.signal()
+        }
+        sem.wait()
+        return 0
+    }
+
     /// `--mockups <project> <folder>`: a picture of the project in every scene, landscape and portrait.
     static func mockups(projectPath: String, outputFolder: String) -> Int32 {
         do {

@@ -260,7 +260,7 @@ struct ColorGradeSection: View {
 
     var body: some View {
         let g = editor.settings.color
-        Section("Farbkorrektur") {
+        FoldSection(.color, summary: editor.foldSummary(.color)) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
                 ForEach(ColorGrade.presets) { p in
                     let active = abs(g.exposure - p.exposure) < 0.01 && abs(g.contrast - p.contrast) < 0.01
@@ -307,7 +307,7 @@ struct MixerSection: View {
     @ObservedObject var editor: EditorModel
 
     var body: some View {
-        Section("Mischpult") {
+        FoldSection(.mixer, summary: editor.foldSummary(.mixer)) {
             if editor.project.info.hasMicAudio {
                 VolumeRow(title: "Mikrofon", icon: "mic.fill", volume: $editor.settings.micVolume, muted: $editor.settings.micMuted)
             }
@@ -348,7 +348,7 @@ struct MixerSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        Section("Gesamtlautstärke") {
+        FoldSection(.master, summary: editor.foldSummary(.master)) {
             Toggle("Beim Export auf Ziel-Lautheit bringen", isOn: $editor.settings.masterNormalize)
             if editor.settings.masterNormalize {
                 Picker("Ziel", selection: $editor.settings.masterTargetLUFS) {
@@ -431,7 +431,7 @@ struct CaptionStyleSection: View {
 
     var body: some View {
         let s = editor.settings.captionStyle
-        Section("Untertitel-Stil") {
+        FoldSection(.captionStyle, summary: editor.foldSummary(.captionStyle)) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
                 ForEach(CaptionStyle.presets) { p in
                     Text(p.name)
@@ -478,7 +478,7 @@ struct CaptionStyleSection: View {
                 Toggle("Wörter springen hinein", isOn: style.pop)
             }
         }
-        Section("Position der Untertitel") {
+        FoldSection(.captionPosition, summary: editor.foldSummary(.captionPosition)) {
             LabeledSlider(title: "Höhe", value: style.y, range: 0.05...0.95, format: { $0 < 0.35 ? "oben" : $0 > 0.65 ? "unten" : "Mitte" })
             LabeledSlider(title: "Seitlich", value: style.x, range: 0.15...0.85, format: { abs($0 - 0.5) < 0.02 ? "Mitte" : $0 < 0.5 ? "links" : "rechts" })
             Text("Oder im Vorschaubild auf die Untertitel klicken und sie ziehen. Jedes Format (16:9, 9:16 …) merkt sich seine Position.")
@@ -501,7 +501,7 @@ struct AutoEditsSection: View {
         let words = editor.automaticCuts(.transcript).count
         let breaths = editor.breathRegions.count
         if fillers + pauses + words + breaths > 0 {
-            Section("Automatische Änderungen") {
+            FoldSection(.autoEdits, summary: editor.foldSummary(.autoEdits)) {
                 if fillers > 0 { row("Füllwörter herausgeschnitten", fillers, review: { editor.reviewNext(cuts: .filler) }, undo: { editor.restoreCuts(.filler) }) }
                 if pauses > 0 { row("Pausen gekürzt", pauses, review: { editor.reviewNext(cuts: .pause) }, undo: { editor.restoreCuts(.pause) }) }
                 if words > 0 { row("Über den Text geschnitten", words, review: { editor.reviewNext(cuts: .transcript) }, undo: { editor.restoreCuts(.transcript) }) }
@@ -565,7 +565,7 @@ struct MockupSection: View {
     @ObservedObject var editor: EditorModel
 
     var body: some View {
-        Section("Szene") {
+        FoldSection(.scene, summary: editor.foldSummary(.scene)) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                 tile(nil, label: "Ohne")
                 ForEach(MockupKind.allCases) { tile($0, label: $0.label) }
@@ -575,10 +575,16 @@ struct MockupSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let kind = editor.settings.mockup {
+                placement(kind)
+            }
         }
-        if let kind = editor.settings.mockup {
+    }
+
+    @ViewBuilder
+    private func placement(_ kind: MockupKind) -> some View {
             let p = editor.settings.mockupPlacement
-            Section("Position in der Szene") {
+            FoldGroup(.scenePosition, summary: editor.foldSummary(.scenePosition)) {
                 slider("Links / Rechts", \.x, -0.5...0.5, percent: true)
                 slider("Unten / Oben", \.y, -0.5...0.5, percent: true)
                 slider("Größe", \.scale, 0.4...1.3, percent: false)
@@ -586,7 +592,7 @@ struct MockupSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Video im Bildschirm") {
+            FoldGroup(.sceneVideo, summary: editor.foldSummary(.sceneVideo)) {
                 slider("Vergrößern", \.videoScale, 1...3, percent: false)
                 if p.videoScale > 1.001 {
                     slider("Ausschnitt links / rechts", \.videoX, -1...1, percent: true)
@@ -600,7 +606,6 @@ struct MockupSection: View {
                 Button("Position zurücksetzen") { editor.updateMockupPlacement { $0 = MockupPlacement() } }
                     .disabled(p == MockupPlacement())
             }
-        }
     }
 
     private func slider(_ title: String, _ key: WritableKeyPath<MockupPlacement, Double>, _ range: ClosedRange<Double>, percent signed: Bool) -> some View {

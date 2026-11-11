@@ -68,11 +68,54 @@ enum AssistantTest {
             throw fail("clip project: trim \(clip.settings.trimStart)–\(String(describing: clip.settings.trimEnd)), \(clip.settings.aspect)")
         }
         guard editor.youTubeText().contains("D"), editor.youTubeText().contains("#a") else { throw fail("YouTube text") }
+        // YouTube upload helper: a draft from the suggestions, kept with the project, its chapters
+        // brought up to date, checked like YouTube Studio checks, captions as SRT next to the video.
+        let draft = editor.loadYouTubeDraft()
+        guard draft.title == "T", draft.description.hasPrefix("D\n\n0:00 Start"), draft.description.hasSuffix("#a"), draft.problems.isEmpty else {
+            throw fail("YouTube draft: \(draft)")
+        }
+        var bad = draft
+        bad.title = String(repeating: "x", count: 101) + "<"
+        guard bad.problems.count == 2 else { throw fail("YouTube checks: \(bad.problems)") }
+        guard EditorModel.replacingChapters(in: "Intro\n\n0:00 Alt\n1:00 Alt 2\n\n#tag", with: "0:00 Start\n0:05 Neu") == "Intro\n\n0:00 Start\n0:05 Neu\n\n#tag",
+              EditorModel.replacingChapters(in: "Ohne Kapitel", with: "0:00 Start") == "Ohne Kapitel" else { throw fail("chapters in the description") }
+        let draftFile = editor.project.url.appendingPathComponent(YouTubeDraft.fileName)
+        defer { try? FileManager.default.removeItem(at: draftFile) }
+        editor.saveYouTubeDraft(YouTubeDraft(title: "Mein Titel", description: "Text\n\n0:00 Alt\n\nLinks"))
+        let saved = editor.loadYouTubeDraft()
+        guard saved.title == "Mein Titel", saved.description == "Text\n\n" + editor.youTubeChapterText + "\n\nLinks" else { throw fail("saved YouTube draft: \(saved)") }
+        let captionsBefore = editor.settings.captions
+        editor.settings.captions = [Caption(start: 0.5, end: 1.0, text: "Hallo YouTube")]
+        let video = editor.project.url.deletingLastPathComponent().appendingPathComponent("upload-test.mp4")
+        let srt = editor.writeUploadCaptions(nextTo: video)
+        defer { srt.map { try? FileManager.default.removeItem(at: $0) } }
+        guard let srt, srt.lastPathComponent == "upload-test.srt", (try? String(contentsOf: srt, encoding: .utf8))?.contains("Hallo YouTube") == true else {
+            throw fail("captions for YouTube: \(String(describing: srt))")
+        }
+        editor.settings.captions = captionsBefore
+        // Library: a file still used by the project cannot be removed.
+        let libraryFile = editor.project.url.appendingPathComponent("media/1234ABCD-Bibliothek Test.m4a")
+        guard editor.libraryUses(libraryFile) == 0 else { throw fail("unused library file counted as used") }
+        editor.settings.music = BackgroundMusic(file: "media/1234ABCD-Bibliothek Test.m4a", name: "Bibliothek Test")
+        guard editor.libraryUses(libraryFile) == 1 else { throw fail("used library file not found: \(editor.libraryUses(libraryFile))") }
+        editor.settings.music = nil
+        // Renaming a project: its folder gets the new name; "/" is not allowed, an existing name is refused.
+        let folder = editor.project.url.deletingLastPathComponent().appendingPathComponent("Umbenennen-Test", isDirectory: true)
+        try? FileManager.default.removeItem(at: folder)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("Alt.\(Project.fileExtension)"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("Belegt.\(Project.fileExtension)"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let renamed = try AppModel.rename(project: folder.appendingPathComponent("Alt.\(Project.fileExtension)"), to: " Neu/Teil 2 ")
+        let recased = try AppModel.rename(project: renamed, to: "neu-teil 2")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        guard renamed.lastPathComponent == "Neu-Teil 2.\(Project.fileExtension)", names.contains("neu-teil 2.\(Project.fileExtension)"),
+              recased.lastPathComponent == "neu-teil 2.\(Project.fileExtension)", (try? AppModel.rename(project: recased, to: "Belegt")) == nil,
+              (try? AppModel.rename(project: recased, to: "  ")) == nil else { throw fail("rename: \(names)") }
         // Simple mode: empty mask and marking lanes disappear.
         let full = TimelineLayout(available: 600, audioCount: 2)
         let simple = TimelineLayout(available: 600, audioCount: 2, showMasks: false, showAnnotations: false)
         guard simple.textY == full.textY - 48, simple.maskH == 0 else { throw fail("simple layout") }
-        print("✓ AI: answer parsed (also from code fences and loose JSON), transcript with output times, chapters and a portrait clip project from the suggestions, YouTube text; simple mode hides empty lanes")
+        print("✓ AI: answer parsed (also from code fences and loose JSON), transcript with output times, chapters and a portrait clip project from the suggestions, YouTube text and upload helper (draft, checks, chapters, SRT), library files in use, renaming projects; simple mode hides empty lanes")
     }
 
     private static func speechTest(_ dir: URL) async throws {

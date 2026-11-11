@@ -64,7 +64,9 @@ enum CaptionGenerator {
         let audioURL = project.url.appendingPathComponent(".captions-audio.caf")
         defer { try? FileManager.default.removeItem(at: audioURL) }
         let clean = EchoCanceller.cleanURL(for: project)
-        if project.settings.removeEcho, FileManager.default.fileExists(atPath: clean.path) {
+        if let imported = VoiceProcessor.importedMicURL(for: project, settings: project.settings) {
+            try FileManager.default.copyItem(at: imported, to: audioURL)
+        } else if project.settings.removeEcho, FileManager.default.fileExists(atPath: clean.path) {
             try FileManager.default.copyItem(at: clean, to: audioURL)
         } else if let i = roles.firstIndex(of: "mic") ?? roles.firstIndex(of: "system") {
             // Samples placed on the recording timeline, so word times are source times.
@@ -217,36 +219,47 @@ enum CaptionGenerator {
     // MARK: SRT
 
     /// SRT in output time (trim and cuts applied; `offset` = length of an intro before the recording).
-    static func srt(_ captions: [Caption], kept: [ClosedRange<Double>], offset introOffset: Double = 0, map: TimeMap? = nil) -> String {
-        func timeline(_ t: Double) -> Double { map?.timeline(t) ?? t }
-        func length(_ r: ClosedRange<Double>) -> Double { map?.length(r) ?? (r.upperBound - r.lowerBound) }
-        func toOutput(_ t: Double) -> Double? {
-            var offset = introOffset
-            for seg in kept {
-                if seg.contains(t) { return offset + length(seg.lowerBound...t) }
-                offset += length(seg)
-            }
-            return nil
-        }
-        func clampInto(_ t: Double, forward: Bool) -> Double? {
-            if let o = toOutput(t) { return o }
-            // Inside a cut: move to the nearest kept boundary in the given direction.
-            if forward, let seg = kept.first(where: { $0.lowerBound > t }) { return toOutput(seg.lowerBound) }
-            if !forward, let seg = kept.last(where: { $0.upperBound < t }) { return toOutput(seg.upperBound) }
-            return nil
-        }
+    /// `map`: the edited timeline (else made from `kept`); `from`: no captions before this timeline time.
+    /// A caption interrupted by an inserted clip becomes two entries with the same text.
+    static func srt(_ captions: [Caption], kept: [ClosedRange<Double>], offset introOffset: Double = 0, map: TimeMap? = nil,
+                    from: Double? = nil) -> String {
+        let map = map ?? TimeMap(base: TimeMap(duration: kept.map(\.upperBound).max() ?? 0), parts: kept)
         func stamp(_ t: Double) -> String {
             let ms = Int((t * 1000).rounded())
             return String(format: "%02d:%02d:%02d,%03d", ms / 3_600_000, (ms / 60_000) % 60, (ms / 1000) % 60, ms % 1000)
         }
         var out = ""
         var n = 1
-        for c in captions.sorted(by: { $0.start < $1.start }) {
-            guard let s = clampInto(c.start, forward: true), let e = clampInto(c.end, forward: false), e - s > 0.05 else { continue }
-            out += "\(n)\n\(stamp(s)) --> \(stamp(e))\n\(c.text)\n\n"
+        let entries = captions.flatMap { c in map.captionSpans(start: c.start, end: c.end, from: from).map { ($0, c.text) } }
+        for (span, text) in entries.sorted(by: { $0.0.lowerBound < $1.0.lowerBound }) where span.upperBound - span.lowerBound > 0.05 {
+            out += "\(n)\n\(stamp(introOffset + span.lowerBound)) --> \(stamp(introOffset + span.upperBound))\n\(text)\n\n"
             n += 1
         }
         return out
+    }
+}
+
+extension TimeMap {
+    /// Where a caption (source `start`…`end`) is shown on the timeline. An inserted clip or a
+    /// freeze frame the caption doesn't belong to interrupts it: the recording's sound pauses
+    /// there, so nothing of it is said and the caption waits (an intro or outro video stays free).
+    /// A caption heard in the clip or during the freeze (made from the mixed sound, e.g. a
+    /// voice-over) starts or ends inside its tiny source range and stays over it.
+    /// Nothing is shown before timeline time `from`.
+    func captionSpans(start: Double, end: Double, from: Double? = nil) -> [ClosedRange<Double>] {
+        guard let run = run(start, end) else { return [] }
+        var spans = [run]
+        for p in pieces where p.isFreeze && p.timeline.upperBound > run.lowerBound && p.timeline.lowerBound < run.upperBound {
+            guard start < p.source.lowerBound - 1e-9, end > p.source.upperBound + 1e-9 else { continue }
+            spans = spans.flatMap { s -> [ClosedRange<Double>] in
+                var parts: [ClosedRange<Double>] = []
+                if p.timeline.lowerBound > s.lowerBound { parts.append(s.lowerBound...min(s.upperBound, p.timeline.lowerBound)) }
+                if p.timeline.upperBound < s.upperBound { parts.append(max(s.lowerBound, p.timeline.upperBound)...s.upperBound) }
+                return parts
+            }
+        }
+        if let from { spans = spans.compactMap { $0.upperBound > from ? max($0.lowerBound, from)...$0.upperBound : nil } }
+        return spans.filter { $0.upperBound - $0.lowerBound > 1e-6 }
     }
 }
 

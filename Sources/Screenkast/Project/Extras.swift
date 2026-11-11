@@ -56,6 +56,13 @@ struct VoiceEnhancement: Codable, Equatable {
     var breathSensitivity: Double? = nil
     var breathReductionDB: Double? = nil
 
+    /// Room reverberation removed (0 … 1, nil: off) and the voice made warmer and more present like a
+    /// narrator (0 … 1, nil: neutral). Both are worked into the processed files.
+    var dereverb: Double? = nil
+    var color: Double? = nil
+    var reverbReduction: Double { min(1, max(0, dereverb ?? 0)) }
+    var narration: Double { min(1, max(0, color ?? 0)) }
+
     var reducesBreaths: Bool { breaths ?? false }
     var breathLevel: Double { breathSensitivity ?? 0.5 }
     var breathDB: Double { breathReductionDB ?? 12 }
@@ -67,6 +74,8 @@ struct VoiceEnhancement: Codable, Equatable {
     /// Identifies the processed files (breaths and the strength are applied in the mix, not in them).
     var key: String {
         String(format: "n%.2f-%@-%.0f", noiseReduction, normalize ? "l" : "x", targetLUFS) + "-g"
+            + (reverbReduction > 0.01 ? String(format: "-r%.2f", reverbReduction) : "")
+            + (narration > 0.01 ? String(format: "-c%.2f", narration) : "")
     }
     /// How much of the enhanced voice is heard (1 = all, 0 = only loudness matched), live in the mix.
     var intensity: Double? = nil
@@ -86,6 +95,8 @@ extension VoiceEnhancement {
         breathSensitivity = try c.decodeIfPresent(Double.self, forKey: .breathSensitivity)
         breathReductionDB = try c.decodeIfPresent(Double.self, forKey: .breathReductionDB)
         intensity = try c.decodeIfPresent(Double.self, forKey: .intensity)
+        dereverb = try c.decodeIfPresent(Double.self, forKey: .dereverb)
+        color = try c.decodeIfPresent(Double.self, forKey: .color)
     }
 }
 

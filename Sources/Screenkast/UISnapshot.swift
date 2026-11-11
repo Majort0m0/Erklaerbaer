@@ -7,6 +7,9 @@ enum UISnapshot {
     @MainActor
     static func run(projectPath: String, outputPath: String) -> Int32 {
         _ = NSApplication.shared
+        // Parts of the inspector as on a new Mac (SCREENKAST_FOLDS=all: all open), not saved.
+        InspectorFolds.shared.keepInMemory(open: ProcessInfo.processInfo.environment["SCREENKAST_FOLDS"] == "all"
+            ? Set(InspectorFold.allCases) : Set(InspectorFold.allCases.filter(\.defaultOpen)))
         if projectPath == "home" { return home(outputPath: outputPath) }
         if projectPath == "live" {
             AppModel.snapshotMode = true
@@ -48,6 +51,15 @@ enum UISnapshot {
             default: break
             }
             RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+            // SCREENKAST_YOUTUBE=<video.mp4>: the YouTube upload helper in the export sheet.
+            if let video = ProcessInfo.processInfo.environment["SCREENKAST_YOUTUBE"] {
+                editor.exportResult = URL(fileURLWithPath: video)
+                editor.showYouTubeAssistant = true
+                let sheet = ExportSheet(editor: editor, isPresented: .constant(true))
+                    .tint(Theme.brand)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                return try write(sheet, width: 600, height: 860, to: outputPath)
+            }
             // SCREENKAST_SNAPSHOT_SIZE="1000x700" (default 1400x900)
             let sizeParts = (ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_SIZE"] ?? "1400x900")
                 .split(separator: "x").compactMap { Double($0) }

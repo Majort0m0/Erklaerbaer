@@ -47,7 +47,9 @@ extension EditorModel {
             let wet = VoiceProcessor.micURL(for: project, settings: s)
             let clean = EchoCanceller.cleanURL(for: project)
             var x: [Float]?
-            if FileManager.default.fileExists(atPath: wet.path) {
+            if let imported = VoiceProcessor.importedMicURL(for: project, settings: s) {
+                x = try? await VoiceProcessor.readFile(imported)
+            } else if FileManager.default.fileExists(atPath: wet.path) {
                 x = try? await VoiceProcessor.readFile(wet)
             } else if s.removeEcho, FileManager.default.fileExists(atPath: clean.path) {
                 x = try? await VoiceProcessor.readFile(clean)

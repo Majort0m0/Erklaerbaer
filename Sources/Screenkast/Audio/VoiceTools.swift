@@ -96,8 +96,11 @@ enum VoiceProcessor {
         highPass(&x, cutoff: 80)
         var dry = x
         let noiseBefore = noiseLevel(x)
+        // Reverberation first: the noise estimate is cleaner afterwards.
+        if settings.reverbReduction > 0.01 { x = dereverb(x, strength: Float(settings.reverbReduction)) }
         if settings.noiseReduction > 0.01 { x = denoise(x, strength: Float(settings.noiseReduction)) }
         let noiseAfter = noiseLevel(x)
+        if settings.narration > 0.01 { narrate(&x, amount: settings.narration) }
         // Only a track with speech is brought to the target: a microphone that recorded nothing
         // but room noise (narration came as a voice-over) must not be amplified.
         if settings.normalize, speech {
@@ -105,7 +108,18 @@ enum VoiceProcessor {
             if current.isFinite, current > -70 {
                 let gain = min(Float(pow(10, (settings.targetLUFS - current) / 20)), 30)
                 vDSP.multiply(gain, x, result: &x)
-                vDSP.multiply(gain, dry, result: &dry)
+                // The untouched voice gets its own gain: the mix of both must not jump in loudness
+                // (the voice colour changes the loudness of the processed one).
+                let dryLevel = loudness(dry)
+                let dryGain = dryLevel.isFinite && dryLevel > -70 ? min(Float(pow(10, (settings.targetLUFS - dryLevel) / 20)), 30) : gain
+                vDSP.multiply(dryGain, dry, result: &dry)
+            }
+        } else if speech, settings.reverbReduction > 0.01 || settings.narration > 0.01 {
+            // Without loudness matching the voice keeps the loudness it had (less reverberation
+            // and the compressor would make it quieter).
+            let reference = loudness(dry), current = loudness(x)
+            if reference.isFinite, current.isFinite, current > -70 {
+                vDSP.multiply(Float(pow(10, min(12, max(-6, reference - current)) / 20)), x, result: &x)
             }
         }
         limit(&x, ceiling: 0.89)   // −1 dBFS
@@ -341,6 +355,113 @@ enum VoiceProcessor {
         return output
     }
 
+    /// Room reverberation: the late part of the reverberation is predicted from what was heard a moment
+    /// before, decaying like a room does, and taken out of the spectrum (spectral subtraction of late
+    /// reverberation after Lebart et al. 2001). `strength` 0 … 1 sets the assumed reverberation time
+    /// and how much is taken away; a floor keeps the voice natural.
+    static func dereverb(_ input: [Float], strength: Float) -> [Float] {
+        let n = 1024, hop = 256, bins = n / 2
+        guard input.count > n * 4 else { return input }
+        let window = vDSP.window(ofType: Float.self, usingSequence: .hanningDenormalized, count: n, isHalfWindow: false)
+        let frames = (input.count - n) / hop + 1
+        let fft = RealFFT(count: n)
+        let hopSeconds = Float(hop) / Float(sampleRate)
+        let rt60 = 0.35 + 0.55 * strength
+        // The late part starts about 50 ms after the direct sound.
+        let delayFrames = max(1, Int((0.05 / hopSeconds).rounded()))
+        let decay = Float(exp(-2 * 3 * log(10.0) / Double(rt60) * Double(Float(delayFrames) * hopSeconds)))
+        let over = 0.6 + 0.9 * strength
+        let floorGain = pow(10, -(5 + 13 * strength) / 20)
+        var spectra = [SplitBuffer](repeating: SplitBuffer(count: bins), count: frames)
+        var power = [[Float]](repeating: [Float](repeating: 0, count: bins), count: frames)
+        var frame = [Float](repeating: 0, count: n)
+        for f in 0..<frames {
+            input.withUnsafeBufferPointer { src in
+                frame.withUnsafeMutableBufferPointer { dst in
+                    vDSP_vmul(src.baseAddress! + f * hop, 1, window, 1, dst.baseAddress!, 1, vDSP_Length(n))
+                }
+            }
+            fft.forward(frame, into: &spectra[f])
+            let s = spectra[f]
+            for k in 1..<bins { power[f][k] = s.re[k] * s.re[k] + s.im[k] * s.im[k] }
+            power[f][0] = s.re[0] * s.re[0]
+        }
+        // A smoothed power spectrum: the reverberation estimate follows it, not each single frame.
+        var smooth = power
+        for f in 1..<frames { for k in 0..<bins { smooth[f][k] = 0.5 * smooth[f - 1][k] + 0.5 * power[f][k] } }
+        var output = [Float](repeating: 0, count: input.count)
+        var block = [Float](repeating: 0, count: n)
+        var previous = [Float](repeating: 1, count: bins)
+        for f in 0..<frames {
+            var gains = [Float](repeating: 1, count: bins)
+            if f >= delayFrames {
+                for k in 0..<bins {
+                    let late = decay * smooth[f - delayFrames][k]
+                    let g = max(floorGain, (max(0, 1 - over * late / max(power[f][k], 1e-12))).squareRoot())
+                    gains[k] = max(g, previous[k] * 0.6)
+                }
+            }
+            var smoothed = gains
+            for k in 1..<(bins - 1) { smoothed[k] = (gains[k - 1] + 2 * gains[k] + gains[k + 1]) / 4 }
+            previous = smoothed
+            var s = spectra[f]
+            s.re[0] *= smoothed[0]
+            s.im[0] *= smoothed[bins - 1]
+            for k in 1..<bins { s.re[k] *= smoothed[k]; s.im[k] *= smoothed[k] }
+            fft.inverse(s, into: &block)
+            let scale = 1 / (Float(2 * n) * 1.5)
+            for i in 0..<n { output[f * hop + i] += block[i] * window[i] * scale }
+        }
+        return output
+    }
+
+    /// A shelving or peaking filter (RBJ audio EQ cookbook), `db` gain at `frequency`.
+    private static func equalizer(_ x: inout [Float], frequency: Double, db: Double, q: Double = 0.8, shape: String) {
+        guard abs(db) > 0.01 else { return }
+        let a = pow(10, db / 40), w = 2 * Double.pi * frequency / sampleRate, cw = cos(w), sw = sin(w)
+        let b0, b1, b2, a0, a1, a2: Double
+        switch shape {
+        case "low":
+            let alpha = sw / 2 * sqrt(2.0), r = 2 * sqrt(a) * alpha
+            b0 = a * ((a + 1) - (a - 1) * cw + r); b1 = 2 * a * ((a - 1) - (a + 1) * cw); b2 = a * ((a + 1) - (a - 1) * cw - r)
+            a0 = (a + 1) + (a - 1) * cw + r; a1 = -2 * ((a - 1) + (a + 1) * cw); a2 = (a + 1) + (a - 1) * cw - r
+        case "high":
+            let alpha = sw / 2 * sqrt(2.0), r = 2 * sqrt(a) * alpha
+            b0 = a * ((a + 1) + (a - 1) * cw + r); b1 = -2 * a * ((a - 1) + (a + 1) * cw); b2 = a * ((a + 1) + (a - 1) * cw - r)
+            a0 = (a + 1) - (a - 1) * cw + r; a1 = 2 * ((a - 1) - (a + 1) * cw); a2 = (a + 1) - (a - 1) * cw - r
+        default:
+            let alpha = sw / (2 * q)
+            b0 = 1 + alpha * a; b1 = -2 * cw; b2 = 1 - alpha * a
+            a0 = 1 + alpha / a; a1 = -2 * cw; a2 = 1 - alpha / a
+        }
+        Biquad(b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0).run(&x)
+    }
+
+    /// "Erzähler": warmth in the low voice, less boxiness, presence and air, and a gentle evening
+    /// out of loud and quiet words (in the spirit of an audiobook or a narrated documentary).
+    static func narrate(_ x: inout [Float], amount: Double) {
+        let k = min(1, max(0, amount))
+        equalizer(&x, frequency: 150, db: 3 * k, shape: "low")
+        equalizer(&x, frequency: 320, db: -2 * k, q: 1.0, shape: "peak")
+        equalizer(&x, frequency: 3500, db: 2.5 * k, q: 0.9, shape: "peak")
+        equalizer(&x, frequency: 11000, db: 1.5 * k, shape: "high")
+        // Gentle compression: 10 ms attack, 150 ms release, threshold 14 dB below the loud parts.
+        let attack = Float(exp(-1 / (0.01 * sampleRate))), release = Float(exp(-1 / (0.15 * sampleRate)))
+        let ratio = Float(1 + 1.2 * k)
+        var levels = x.map { abs($0) }
+        levels.sort()
+        let loud = max(1e-4, levels[min(levels.count - 1, Int(Double(levels.count) * 0.995))])
+        let threshold = loud * Float(pow(10, -14.0 / 20))
+        var envelope: Float = 0
+        for i in x.indices {
+            let a = abs(x[i])
+            envelope = a > envelope ? attack * envelope + (1 - attack) * a : release * envelope + (1 - release) * a
+            guard envelope > threshold else { continue }
+            let over = envelope / threshold
+            x[i] *= pow(over, 1 / ratio - 1)
+        }
+    }
+
     /// Soft limiter: transparent below 70 % of the ceiling, smoothly saturating above.
     static func limit(_ x: inout [Float], ceiling c: Float) {
         let knee = 0.7 * c, range = c - knee
@@ -354,10 +475,29 @@ enum VoiceProcessor {
 
     // MARK: Files
 
+    /// The imported voice (edited in another program) that replaces the microphone, nil if none.
+    static func importedMicURL(for project: Project, settings: EditSettings) -> URL? {
+        guard let file = settings.importedVoice?.file else { return nil }
+        let url = project.url.appendingPathComponent(file)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
     /// Processed microphone track (made from the echo-free one when echo removal is on).
     static func micURL(for project: Project, settings: EditSettings) -> URL {
         let echo = settings.removeEcho && FileManager.default.fileExists(atPath: EchoCanceller.cleanURL(for: project).path)
         return project.url.appendingPathComponent("mic-voice-\(settings.voice.key)\(echo ? "-e" : "").caf")
+    }
+
+    /// Removes processed microphone files of earlier settings (each one is as large as the
+    /// recording's sound; they are made again when needed).
+    static func removeUnusedMicFiles(project: Project, settings: EditSettings) {
+        let keep: Set<String> = [micURL(for: project, settings: settings).lastPathComponent,
+                                 micDryURL(for: project, settings: settings).lastPathComponent,
+                                 micURL(for: project, settings: settings).lastPathComponent + ".json"]
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: project.url.path)) ?? []
+        for name in names where name.hasPrefix("mic-voice-") && !keep.contains(name) {
+            try? FileManager.default.removeItem(at: project.url.appendingPathComponent(name))
+        }
     }
 
     /// The same loudness without noise reduction (mixed with the enhanced one).
@@ -375,7 +515,8 @@ enum VoiceProcessor {
     /// Processes the microphone and all voice-over files that have no processed copy yet.
     static func process(project: Project, settings: EditSettings) async throws -> Result? {
         var result: Result?
-        if project.info.hasMicAudio {
+        // An imported voice was edited elsewhere: the microphone is not processed again.
+        if project.info.hasMicAudio, settings.voice.enhancesMic, importedMicURL(for: project, settings: settings) == nil {
             let target = micURL(for: project, settings: settings)
             let dryTarget = micDryURL(for: project, settings: settings)
             if !FileManager.default.fileExists(atPath: target.path) || !FileManager.default.fileExists(atPath: dryTarget.path) {

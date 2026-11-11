@@ -147,6 +147,7 @@ enum HelpContent {
                 "**Symbolleiste** (direkt über der Timeline): alle Schnitt- und Einfüge-Werkzeuge in einer Reihe – Widerrufen, Teilen, Löschen, Kopieren, Kürzen, Standbild, Überblendung, Tempo, Zoom, Text, Maske, Pfeil, Rahmen, Spotlight, Bild, Video, Einsprechen, Einrasten und Zusammenkleben. Fährst du mit der Maus darüber, steht das **Tastenkürzel** dabei.",
                 "**Timeline** (unten): die Spuren Video, Kamera, Zoom, Cursor, Masken, Markierung, Text, Medien und die Tonspuren. Den Griff zwischen Vorschau und Timeline ziehen, um die Timeline größer oder kleiner zu machen.",
                 "**Inspektor** (rechts): ohne Auswahl die Seiten **Stil, Kamera, Cursor, Zoom, Audio, Text, Medien, Skript**; mit Auswahl nur die Einstellungen des gewählten Elements.",
+                "Die Bereiche im Inspektor klappen mit einem Klick auf ihre Überschrift auf und zu; zugeklappt steht daneben, was eingestellt ist (z. B. „Rauschen 45 % · Hall 50 %“). **⌥-Klick** klappt alle Bereiche des Tabs auf oder zu. Erklärbär merkt sich das; ⌘K › „Inspektor: Bereiche wie am Anfang“ stellt es zurück.",
                 "**Fensterleiste** (ganz oben): zurück zu den Aufnahmen, **Befehle** (⌘K), **Einfach**-Modus, **KI**, **Aufpolieren** und **Exportieren**.",
             ]),
             .heading("Auswählen"),
@@ -303,6 +304,11 @@ enum HelpContent {
             .text("Ein Clip in der Hauptspur erscheint **wie die Aufnahme**, also mit Hintergrund und Rand, in einer Szene auf deren Bildschirm. Oder er erscheint **bildschirmfüllend** über das ganze Bild. Bildschirmfüllend kannst du ihn ganz zeigen oder das Bild ausfüllen lassen, vergrößern und den Ausschnitt verschieben, wenn das Seitenverhältnis nicht passt."),
             .heading("Bibliothek"),
             .text("Im Medien-Tab sammelt die **Bibliothek** alle Dateien des Projekts. Einmal importiert, setzt ein Klick sie am Abspielkopf ein, oder du ziehst sie in die Timeline."),
+            .bullets([
+                "**Dateien …** übernimmt Bilder, Videos und Ton vom Mac.",
+                "**Von Adresse …** lädt aus dem Internet: direkte Links zu Video-, Bild- oder Tondateien, aber auch Seiten wie YouTube, Vimeo oder die Mediatheken (in 720p, 1080p oder bester Qualität). Für solche Seiten braucht Erklärbär das kostenlose Programm **yt-dlp**, für YouTube zusätzlich **Deno**: Ist eines davon schon auf dem Mac (Homebrew oder von Podcast Profi eingerichtet), wird es genutzt – sonst richtet **Einrichten** die offizielle Version von GitHub ein und prüft dabei ihre Prüfsumme. Meldet yt-dlp einen Fehler, hilft oft **yt-dlp aktualisieren**. Bitte nur laden, was du verwenden darfst.",
+                "**Entfernen:** das Papierkorb-Symbol neben einer Datei (oder Rechtsklick › **Aus der Bibliothek entfernen**) legt sie in den Papierkorb. Wird sie im Projekt noch verwendet, ist das gesperrt – erst dort entfernen.",
+            ]),
             .heading("Mehrere Medienspuren"),
             .text("Clips lassen sich in der Timeline nach oben oder unten auf eine andere Spur ziehen, bis zu vier. Höhere Spuren liegen im Bild weiter oben. Überblendungen und Zusammenkleben gelten innerhalb einer Spur."),
             .heading("Keyframes"),
@@ -378,6 +384,23 @@ enum HelpContent {
             .note("**Lautsprecher-Echo:** Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton im Mikrofon. Erklärbär rechnet dieses Echo heraus (abschaltbar im Audio-Tab). Mit Kopfhörern entsteht es gar nicht erst."),
             .heading("Teleprompter beim Einsprechen"),
             .text("Trage im Audio-Bereich unter **Sprechtext** deinen Text ein oder übernimm ihn aus dem Transkript. Beim **Einsprechen** läuft er in einem schwebenden Fenster mit, das nicht aufgenommen wird."),
+            .heading("Hall und Stimmfarbe"),
+            .bullets([
+                "**Hall reduzieren** (Inspektor › Audio › Stimme verbessern) nimmt den Nachhall des Raums aus der Stimme. Meist reichen 30 bis 60 %, mehr klingt schnell dünn.",
+                "**Stimmfarbe: Erzähler** macht die Stimme wärmer und präsenter und gleicht laute und leise Wörter etwas an, wie bei einem Sprecher im Hörbuch oder in einer Doku.",
+                "Beides gilt für das Mikrofon der Aufnahme und für die Voice-overs, jeweils wenn dort „Stimme verbessern“ an ist (Spurkopf der Tonspur), und wird neu berechnet, sobald der Regler losgelassen ist.",
+            ]),
+            .heading("Stimme extern bearbeiten"),
+            .steps([
+                "Inspektor › Audio › Stimme extern bearbeiten › **Stimme exportieren …**: Die ganze, ungeschnittene Stimme der Aufnahme wird eine WAV-Datei (48 kHz, 24 Bit; mit Echo-Entfernung die echofreie Fassung).",
+                "Die Datei in einem anderen Programm bearbeiten, z. B. in Podcast Profi, und als WAV, AIFF, FLAC, M4A oder MP3 sichern. Wichtig: die Länge nicht ändern – keine Pausen kürzen und nichts herausschneiden. Geschnitten wird in Erklärbär.",
+                "**Bearbeitete importieren …** wählen. Erklärbär richtet die Stimme an ihrem Klang auf die Millisekunde am Bild aus (auch wenn ein kurzer Vorlauf oder Jingle davor liegt) und verwendet sie statt des Mikrofons – im Schnitt, in der Wellenform, für Atem und Untertitel.",
+            ]),
+            .bullets([
+                "„Stimme verbessern“ wirkt dann nur noch auf Voice-overs; Lautstärke, Stummschalten und Bereiche der Mikrofonspur gelten weiter.",
+                "Passt die Stimme gegen Ende nicht mehr zum Bild, sagt Erklärbär Bescheid – meist wurden in der Datei Pausen gekürzt.",
+                "**Original** schaltet zurück auf die Stimme der Aufnahme; ⌘Z nimmt den Import zurück.",
+            ]),
         ])
 
     // MARK: Untertitel
@@ -391,6 +414,11 @@ enum HelpContent {
                 "Inspektor › Text › Untertitel: Sprache wählen und **Erzeugen** klicken. Die Spracherkennung läuft direkt auf dem Mac (Deutsch, Englisch, Französisch, Spanisch, Italienisch).",
                 "Als Quelle das Mikrofon, das Voice-over bzw. eine eigene Audiodatei oder alles Hörbare wählen.",
                 "Texte lassen sich danach einzeln korrigieren.",
+            ]),
+            .heading("Wann Untertitel erscheinen"),
+            .bullets([
+                "Untertitel erscheinen nur, während gesprochen wird: Während eines eingefügten Clips (z. B. ein Intro- oder Outro-Video) und eines Standbilds pausiert der Ton der Aufnahme – ihre Untertitel verschwinden und laufen danach weiter. Was im Clip oder zum Standbild gesprochen wird (Quelle „Alles Hörbare“ oder Voice-over), wird dort untertitelt.",
+                "**Untertitel ab:** den Abspielkopf an die gewünschte Stelle setzen und **Abspielkopf** klicken – davor erscheinen keine Untertitel, auch nicht in der SRT-Datei. Mit ✕ erscheinen sie wieder ab dem Anfang.",
             ]),
             .heading("Stil"),
             .bullets([
@@ -460,6 +488,7 @@ enum HelpContent {
             ]),
             .bullets([
                 "Kapitelmarken landen zusätzlich als `….kapitel.txt` neben dem Video.",
+                "**Auf YouTube …** (nach dem Export oder ⌘K › „Auf YouTube hochladen“) hilft beim Hochladen: öffnet YouTube Studio, das Video zieht man direkt aus dem Fenster in den Browser. Titel und Beschreibung samt Kapiteln lassen sich prüfen und kopieren (sie bleiben im Projekt gespeichert), die Untertitel liegen als SRT bereit, und ein Vorschaubild entsteht aus der Abspielposition (1280 Pixel, unter 2 MB). Sichtbarkeit und Playlists stellst du in YouTube Studio ein.",
                 "Mit **Gesamtlautstärke beim Export** (Audio-Tab) bekommt das Video die richtige Lautheit für YouTube & Co.",
                 "Vorschau und Export nutzen denselben Renderer – was du siehst, ist was du bekommst.",
             ]),
@@ -495,6 +524,7 @@ enum HelpContent {
             .text("Oben auf der Startseite und bei den Aufnahme-Einstellungen wählst du, wo neue Aufnahmen und Projekte landen – auch auf einem externen Laufwerk oder einer Netzwerkfreigabe (**Anderer Ort …**)."),
             .bullets([
                 "**Freigaben im Netzwerk:** Aufnahmen werden zuerst auf dem Mac gespeichert und nach dem Stoppen dorthin verschoben, damit nichts verloren geht.",
+                "**Projekt umbenennen:** Rechtsklick auf ein Projekt › **Umbenennen …** – oder im geöffneten Projekt **Ablage › Projekt umbenennen …** bzw. ⌘K › „umbenennen“. Der Name ist auch der Name des Projektordners.",
                 "**Projekt verschieben:** Rechtsklick auf ein Projekt › **Verschieben nach …**. Auf ein anderes Laufwerk wird erst kopiert; das Original wird erst danach entfernt.",
                 "Liegt ein Projekt auf einem Laufwerk, das gerade nicht verbunden ist, bleibt es mit einem Hinweis in der Liste.",
             ]),

@@ -144,6 +144,10 @@ final class EditorModel: ObservableObject {
     @Published var showSensitiveSheet = false
     @Published var breathState: String?
     var breathTask: Task<Void, Never>?
+    private var voiceTask: Task<Void, Never>?
+    /// Export or import of the voice running / its result.
+    @Published var isExchangingVoice = false
+    @Published var voiceExchangeStatus: String?
     @Published var showGuideSheet = false
     /// Fewer lanes and controls (masks and markings appear once they are used).
     @Published var simpleMode: Bool = UserDefaults.standard.bool(forKey: "simpleMode") {
@@ -151,6 +155,8 @@ final class EditorModel: ObservableObject {
     }
     /// Opens another project (a clip made from this one).
     var openProject: ((URL) -> Void)?
+    /// Renames this project (closes and reopens it; set by the app).
+    var renameProject: (() -> Void)?
     /// Loudness of the last export when it was brought to the target.
     @Published var masterResult: AudioMastering.MasterResult?
     var annotationDragOrigin: Annotation?
@@ -210,6 +216,10 @@ final class EditorModel: ObservableObject {
 
     @Published var isExporting = false
     @Published var showExportSheet = false
+    /// The export sheet shows the YouTube upload helper for the exported video.
+    @Published var showYouTubeAssistant = false
+    /// "Von einer Adresse laden" (media library).
+    @Published var showURLImport = false
     enum EchoState: Equatable {
         case notNeeded, processing, ready(EchoCanceller.Stats?), failed(String)
     }
@@ -607,7 +617,9 @@ final class EditorModel: ObservableObject {
             inserts = s.inserts
             kept = s.keptSegments(duration: duration)
             music = s.music.map { [$0.file, "\($0.fileOffset)", "\($0.loop)", "\($0.clipped ?? false)"] } ?? []
-            voice = s.voice.enabled ? s.voice.key + (s.voice.enhancesMic ? "m" : "") + (s.voice.enhancesVoiceOver ? "v" : "") : "off"
+            // The processed files' name is left out: the composition is rebuilt once they are ready.
+            voice = (s.voice.enabled ? (s.voice.enhancesMic ? "m" : "") + (s.voice.enhancesVoiceOver ? "v" : "") : "off")
+                + "|" + (s.importedVoice?.file ?? "")
             removeEcho = s.removeEcho
             clickSound = s.clickSound
             voiceOvers = s.voiceOvers.map { var c = $0; c.volume = nil; return c }   // clip volume: audio mix only
@@ -681,30 +693,52 @@ final class EditorModel: ObservableObject {
             visual.words = old.words
             if visual != old { scheduleRefresh() }
         }
-        // Voice enhancement: process when switched on, its parameters change or new voice-overs arrive.
-        if settings.voice != old.voice || settings.removeEcho != old.removeEcho
-            || (settings.voice.enabled && Set(settings.voiceOvers.map(\.file)) != Set(old.voiceOvers.map(\.file))) {
-            if settings.voice.enabled { prepareVoice() } else { voiceState = .idle; loadMicWaveform() }
+        // Voice enhancement: process when switched on, a setting that goes into the processed
+        // files changes or new voice-overs arrive (strength and breaths act in the mix only).
+        if Self.voiceProcessingKey(settings) != Self.voiceProcessingKey(old) {
+            if settings.voice.enabled {
+                prepareVoice(delay: 0.5)
+            } else {
+                voiceTask?.cancel()
+                voiceState = .idle
+            }
+            loadMicWaveform()
         }
         scheduleSave()
     }
 
+    /// What goes into the processed voice files.
+    static func voiceProcessingKey(_ s: EditSettings) -> String {
+        guard s.voice.enabled else { return "off" }
+        return [s.voice.key, s.voice.enhancesMic ? "m" : "", s.voice.enhancesVoiceOver ? "v" : "", s.removeEcho ? "e" : "",
+                s.importedVoice?.file ?? "", s.voiceOvers.map(\.file).sorted().joined(separator: ",")].joined(separator: "|")
+    }
+
     /// Processes microphone and voice-overs (noise reduction, loudness) in the background.
-    func prepareVoice() {
+    /// `delay`: waits for a slider to come to rest. One run at a time: a newer request waits for
+    /// the running one and makes the older ones that have not started yet unnecessary.
+    func prepareVoice(delay: Double = 0) {
         guard settings.voice.enabled else { return }
         voiceState = .processing
-        let project = self.project, snapshot = settings
-        Task.detached(priority: .userInitiated) {
+        let previous = voiceTask
+        previous?.cancel()
+        voiceTask = Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            await previous?.value
+            guard !Task.isCancelled, let self else { return }
+            let project = self.project, snapshot = self.settings
             do {
-                let result = try await VoiceProcessor.process(project: project, settings: snapshot)
-                await MainActor.run { [weak self] in
-                    guard let self, self.settings.voice == snapshot.voice else { return }
-                    self.voiceState = .ready(result)
-                    self.loadMicWaveform()
-                    Task { await self.buildPlayerItem() }
-                }
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try await VoiceProcessor.process(project: project, settings: snapshot)
+                }.value
+                guard !Task.isCancelled, Self.voiceProcessingKey(self.settings) == Self.voiceProcessingKey(snapshot) else { return }
+                self.voiceState = .ready(result)
+                self.loadMicWaveform()
+                await self.buildPlayerItem()
+                VoiceProcessor.removeUnusedMicFiles(project: project, settings: snapshot)
             } catch {
-                await MainActor.run { [weak self] in self?.voiceState = .failed(error.localizedDescription) }
+                guard !Task.isCancelled else { return }
+                self.voiceState = .failed(error.localizedDescription)
             }
         }
     }
@@ -979,15 +1013,87 @@ final class EditorModel: ObservableObject {
         settings.captions[i].text = text
     }
 
+    // MARK: Voice edited in another program
+
+    /// Saves the voice of the recording (whole and uncut) as a WAV file.
+    func exportVoice() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.init(filenameExtension: "wav") ?? .audio]
+        panel.nameFieldStringValue = project.name + " – Stimme.wav"
+        panel.message = "Die ganze, ungeschnittene Stimme der Aufnahme – beim Bearbeiten die Länge nicht ändern"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        isExchangingVoice = true
+        voiceExchangeStatus = "Stimme wird exportiert …"
+        let project = self.project, s = settings
+        Task { [weak self] in
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    let samples = try await VoiceExchange.originalVoice(project: project, settings: s)
+                    try VoiceExchange.writeWAV(samples, to: url)
+                }.value
+                self?.voiceExchangeStatus = "Exportiert: \(url.lastPathComponent). Nach dem Bearbeiten mit „Bearbeitete Stimme importieren …“ zurückholen."
+            } catch {
+                self?.voiceExchangeStatus = "Export fehlgeschlagen: \(error.localizedDescription)"
+            }
+            self?.isExchangingVoice = false
+        }
+    }
+
+    /// Brings an edited voice back: lined up with the recording, it replaces the microphone.
+    func importVoice() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.message = "Bearbeitete Stimme wählen (WAV, AIFF, FLAC, M4A oder MP3)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        isExchangingVoice = true
+        voiceExchangeStatus = "Stimme wird importiert und ausgerichtet …"
+        let project = self.project, s = settings
+        Task { [weak self] in
+            do {
+                let (voice, note) = try await Task.detached(priority: .userInitiated) {
+                    try await VoiceExchange.importVoice(from: url, project: project, settings: s)
+                }.value
+                guard let self else { return }
+                self.commitUndoStep()
+                self.settings.importedVoice = voice
+                self.commitUndoStep()
+                self.voiceExchangeStatus = note
+            } catch {
+                self?.voiceExchangeStatus = "Import fehlgeschlagen: \(error.localizedDescription)"
+            }
+            self?.isExchangingVoice = false
+        }
+    }
+
+    /// Back to the recording's own microphone.
+    func removeImportedVoice() {
+        commitUndoStep()
+        settings.importedVoice = nil
+        commitUndoStep()
+        voiceExchangeStatus = nil
+    }
+
+    /// Captions only from the playhead on (e.g. after an intro); at the very start: from the start again.
+    func setCaptionsFromPlayhead() {
+        commitUndoStep()
+        let T = display(currentTime)
+        settings.captionsFrom = T > 0.05 ? T : nil
+        commitUndoStep()
+    }
+
+    /// The captions as SRT in output time.
+    func srtText() -> String {
+        CaptionGenerator.srt(settings.captions, kept: settings.keptSegments(duration: duration),
+                             offset: introLead, map: timeMap, from: settings.captionsFrom)
+    }
+
     func exportSRT() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.init(filenameExtension: "srt") ?? .plainText]
         panel.nameFieldStringValue = project.name + ".srt"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let srt = CaptionGenerator.srt(settings.captions, kept: settings.keptSegments(duration: duration),
-                                       offset: introLead, map: timeMap)
         do {
-            try srt.write(to: url, atomically: true, encoding: .utf8)
+            try srtText().write(to: url, atomically: true, encoding: .utf8)
         } catch {
             captionError = error.localizedDescription
         }
@@ -1192,8 +1298,9 @@ final class EditorModel: ObservableObject {
         let project = self.project
         let clean = EchoCanceller.cleanURL(for: project)
         let voice = VoiceProcessor.micURL(for: project, settings: settings)
-        let file: URL? = settings.voice.enhancesMic && FileManager.default.fileExists(atPath: voice.path) ? voice
-            : settings.removeEcho && FileManager.default.fileExists(atPath: clean.path) ? clean : nil
+        let file: URL? = VoiceProcessor.importedMicURL(for: project, settings: settings)
+            ?? (settings.voice.enhancesMic && FileManager.default.fileExists(atPath: voice.path) ? voice
+                : settings.removeEcho && FileManager.default.fileExists(atPath: clean.path) ? clean : nil)
         let duration = self.duration
         Task.detached(priority: .utility) {
             let peaks = file != nil ? try? await Waveform.peaks(url: file!) : try? await Self.recordingPeaks(project: project, role: "mic")

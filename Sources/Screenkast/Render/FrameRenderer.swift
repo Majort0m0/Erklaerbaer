@@ -410,10 +410,21 @@ final class FrameRenderer: @unchecked Sendable {
 
     /// The caption shown at source time `t`: its image, where it sits (CI coordinates), the pop
     /// scale and the opacity.
-    /// Fades and the pop are in timeline time (captions also run over inserted clips).
+    /// Fades and the pop are in timeline time.
     private func captionPlacement(at t: Double, settings s: EditSettings, map: TimeMap, out: CGSize)
         -> (image: CIImage, rect: CGRect, scale: CGFloat, alpha: Double)? {
-        guard let caption = s.captions.first(where: { t >= $0.start && t <= $0.end }) else { return nil }
+        // Shown only inside one of its stretches on the timeline (not over an inserted clip or a
+        // freeze frame it doesn't belong to, not before "captions from"); fades at their edges.
+        let T = map.timeline(t)
+        var found: (caption: Caption, span: ClosedRange<Double>)?
+        for c in s.captions where t >= c.start && t <= c.end {
+            if let span = map.captionSpans(start: c.start, end: c.end, from: s.captionsFrom)
+                .first(where: { T >= $0.lowerBound - 1e-6 && T <= $0.upperBound + 1e-6 }) {
+                found = (c, span)
+                break
+            }
+        }
+        guard let (caption, span) = found else { return nil }
         let style = s.captionStyle
         let tokens = s.captionTokens(caption)
         guard !tokens.isEmpty else { return nil }
@@ -423,8 +434,7 @@ final class FrameRenderer: @unchecked Sendable {
         var words = tokens.map(\.text)
         var highlight: Int?
         var unitStart = caption.start
-        let captionRun = map.run(caption.start, caption.end)
-        let T = map.timeline(t), T0 = captionRun?.lowerBound ?? map.timeline(caption.start), T1 = captionRun?.upperBound ?? map.timeline(caption.end)
+        let T0 = span.lowerBound, T1 = span.upperBound
         var alpha = max(0, min(1, (T - T0) / 0.12, (T1 - T) / 0.12))
         switch style.mode {
         case .sentence:
@@ -452,7 +462,7 @@ final class FrameRenderer: @unchecked Sendable {
                           width: w, height: h)
         var scale: CGFloat = 1
         if style.pop, style.mode == .chunks || style.mode == .word {
-            let age = (T - map.timeline(unitStart)) / 0.14
+            let age = (T - max(T0, map.timeline(unitStart))) / 0.14
             scale = age < 1 ? 0.82 + 0.18 * CGFloat(1 - pow(1 - max(0, age), 3)) * 1.04 : 1
         }
         return (image, rect, scale, max(0, alpha))
@@ -790,14 +800,16 @@ final class FrameRenderer: @unchecked Sendable {
             img = Self.withAlpha(dot, Double(finger.alpha) * alpha).composited(over: img)
             if showFinger {
                 // From the lower right, like a right hand. (Turned by `turn`, the finger runs along (sin, -cos).)
-                var turn = 0.5
+                // Near the edge of the picture the finger turns so that it stays in it.
+                let reach = finger.scale * r * 5.6 * 0.75
+                var turn = FingerTurn.angle(tip: pose.fingers[0].at, length: reach, area: base.extent)
                 if a.touchGesture.isPinch, twoFingers {
                     // Pointing away from the middle and a little downwards, like thumb and index finger.
                     let m = CGPoint(x: pose.fingers.map(\.at.x).reduce(0, +) / 2, y: pose.fingers.map(\.at.y).reduce(0, +) / 2)
                     let d = max(1, hypot(finger.at.x - m.x, finger.at.y - m.y))
                     turn = Double(atan2((finger.at.x - m.x) / d, 0.8 - (finger.at.y - m.y) / d))
                 } else if twoFingers {
-                    turn = i == 0 ? 0.42 : 0.58
+                    turn += i == 0 ? -0.08 : 0.08
                 }
                 let size = finger.scale * r / art
                 let shape = cached("finger") { TouchArt.finger(r: art) }

@@ -48,6 +48,7 @@ struct EditorView: View {
                     editor.pause()
                     editor.exportResult = nil
                     editor.exportError = nil
+                    editor.showYouTubeAssistant = false
                     editor.showExportSheet = true
                 } label: {
                     Label("Exportieren", systemImage: "square.and.arrow.up")
@@ -63,6 +64,7 @@ struct EditorView: View {
             ExportSheet(editor: editor, isPresented: $editor.showExportSheet)
         }
         .sheet(isPresented: $editor.showPolishSheet) { PolishSheet(editor: editor) }
+        .sheet(isPresented: $editor.showURLImport) { URLImportSheet(editor: editor, isPresented: $editor.showURLImport) }
         .sheet(isPresented: $editor.showAISheet) { AISheet(editor: editor) }
         .sheet(isPresented: $editor.showSpeechSheet) { SpeechSheet(editor: editor) }
         .sheet(isPresented: $editor.showPalette) { CommandPalette(editor: editor) }
@@ -977,6 +979,12 @@ struct ExportSheet: View {
                     Spacer()
                     Button("Abbrechen") { editor.cancelExport() }
                 }
+            } else if let url = editor.exportResult, editor.showYouTubeAssistant, url.pathExtension.lowercased() == "mp4",
+                      FileManager.default.fileExists(atPath: url.path) {
+                YouTubeUploadView(editor: editor, video: url) {
+                    editor.showYouTubeAssistant = false
+                    isPresented = false
+                }
             } else if let url = editor.exportResult {
                 Label("Export fertig", systemImage: "checkmark.circle.fill")
                     .font(.headline)
@@ -986,6 +994,12 @@ struct ExportSheet: View {
                     Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     Button("Abspielen") { NSWorkspace.shared.open(url) }
                     Spacer()
+                    if url.pathExtension.lowercased() == "mp4" {
+                        Button {
+                            editor.showYouTubeAssistant = true
+                        } label: { Label("Auf YouTube …", systemImage: "play.rectangle") }
+                        .help("Hilft beim Hochladen: YouTube Studio öffnen, Video hineinziehen, Titel, Beschreibung, Kapitel und Untertitel")
+                    }
                     Button("Fertig") { isPresented = false }.keyboardShortcut(.defaultAction)
                 }
             } else if let error = editor.exportError {
@@ -1002,7 +1016,7 @@ struct ExportSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 440)
+        .frame(width: editor.showYouTubeAssistant && editor.exportResult != nil ? 600 : 440)
     }
 
     private var settings: some View {

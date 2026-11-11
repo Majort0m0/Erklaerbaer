@@ -427,6 +427,8 @@ struct ProjectCard: View {
                 .disabled(offline || moving)
             Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 .disabled(offline)
+            Button("Umbenennen …") { model.renameProject(url) }
+                .disabled(offline || moving)
             Button("Verschieben nach …") { model.moveProject(url) }
                 .disabled(offline || moving)
             Divider()

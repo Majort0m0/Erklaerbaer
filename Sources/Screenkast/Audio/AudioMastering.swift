@@ -70,7 +70,9 @@ enum AudioMastering {
             var mic: [Float]?
             let enhanced = VoiceProcessor.micURL(for: project, settings: settings)
             let clean = EchoCanceller.cleanURL(for: project)
-            if settings.voice.enhancesMic, FileManager.default.fileExists(atPath: enhanced.path) {
+            if let imported = VoiceProcessor.importedMicURL(for: project, settings: settings) {
+                mic = try? await VoiceProcessor.readFile(imported)
+            } else if settings.voice.enhancesMic, FileManager.default.fileExists(atPath: enhanced.path) {
                 mic = try? await VoiceProcessor.readFile(enhanced)
             } else if settings.removeEcho, FileManager.default.fileExists(atPath: clean.path) {
                 mic = try? await VoiceProcessor.readFile(clean)

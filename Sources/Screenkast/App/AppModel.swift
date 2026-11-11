@@ -713,6 +713,7 @@ final class AppModel: ObservableObject {
         editor?.pause()
         let e = EditorModel(project: project)
         e.openProject = { [weak self] url in self?.open(url: url) }
+        e.renameProject = { [weak self, url = project.url] in self?.renameProject(url) }
         editor = e
     }
 

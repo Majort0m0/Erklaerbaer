@@ -7,6 +7,8 @@ import AppKit
 /// renders preview frames and runs the real export path. Needs no screen-recording permission.
 enum SelfTest {
     static func run(outputDirectory: URL) -> Int32 {
+        // The tests open and close parts of the inspector without touching the user's settings.
+        MainActor.assumeIsolated { InspectorFolds.shared.keepInMemory(open: Set(InspectorFold.allCases)) }
         let sem = DispatchSemaphore(value: 0)
         var code: Int32 = 0
         Task.detached {

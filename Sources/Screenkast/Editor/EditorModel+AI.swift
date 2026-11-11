@@ -65,9 +65,8 @@ extension EditorModel {
     func youTubeText(title: String? = nil) -> String {
         var parts: [String] = []
         if let title = title ?? aiSuggestions?.titles.first { parts.append(title) }
-        if let d = aiSuggestions?.description, !d.isEmpty { parts.append(d) }
-        if !settings.chapters.isEmpty { parts.append(youTubeChapterText) }
-        if let tags = aiSuggestions?.tags, !tags.isEmpty { parts.append(tags.map { "#" + $0.replacingOccurrences(of: " ", with: "") }.joined(separator: " ")) }
+        let description = youTubeDescriptionSuggestion
+        if !description.isEmpty { parts.append(description) }
         return parts.joined(separator: "\n\n")
     }
 

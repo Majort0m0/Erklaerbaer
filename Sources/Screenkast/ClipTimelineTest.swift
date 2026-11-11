@@ -25,6 +25,11 @@ enum ClipTimelineTest {
         try await liveTest(dir)
         try await memeTest(base, dir)
         try await improvementTest(base, dir)
+        try voiceColourTest()
+        try captionTimingTest(base)
+        try await voiceExchangeTest(base, dir)
+        try await thumbnailTest(dir)
+        try await urlImportTest(dir)
         try await deviceWriterTest(dir)
     }
 
@@ -633,6 +638,15 @@ enum ClipTimelineTest {
         let turnA = pose(.rotate, 0.2), turnB = pose(.rotate, 1.7)
         guard near(Double(distance(turnA)), Double(distance(turnB)), 0.01), abs(turnA.fingers[0].at.y - turnB.fingers[0].at.y) > 100 else { throw fail("rotate") }
 
+        // Near an edge the finger turns: at the bottom counterclockwise, in the middle it stays as it is.
+        let picture = CGRect(x: 0, y: 0, width: 2000, height: 1200)
+        let middleTurn = FingerTurn.angle(tip: CGPoint(x: 1000, y: 600), length: 300, area: picture)
+        let bottomTurn = FingerTurn.angle(tip: CGPoint(x: 1000, y: 40), length: 300, area: picture)
+        let cornerTurn = FingerTurn.angle(tip: CGPoint(x: 1960, y: 40), length: 300, area: picture)
+        func end(_ turn: Double, _ tip: CGPoint) -> CGPoint { CGPoint(x: tip.x + CGFloat(sin(turn)) * 300, y: tip.y - CGFloat(cos(turn)) * 300) }
+        guard near(middleTurn, 0.5), bottomTurn > 1.2, picture.contains(end(bottomTurn, CGPoint(x: 1000, y: 40))),
+              picture.contains(end(cornerTurn, CGPoint(x: 1960, y: 40))) else { throw fail("finger turn: \(middleTurn), \(bottomTurn), \(cornerTurn)") }
+
         // Projects from before have no gesture; a saved one comes back.
         var saved = Annotation(kind: .touch, start: 1, end: 2)
         saved.gesture = .pinchOut
@@ -670,6 +684,17 @@ enum ClipTimelineTest {
                 if let folder {
                     try context.writePNGRepresentation(of: image, to: folder.appendingPathComponent("\(look.rawValue)-\(g.rawValue).png"), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
                 }
+            }
+        }
+        // At the bottom edge the finger turns up and stays in the picture.
+        for (name, x, y) in [("bottom", 0.5, 0.97), ("corner", 0.97, 0.97), ("right", 0.98, 0.5)] {
+            var low = Annotation(kind: .touch, start: 1, end: 3)
+            low.look = .finger; low.color = .blue
+            low.x = x; low.y = y; low.width = 0.1; low.height = 0
+            let image = plain([low]).render(source: white, camera: nil, time: 1.34)
+            guard grey(image) > nothing + 15 else { throw fail("finger at the \(name) edge is not visible") }
+            if let folder {
+                try context.writePNGRepresentation(of: image, to: folder.appendingPathComponent("edge-\(name).png"), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
             }
         }
         print("✓ finger gestures: tap, double tap, hold, drag, swipe, two fingers, pinch and rotate, visible on a white screen")
@@ -1084,7 +1109,13 @@ enum ClipTimelineTest {
         let d = base.info.duration
         guard d >= 3.9 else { print("– improvements skipped (short test video)"); return }
         try await MainActor.run {
-            // Recorded clicks become markings: close ones count once, a second run adds nothing.
+            // A finger can be put right at the edge and its way can point anywhere.
+        let fingers = EditorModel(project: project(base) { $0.annotations = [Annotation(kind: .touch, start: 1, end: 2)] })
+        let fingerID = fingers.settings.annotations[0].id
+        fingers.updateAnnotation(id: fingerID) { $0.gesture = .drag; $0.x = 0.97; $0.y = 0.98; $0.width = -0.3; $0.height = -0.2 }
+        let moved = fingers.settings.annotations[0]
+        guard near(moved.x, 0.97), near(moved.y, 0.98), near(moved.width, -0.3), near(moved.height, -0.2) else { throw fail("finger at the edge: \(moved.x), \(moved.y), \(moved.width), \(moved.height)") }
+        // Recorded clicks become markings: close ones count once, a second run adds nothing.
             var cursor = base.cursor
             cursor.clicks = [ClickEvent(t: 1, x: 0.5, y: 0.5), ClickEvent(t: 1.2, x: 0.51, y: 0.5), ClickEvent(t: 2.5, x: 0.2, y: 0.3)]
             let clicked = EditorModel(project: Project(url: base.url, info: base.info, cursor: cursor, settings: project(base) { _ in }.settings))
@@ -1365,5 +1396,279 @@ enum ClipTimelineTest {
         saved.cameraBackground = nil
         guard try JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(saved)).script == "Hallo" else { throw fail("script not saved") }
         print("✓ editing: clicks to markings, steps, selecting, roll, slip, lanes, keyframes, library and packs")
+    }
+
+    /// Loading from an address, without the internet: addresses, yt-dlp's output, a stand-in
+    /// yt-dlp that writes picture and sound as two files (joined into one MP4 named after the
+    /// video), and a direct link.
+    private static func urlImportTest(_ dir: URL) async throws {
+        guard case .success(.page(let yt)) = VideoLink.classify(" youtu.be/abc "), yt.absoluteString == "https://youtu.be/abc", VideoLink.isPlatform(yt),
+              case .success(.media) = VideoLink.classify("https://example.org/film.mp4"),
+              case .success(.page) = VideoLink.classify("https://example.org/seite"),
+              case .failure(.unsupportedScheme("ftp")) = VideoLink.classify("ftp://example.org/a.mp4"),
+              case .failure(.empty) = VideoLink.classify("  "), case .failure(.invalid) = VideoLink.classify("kein link") else { throw fail("addresses") }
+        guard YTDLP.parse("[pp-progress] 500 1000 NA") == .progress(received: 500, total: 1000),
+              YTDLP.parse("[download]  42.5% of 10.00MiB") == .percent(42.5),
+              YTDLP.parse("[pp-format] none|mp4a.40.2") == .format(video: false, audio: true),
+              YTDLP.errorMessage("WARNING: x\nERROR: [youtube] abc123: Video unavailable") == "Video unavailable",
+              YtDlpAdvice.advice(for: "ERROR: Sign in to confirm you're not a bot") == .update,
+              YtDlpAdvice.advice(for: "No supported JavaScript runtime could be found") == .runtime else { throw fail("yt-dlp output") }
+        let runtime = JSRuntime(kind: .deno, tool: FoundTool(url: URL(fileURLWithPath: "/opt/homebrew/bin/deno"), version: "2.5.4", origin: .homebrew))
+        let args = YTDLP.arguments(for: yt, into: dir, quality: .p720, runtime: runtime)
+        guard args.contains("--no-playlist"), args.contains("deno:/opt/homebrew/bin/deno"), args.last == "https://youtu.be/abc",
+              let f = args.firstIndex(of: "-f"), args[f + 1].contains("[height<=720]") else { throw fail("yt-dlp arguments: \(args)") }
+
+        // Picture only and sound only, from the test export.
+        let source = dir.appendingPathComponent("export.mp4")
+        let work = dir.appendingPathComponent("laden", isDirectory: true)
+        try? FileManager.default.removeItem(at: work)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        let picture = work.appendingPathComponent("bild.mp4"), sound = work.appendingPathComponent("ton.m4a")
+        let asset = AVURLAsset(url: source)
+        let composition = AVMutableComposition()
+        guard let v = try await asset.loadTracks(withMediaType: .video).first,
+              let cv = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let pictureExport = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough),
+              let soundExport = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else { throw fail("test files") }
+        try cv.insertTimeRange(try await v.load(.timeRange), of: v, at: .zero)
+        try await pictureExport.export(to: picture, as: .mp4)
+        try await soundExport.export(to: sound, as: .m4a)
+
+        // A stand-in for yt-dlp: answers --version, prints like the real one and writes both files.
+        let tools = work.appendingPathComponent("werkzeuge", isDirectory: true)
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        let script = tools.appendingPathComponent("yt-dlp")
+        try """
+        #!/bin/sh
+        if [ "$1" = "--version" ]; then echo "2026.10.01"; exit 0; fi
+        prev=""; out=""
+        for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+        dir=$(dirname "$out")
+        echo "[pp-title] Mein Test: Video/1"
+        echo "[pp-format] avc1.640028|none"
+        echo "[download]  50.0% of 1.00MiB"
+        cp '\(picture.path)' "$dir/video.f137.mp4"
+        echo "[pp-file] $dir/video.f137.mp4"
+        echo "[pp-format] none|mp4a.40.2"
+        cp '\(sound.path)' "$dir/video.f140.m4a"
+        echo "[pp-file] $dir/video.f140.m4a"
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        guard let found = ToolDetector.ytdlp(places: ToolPlaces(managed: tools, search: [])), found.version == "2026.10.01", found.origin == .managed else {
+            throw fail("yt-dlp not found")
+        }
+        let out = work.appendingPathComponent("ziel", isDirectory: true)
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        final class Events: @unchecked Sendable { var list: [YTDLP.Event] = []; let lock = NSLock() }
+        let events = Events()
+        let result = try await YTDLPProcess().run(tool: found.url, arguments: YTDLP.arguments(for: yt, into: out, quality: .p1080, runtime: nil), folder: out) { e in
+            events.lock.withLock { events.list.append(e) }
+        }
+        guard result.files.count == 2, result.title == "Mein Test: Video/1", events.lock.withLock({ events.list.contains(.percent(50)) }) else {
+            throw fail("yt-dlp run: \(result)")
+        }
+        let video = try await VideoSaver.finish(result.files, title: result.title!, in: out)
+        let joined = await VideoSaver.contents(of: video)
+        let length = try await AVURLAsset(url: video).load(.duration).seconds, original = try await asset.load(.duration).seconds
+        guard video.lastPathComponent == "Mein Test- Video-1.mp4", joined.video, joined.audio, abs(length - original) < 0.1 else {
+            throw fail("joined video: \(video.lastPathComponent) \(joined) \(length)")
+        }
+
+        // A direct link (here to a file on this Mac): loaded as it is.
+        let direct = work.appendingPathComponent("direkt", isDirectory: true)
+        try FileManager.default.createDirectory(at: direct, withIntermediateDirectories: true)
+        let loaded = try await MediaDownloader(folder: direct) { _ in }.download(source)
+        guard loaded.lastPathComponent == "export.mp4", await VideoSaver.contents(of: loaded).video else { throw fail("direct download: \(loaded)") }
+        guard MediaDownloader.problem(with: HTTPURLResponse(url: yt, mimeType: "text/html", expectedContentLength: 10, textEncodingName: nil)) == .notMedia,
+              MediaDownloader.fileName(for: HTTPURLResponse(url: yt, mimeType: "video/mp4", expectedContentLength: 10, textEncodingName: nil), url: yt).hasSuffix(".mp4")
+        else { throw fail("direct download checks") }
+        print("✓ loading from an address: links, yt-dlp output and arguments, picture and sound joined (\(String(format: "%.1f", length)) s), direct link")
+    }
+
+    /// The YouTube thumbnail: a picture of the exported video, 1280 pixels on the long side, under 2 MB.
+    private static func thumbnailTest(_ dir: URL) async throws {
+        let video = dir.appendingPathComponent("export.mp4")
+        guard FileManager.default.fileExists(atPath: video.path) else { throw fail("no exported video for the thumbnail") }
+        let url = try await EditorModel.writeThumbnail(from: video, at: 1.0)
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        guard let image = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              max(image.width, image.height) <= 1280, image.width > 100, size > 1000, size < 2_000_000 else {
+            throw fail("thumbnail: \(size) bytes")
+        }
+        print("✓ YouTube thumbnail: \(image.width) × \(image.height), \(size / 1000) KB")
+    }
+
+    /// The voice exported, edited elsewhere and imported again: lined up by its sound, it
+    /// replaces the microphone in the mix and is not processed again.
+    private static func voiceExchangeTest(_ base: Project, _ dir: URL) async throws {
+        let rate = VoiceProcessor.sampleRate
+        // Speech-like: syllables of different length and loudness with pauses between them.
+        var seed: UInt64 = 0x5EED
+        func random() -> Double { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Double(seed >> 11) / Double(1 << 53) }
+        var reference = [Float](repeating: 0, count: Int(20 * rate))
+        var i = 0
+        while i < reference.count {
+            let length = Int((0.08 + 0.4 * random()) * rate), level = Float(0.05 + 0.3 * random())
+            for k in 0..<length where i + k < reference.count {
+                reference[i + k] = level * Float(random() * 2 - 1) * Float(sin(Double(k) / Double(length) * .pi))
+            }
+            i += length + Int((0.04 + 0.5 * random()) * rate)
+        }
+        for k in reference.indices { reference[k] += Float(0.002 * (random() * 2 - 1)) }
+        // Edited: louder, the room noise gone, 0.7 s lead-in and an MP3 encoder delay before it.
+        let lead = Int(0.7 * rate) + 1105
+        let edited = [Float](repeating: 0, count: lead) + reference.map { abs($0) < 0.004 ? 0 : $0 * 1.8 }
+        let placed = VoiceExchange.place(edited, against: reference)
+        guard placed.found, abs(placed.lag - lead) <= 48, placed.endFits else { throw fail("voice lined up: \(placed), lead \(lead)") }
+        let same = VoiceExchange.place(reference, against: reference)
+        guard same.found, same.lag == 0, same.endFits else { throw fail("voice unchanged: \(same)") }
+        var shortened = reference
+        shortened.removeSubrange(Int(12 * rate)..<Int(13 * rate))
+        let cut = VoiceExchange.place(shortened, against: reference)
+        guard cut.found, abs(cut.lag) <= 480, !cut.endFits else { throw fail("shortened voice not noticed: \(cut)") }
+
+        // Through the project: export (whole, uncut) and import a different voice.
+        let p = project(base) { _ in }
+        let original = try await VoiceExchange.originalVoice(project: p, settings: p.settings)
+        guard abs(Double(original.count) / rate - base.info.duration) < 0.05 else { throw fail("exported voice length \(original.count)") }
+        let wav = dir.appendingPathComponent("stimme.wav")
+        try VoiceExchange.writeWAV(original, to: wav)
+        let back = try await VoiceProcessor.readFile(wav)
+        guard abs(back.count - original.count) <= 1, zip(back, original).allSatisfy({ abs($0 - $1) < 1e-4 }) else { throw fail("exported WAV differs") }
+        let tone = (0..<original.count).map { Float(0.3 * sin(2 * .pi * 1000 * Double($0) / rate)) }
+        let editedURL = dir.appendingPathComponent("stimme-bearbeitet.wav")
+        try VoiceExchange.writeWAV(tone, to: editedURL)
+        let (voice, _) = try await VoiceExchange.importVoice(from: editedURL, project: p, settings: p.settings)
+        defer { try? FileManager.default.removeItem(at: p.url.appendingPathComponent(voice.file)) }
+        guard voice.name == "stimme-bearbeitet.wav", voice.file.hasPrefix("stimme-import-") else { throw fail("imported voice \(voice)") }
+        var s = p.settings
+        s.importedVoice = voice
+        let q = Project(url: base.url, info: base.info, cursor: base.cursor, settings: s)
+        let media = try await MediaBuilder.make(project: q, renderer: FrameRenderer(project: q), fps: 30)
+        let mic = try await EditorFeatureTest.mixedAudio(media, settings: s, role: "mic")
+        func amplitude(_ f: Double) -> Double {
+            let a = Int(0.3 * rate), b = min(mic.count, Int(min(1.8, base.info.duration - 0.2) * rate))
+            var re = 0.0, im = 0.0
+            for k in a..<b { re += Double(mic[k]) * cos(2 * .pi * f * Double(k) / rate); im += Double(mic[k]) * sin(2 * .pi * f * Double(k) / rate) }
+            return 2 * (re * re + im * im).squareRoot() / Double(b - a)
+        }
+        guard amplitude(1000) > 0.15, amplitude(660) < 0.02 else { throw fail("mix with imported voice: 1 kHz \(amplitude(1000)), mic \(amplitude(660))") }
+        // Voice enhancement leaves the microphone alone now.
+        var enhanced = s
+        enhanced.voice.enabled = true
+        enhanced.voice.noiseReduction = 0.37
+        _ = try await VoiceProcessor.process(project: q, settings: enhanced)
+        guard !FileManager.default.fileExists(atPath: VoiceProcessor.micURL(for: q, settings: enhanced).path) else { throw fail("imported voice processed again") }
+        let reloaded = try JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(s))
+        guard reloaded.importedVoice == voice else { throw fail("imported voice lost when the project is opened again") }
+        print("✓ voice exchange: exported whole as WAV, imported again lined up to the millisecond (lead-in, MP3 delay), shortened pauses noticed, replaces the microphone in the mix")
+    }
+
+    /// Captions and an inserted clip (an intro video): the recording's captions wait while the
+    /// clip plays, the ones heard in the clip stay over it, and "captions from" hides the start.
+    private static func captionTimingTest(_ base: Project) throws {
+        let clip = InsertClip(file: "media/intro.mp4", name: "Intro", at: 1.0, duration: 4, fileDuration: 4)
+        let map = TimeMap(base: TimeMap(duration: 10, inserts: [clip]), parts: [0...10])
+        let split = map.captionSpans(start: 0.8, end: 1.5)
+        guard split.count == 2, near(split[0].lowerBound, 0.8, 1e-6), near(split[0].upperBound, 0.999, 1e-6),
+              near(split[1].lowerBound, 4.999, 1e-6), near(split[1].upperBound, 5.499, 1e-6) else { throw fail("caption around a clip: \(split)") }
+        let own = map.captionSpans(start: 0.9995, end: 0.9999)
+        guard own.count == 1, own[0].lowerBound > 2.9, own[0].upperBound < 4.7 else { throw fail("caption heard in the clip: \(own)") }
+        let later = map.captionSpans(start: 0.8, end: 1.5, from: 5.2)
+        guard later.count == 1, near(later[0].lowerBound, 5.2, 1e-6) else { throw fail("captions from: \(later)") }
+        let srt = CaptionGenerator.srt([Caption(start: 0.8, end: 1.5, text: "A")], kept: [0...10], map: map)
+        guard srt.contains("00:00:04,999 --> 00:00:05,499"), srt.components(separatedBy: "\nA\n").count == 3 else { throw fail("SRT around a clip:\n\(srt)") }
+        // A freeze frame interrupts a caption from the recording as well.
+        let frozen = TimeMap(base: TimeMap(duration: 10, freezes: [FreezeFrame(at: 1.0, duration: 4)]), parts: [0...10])
+        guard frozen.captionSpans(start: 0.8, end: 1.5).count == 2 else { throw fail("caption over a freeze frame") }
+        let srtLater = CaptionGenerator.srt([Caption(start: 0.8, end: 1.5, text: "A")], kept: [0...10], offset: 1, map: map, from: 5.2)
+        guard srtLater == "1\n00:00:06,200 --> 00:00:06,499\nA\n\n" else { throw fail("SRT captions from:\n\(srtLater)") }
+
+        // As in the editor: the pause before the first words is cut, the intro clip comes first and
+        // the first caption begins a little inside the cut.
+        let d = base.info.duration
+        guard d > 1.6 else { throw fail("recording too short: \(d)") }
+        let p = project(base) { s in
+            s.trimStart = 0.5
+            s.inserts = [InsertClip(file: "media/intro.mp4", name: "Intro", at: 0.501, duration: 2, fileDuration: 2, fullFrame: true)]
+            s.captions = [Caption(start: 0.4, end: 1.5, text: "Hallo zusammen")]
+        }
+        let r = FrameRenderer(project: p)
+        guard r.captionFrame(at: 0.5005) == nil else { throw fail("caption over the intro clip") }
+        guard r.captionFrame(at: 1.0) != nil else { throw fail("no caption after the intro clip") }
+        var s = p.settings
+        s.captionsFrom = s.editMap(duration: d).timeline(1.2)
+        r.update(settings: s)
+        guard r.captionFrame(at: 1.0) == nil, r.captionFrame(at: 1.3) != nil else { throw fail("captions from in the picture") }
+
+        // An outro clip at the end of the last part: the last caption (a little longer than the
+        // words) does not run over it.
+        let q = project(base) { s in
+            s.trimEnd = 1.5
+            s.inserts = [InsertClip(file: "media/outro.mp4", name: "Outro", at: 1.4997, duration: 2, fileDuration: 2, fullFrame: true)]
+            s.captions = [Caption(start: 1.0, end: 1.8, text: "Tschüss")]
+        }
+        let r2 = FrameRenderer(project: q)
+        guard r2.captionFrame(at: 1.3) != nil, r2.captionFrame(at: 1.4992) == nil else { throw fail("caption over the outro clip") }
+        let outroSRT = CaptionGenerator.srt(q.settings.captions, kept: q.settings.keptSegments(duration: d), map: q.settings.editMap(duration: d))
+        guard outroSRT.components(separatedBy: "\n\n").filter({ !$0.isEmpty }).count == 1, outroSRT.contains("00:00:01,000 --> 00:00:01,499") else {
+            throw fail("SRT before the outro:\n\(outroSRT)")
+        }
+        print("✓ captions: hidden over intro/outro clips and freeze frames, stay over a clip that speaks, start from a chosen time (picture and SRT)")
+    }
+
+    /// Reverberation and narrator voice: the voice gets drier and warmer; old files stay valid.
+    private static func voiceColourTest() throws {
+        let rate = VoiceProcessor.sampleRate
+        var generator = SystemRandomNumberGenerator()
+        func noise() -> Float { Float.random(in: -1...1, using: &generator) }
+        // Short "syllables" with a room tail after each of them (0.6 s reverberation time).
+        let count = Int(rate * 4)
+        var dryPart = [Float](repeating: 0, count: count), tailPart = [Float](repeating: 0, count: count)
+        var syllables: [Range<Int>] = []
+        for k in 0..<6 {
+            let a = Int(rate * (0.2 + 0.6 * Double(k))), b = a + Int(rate * 0.09)
+            syllables.append(a..<b)
+            for i in a..<b { dryPart[i] = 0.4 * noise() * Float(sin(Double(i - a) / Double(b - a) * .pi)) }
+            for i in b..<min(count, b + Int(rate * 0.5)) {
+                tailPart[i] = 0.08 * noise() * Float(pow(10, -3 * Double(i - b) / rate / 0.6))
+            }
+        }
+        let wet = zip(dryPart, tailPart).map { $0 + $1 }
+        let cleaned = VoiceProcessor.dereverb(wet, strength: 1)
+        func energy(_ x: [Float], _ ranges: [Range<Int>]) -> Double { ranges.reduce(0.0) { $0 + $1.reduce(0.0) { $0 + Double(x[$1] * x[$1]) } } }
+        let tails = syllables.map { ($0.upperBound + Int(rate * 0.06))..<($0.upperBound + Int(rate * 0.35)) }
+        let syllableLoss = 10 * log10(energy(wet, syllables) / max(1e-12, energy(cleaned, syllables)))
+        let tailLoss = 10 * log10(energy(wet, tails) / max(1e-12, energy(cleaned, tails)))
+        guard tailLoss > syllableLoss + 3 else { throw fail("reverb reduction: tail −\(Int(tailLoss)) dB, syllables −\(Int(syllableLoss)) dB") }
+
+        // The narrator voice: more low warmth and presence than middle.
+        let tones = (0..<count).map { i -> Float in
+            let t = Double(i) / rate
+            return Float(0.05 * sin(2 * .pi * 80 * t) + 0.05 * sin(2 * .pi * 1000 * t) + 0.05 * sin(2 * .pi * 3500 * t))
+        }
+        var warm = tones
+        VoiceProcessor.narrate(&warm, amount: 1)
+        func level(_ x: [Float], _ f: Double) -> Double {
+            var re = 0.0, im = 0.0
+            for i in Int(rate)..<Int(rate * 3) { re += Double(x[i]) * cos(2 * .pi * f * Double(i) / rate); im += Double(x[i]) * sin(2 * .pi * f * Double(i) / rate) }
+            return 20 * log10(max(1e-12, (re * re + im * im).squareRoot()))
+        }
+        let lowGain = (level(warm, 80) - level(warm, 1000)) - (level(tones, 80) - level(tones, 1000))
+        let presenceGain = (level(warm, 3500) - level(warm, 1000)) - (level(tones, 3500) - level(tones, 1000))
+        guard lowGain > 1.5, presenceGain > 1.5 else { throw fail("narrator voice: low \(lowGain) dB, presence \(presenceGain) dB") }
+
+        // Files made before keep their name; a change of the new settings makes new ones.
+        var settings = VoiceEnhancement()
+        let old = settings.key
+        guard old == "n0.45-l--16-g" else { throw fail("voice key changed: \(old)") }
+        settings.dereverb = 0.5
+        let withReverb = settings.key
+        settings.color = 0.7
+        guard withReverb != old, settings.key != withReverb else { throw fail("voice key") }
+        let reloaded = try JSONDecoder().decode(VoiceEnhancement.self, from: JSONEncoder().encode(settings))
+        guard reloaded == settings else { throw fail("voice settings lost when the project is opened again") }
+        print("✓ voice: less room reverberation, a warmer narrator voice, earlier processed files stay valid")
     }
 }

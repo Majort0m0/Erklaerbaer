@@ -100,6 +100,7 @@ struct InspectorView: View {
         case .audio:
             MixerSection(editor: editor)
             voiceEnhancementSection
+            if editor.project.info.hasMicAudio { voiceExchangeSection }
             AutoEditsSection(editor: editor)
             musicSection
             scriptSection
@@ -504,7 +505,7 @@ struct InspectorView: View {
     // MARK: Templates, logo
 
     private var presetSection: some View {
-        Section("Vorlage") {
+        FoldSection(.preset, summary: editor.foldSummary(.preset)) {
             HStack {
                 Menu {
                     ForEach(StyleLibrary.all) { preset in
@@ -541,7 +542,7 @@ struct InspectorView: View {
     }
 
     private var logoSection: some View {
-        Section("Logo / Wasserzeichen") {
+        FoldSection(.logo, summary: editor.foldSummary(.logo)) {
             if let w = editor.settings.watermark {
                 Picker("Ecke", selection: Binding(get: { w.corner }, set: { v in editor.settings.watermark?.corner = v })) {
                     ForEach(CameraCorner.allCases) { Text($0.label).tag($0) }
@@ -570,33 +571,54 @@ struct InspectorView: View {
     // MARK: Voice and music
 
     private var voiceEnhancementSection: some View {
-        Section("Stimme verbessern") {
+        FoldSection(.voice, summary: editor.foldSummary(.voice)) {
             Toggle("Rauschen entfernen und Lautstärke angleichen", isOn: $editor.settings.voice.enabled)
+            if editor.settings.voice.enabled, editor.settings.importedVoice != nil {
+                Text("Für das Mikrofon gilt die importierte Stimme – hier eingestellt wird nur noch für Voice-overs neu berechnet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if editor.settings.voice.enabled {
-                LabeledSlider(title: "Stärke (sofort hörbar)", value: Binding(get: { editor.settings.voice.strength },
-                                                                              set: { editor.settings.voice.intensity = $0 }),
-                              range: 0...1, format: { $0 < 0.02 ? "nur Lautstärke" : "\(Int($0 * 100)) %" })
-                    .help("Mischt die bearbeitete Stimme mit der unbearbeiteten (gleich laut). Einzelne Bereiche: Mikrofonspur auswählen, S drücken, im Bereich die Stärke ändern.")
-                LabeledSlider(title: "Rauschunterdrückung (neu berechnen)", value: $editor.settings.voice.noiseReduction, range: 0...1,
-                              format: { $0 < 0.02 ? "aus" : "\(Int($0 * 100)) %" })
-                Toggle("Atemgeräusche dämpfen", isOn: Binding(get: { editor.settings.voice.reducesBreaths },
-                                                             set: { on in Task { await editor.setBreaths(on) } }))
-                    .help("Erkennt Atemzüge (rauschig, ohne Tonhöhe, leiser als die Sprache) und legt sie als „Atem“-Bereiche in die Mikrofonspur – jeder einzeln prüfbar")
-                if editor.settings.voice.reducesBreaths {
-                    LabeledSlider(title: "Empfindlichkeit", value: Binding(get: { editor.settings.voice.breathLevel },
-                                                                           set: { editor.setBreathSensitivity($0) }),
-                                  range: 0...1, format: { String(format: "Atem bis %.0f dB unter der Sprache", 18 - 10 * $0) })
-                    LabeledSlider(title: "Dämpfen um", value: Binding(get: { editor.settings.voice.breathDB },
-                                                                      set: { editor.setBreathReduction($0) }),
-                                  range: 3...40, format: { $0 >= 39 ? "fast stumm" : String(format: "%.0f dB", $0) })
-                    if let state = editor.breathState { Text(state).font(.caption).foregroundStyle(.secondary) }
+                FoldGroup(.voiceRoom, summary: editor.foldSummary(.voiceRoom)) {
+                    LabeledSlider(title: "Rauschunterdrückung (neu berechnen)", value: $editor.settings.voice.noiseReduction, range: 0...1,
+                                  format: { $0 < 0.02 ? "aus" : "\(Int($0 * 100)) %" })
+                    LabeledSlider(title: "Hall reduzieren (neu berechnen)", value: Binding(get: { editor.settings.voice.reverbReduction },
+                                                                                          set: { editor.settings.voice.dereverb = $0 < 0.02 ? nil : $0 }),
+                                  range: 0...1, format: { $0 < 0.02 ? "aus" : "\(Int($0 * 100)) %" })
+                        .help("Nimmt den Nachhall des Raums aus der Stimme. Zu viel lässt sie dünn klingen, meist reichen 30 bis 60 %.")
                 }
-                Toggle("Lautheit angleichen", isOn: $editor.settings.voice.normalize)
-                if editor.settings.voice.normalize {
-                    Picker("Ziel", selection: $editor.settings.voice.targetLUFS) {
-                        Text("−14 LUFS (laut)").tag(-14.0)
-                        Text("−16 LUFS (YouTube)").tag(-16.0)
-                        Text("−19 LUFS (ruhig)").tag(-19.0)
+                FoldGroup(.voiceColor, summary: editor.foldSummary(.voiceColor)) {
+                    LabeledSlider(title: "Stärke (sofort hörbar)", value: Binding(get: { editor.settings.voice.strength },
+                                                                                  set: { editor.settings.voice.intensity = $0 }),
+                                  range: 0...1, format: { $0 < 0.02 ? "nur Lautstärke" : "\(Int($0 * 100)) %" })
+                        .help("Mischt die bearbeitete Stimme mit der unbearbeiteten (gleich laut). Einzelne Bereiche: Mikrofonspur auswählen, S drücken, im Bereich die Stärke ändern.")
+                    LabeledSlider(title: "Stimmfarbe: Erzähler (neu berechnen)", value: Binding(get: { editor.settings.voice.narration },
+                                                                                               set: { editor.settings.voice.color = $0 < 0.02 ? nil : $0 }),
+                                  range: 0...1, format: { $0 < 0.02 ? "neutral" : "\(Int($0 * 100)) %" })
+                        .help("Wärmer, präsenter und gleichmäßiger wie ein Sprecher im Hörbuch oder in einer Doku.")
+                }
+                FoldGroup(.voiceBreaths, summary: editor.foldSummary(.voiceBreaths)) {
+                    Toggle("Atemgeräusche dämpfen", isOn: Binding(get: { editor.settings.voice.reducesBreaths },
+                                                                 set: { on in Task { await editor.setBreaths(on) } }))
+                        .help("Erkennt Atemzüge (rauschig, ohne Tonhöhe, leiser als die Sprache) und legt sie als „Atem“-Bereiche in die Mikrofonspur – jeder einzeln prüfbar")
+                    if editor.settings.voice.reducesBreaths {
+                        LabeledSlider(title: "Empfindlichkeit", value: Binding(get: { editor.settings.voice.breathLevel },
+                                                                               set: { editor.setBreathSensitivity($0) }),
+                                      range: 0...1, format: { String(format: "Atem bis %.0f dB unter der Sprache", 18 - 10 * $0) })
+                        LabeledSlider(title: "Dämpfen um", value: Binding(get: { editor.settings.voice.breathDB },
+                                                                          set: { editor.setBreathReduction($0) }),
+                                      range: 3...40, format: { $0 >= 39 ? "fast stumm" : String(format: "%.0f dB", $0) })
+                        if let state = editor.breathState { Text(state).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+                FoldGroup(.voiceLoudness, summary: editor.foldSummary(.voiceLoudness)) {
+                    Toggle("Lautheit angleichen", isOn: $editor.settings.voice.normalize)
+                    if editor.settings.voice.normalize {
+                        Picker("Ziel", selection: $editor.settings.voice.targetLUFS) {
+                            Text("−14 LUFS (laut)").tag(-14.0)
+                            Text("−16 LUFS (YouTube)").tag(-16.0)
+                            Text("−19 LUFS (ruhig)").tag(-19.0)
+                        }
                     }
                 }
                 Group {
@@ -622,8 +644,41 @@ struct InspectorView: View {
         }
     }
 
+    private var voiceExchangeSection: some View {
+        FoldSection(.voiceExchange, summary: editor.foldSummary(.voiceExchange)) {
+            if let imported = editor.settings.importedVoice {
+                HStack {
+                    Label(imported.name, systemImage: "waveform.badge.checkmark").lineLimit(1)
+                    Spacer()
+                    Button("Original") { editor.removeImportedVoice() }
+                        .help("Wieder die Stimme der Aufnahme verwenden")
+                }
+            }
+            HStack {
+                Button("Stimme exportieren …") { editor.exportVoice() }
+                    .help("Die ganze, ungeschnittene Stimme der Aufnahme als WAV-Datei (48 kHz, 24 Bit)")
+                Button(editor.settings.importedVoice == nil ? "Bearbeitete importieren …" : "Neu importieren …") { editor.importVoice() }
+                    .help("Ersetzt die Stimme der Aufnahme; sie wird automatisch am Bild ausgerichtet")
+            }
+            .disabled(editor.isExchangingVoice)
+            if editor.isExchangingVoice {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(editor.voiceExchangeStatus ?? "")
+                }
+                .font(.caption)
+            } else if let status = editor.voiceExchangeStatus {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+            } else if editor.settings.importedVoice == nil {
+                Text("Z. B. in Podcast Profi bearbeiten und wieder importieren. Die Länge dabei nicht ändern – keine Pausen kürzen und nichts herausschneiden.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var musicSection: some View {
-        Section("Hintergrundmusik") {
+        FoldSection(.music, summary: editor.foldSummary(.music)) {
             if let music = editor.settings.music {
                 HStack {
                     Label(music.name, systemImage: "music.note").lineLimit(1)
@@ -666,20 +721,42 @@ struct InspectorView: View {
 
     private var librarySection: some View {
         let _ = editor.libraryVersion
-        return Section("Bibliothek") {
-            Button { editor.importToLibrary() } label: { Label("Dateien importieren …", systemImage: "square.and.arrow.down") }
+        return FoldSection(.library, summary: editor.foldSummary(.library)) {
+            HStack {
+                Button { editor.importToLibrary() } label: { Label("Dateien …", systemImage: "square.and.arrow.down") }
+                    .help("Bilder, Videos und Ton vom Mac in die Bibliothek übernehmen")
+                Button { editor.showURLImport = true } label: { Label("Von Adresse …", systemImage: "link") }
+                    .help("Ein Video, Bild oder Ton aus dem Internet laden – direkte Links, YouTube, Vimeo, Mediatheken …")
+            }
             ForEach(editor.mediaLibrary, id: \.self) { url in
-                Button { editor.useLibraryItem(url) } label: {
-                    HStack {
-                        Image(systemName: EditorModel.libraryIcon(url)).foregroundStyle(.secondary).frame(width: 18)
-                        Text(EditorModel.libraryName(url)).lineLimit(1).truncationMode(.middle)
-                        Spacer()
+                let uses = editor.libraryUses(url)
+                HStack {
+                    Button { editor.useLibraryItem(url) } label: {
+                        HStack {
+                            Image(systemName: EditorModel.libraryIcon(url)).foregroundStyle(.secondary).frame(width: 18)
+                            Text(EditorModel.libraryName(url)).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .draggable(url)
+                    .help("Klick setzt die Datei am Abspielkopf ein, oder in die Timeline ziehen")
+                    Button { editor.removeFromLibrary(url) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .disabled(uses > 0)
+                        .help(uses > 0 ? "Wird im Projekt verwendet (\(uses)×) – erst dort entfernen" : "Aus der Bibliothek entfernen (in den Papierkorb)")
                 }
-                .buttonStyle(.plain)
-                .draggable(url)
-                .help("Klick setzt die Datei am Abspielkopf ein, oder in die Timeline ziehen")
+                .contextMenu {
+                    Button("Am Abspielkopf einsetzen") { editor.useLibraryItem(url) }
+                    Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    Divider()
+                    Button(uses > 0 ? "Wird im Projekt verwendet (\(uses)×)" : "Aus der Bibliothek entfernen", role: .destructive) {
+                        editor.removeFromLibrary(url)
+                    }
+                    .disabled(uses > 0)
+                }
             }
             if editor.mediaLibrary.isEmpty {
                 Text("Noch leer. Importierte Dateien bleiben hier und lassen sich mehrfach verwenden.").font(.caption).foregroundStyle(.secondary)
@@ -688,7 +765,7 @@ struct InspectorView: View {
     }
 
     private var imagesSection: some View {
-        Section("Bilder & Videos") {
+        FoldSection(.media, summary: editor.foldSummary(.media)) {
             HStack {
                 Button { editor.addImage() } label: { Label("Bild …", systemImage: "photo") }
                 Menu {
@@ -818,7 +895,7 @@ struct InspectorView: View {
     }
 
     private var textDesignDefaultsSection: some View {
-        Section("Design aller Texte") {
+        FoldSection(.textDesign, summary: editor.foldSummary(.textDesign)) {
             Menu {
                 ForEach(TextDesignLibrary.all) { d in
                     Button(d.name) { editor.applyDesignToAllTexts(d) }
@@ -835,7 +912,7 @@ struct InspectorView: View {
     }
 
     private var chaptersSection: some View {
-        Section("Kapitel") {
+        FoldSection(.chapters, summary: editor.foldSummary(.chapters)) {
             HStack {
                 Button { editor.addChapter() } label: { Label("Kapitel am Abspielkopf (M)", systemImage: "bookmark") }
                 Spacer()
@@ -864,7 +941,7 @@ struct InspectorView: View {
     // MARK: Background
 
     private var backgroundSection: some View {
-        Section("Hintergrund") {
+        FoldSection(.background, summary: editor.foldSummary(.background)) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                 ForEach(Backgrounds.presets.indices, id: \.self) { i in
                     let selected = editor.settings.background == .gradient(i)
@@ -922,7 +999,7 @@ struct InspectorView: View {
     // MARK: Frame
 
     private var fadeSection: some View {
-        Section("Ein- und Ausblenden") {
+        FoldSection(.fades, summary: editor.foldSummary(.fades)) {
             LabeledSlider(title: "Am Anfang aus Schwarz", value: $editor.settings.fadeIn, range: 0...3,
                           format: { $0 < 0.05 ? "aus" : String(format: "%.1f s", $0) })
             LabeledSlider(title: "Am Ende nach Schwarz", value: $editor.settings.fadeOut, range: 0...3,
@@ -934,7 +1011,7 @@ struct InspectorView: View {
     }
 
     private var frameSection: some View {
-        Section("Format & Rahmen") {
+        FoldSection(.frame, summary: editor.foldSummary(.frame)) {
             Picker("Format", selection: Binding(get: { editor.settings.aspect }, set: { editor.setAspect($0) })) {
                 ForEach(OutputAspect.allCases) { a in Text(a.rawValue).tag(a) }
             }
@@ -982,7 +1059,7 @@ struct InspectorView: View {
     // MARK: Captions
 
     private var captionSection: some View {
-        Section("Untertitel") {
+        FoldSection(.captions, summary: editor.foldSummary(.captions)) {
             HStack {
                 Picker("Sprache", selection: $editor.settings.captionLanguage) {
                     Text("Deutsch").tag("de-DE")
@@ -1013,6 +1090,24 @@ struct InspectorView: View {
             }
             if !editor.settings.captions.isEmpty {
                 Toggle("Im Video anzeigen", isOn: $editor.settings.showCaptions)
+                HStack(spacing: 6) {
+                    Text("Untertitel ab")
+                    Spacer()
+                    Text(editor.settings.captionsFrom.map { formatTime($0) } ?? "Anfang")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Button("Abspielkopf") { editor.setCaptionsFromPlayhead() }
+                        .help("Untertitel erst ab der Stelle des Abspielkopfs zeigen, z. B. nach einem Intro")
+                    if editor.settings.captionsFrom != nil {
+                        Button {
+                            editor.commitUndoStep()
+                            editor.settings.captionsFrom = nil
+                            editor.commitUndoStep()
+                        } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless)
+                            .help("Untertitel wieder ab dem Anfang zeigen")
+                    }
+                }
                 LabeledSlider(title: "Schriftgröße", value: $editor.settings.captionSize, range: 0.6...1.8,
                               format: { "\(Int($0 * 100)) %" })
                 CaptionTranslateRow(editor: editor)
@@ -1020,7 +1115,7 @@ struct InspectorView: View {
                 DisclosureGroup("Texte bearbeiten (\(editor.settings.captions.count))") {
                     ForEach(editor.settings.captions) { caption in
                         VStack(alignment: .leading, spacing: 2) {
-                            Button(formatTime(caption.start)) { editor.seek(to: caption.start) }
+                            Button(formatTime(editor.display(caption.start))) { editor.seek(to: caption.start) }
                                 .buttonStyle(.link)
                                 .font(.caption.monospacedDigit())
                             TextField("Text", text: Binding(get: { caption.text },
@@ -1029,6 +1124,8 @@ struct InspectorView: View {
                                 .textFieldStyle(.roundedBorder)
                                 .font(.callout)
                         }
+                        // Before "captions from": not shown in the video.
+                        .opacity(editor.settings.captionsFrom.map { editor.display(caption.end) <= $0 } ?? false ? 0.45 : 1)
                     }
                 }
             } else {
@@ -1115,7 +1212,7 @@ struct InspectorView: View {
     }
 
     private var scriptSection: some View {
-        Section("Sprechtext") {
+        FoldSection(.script, summary: editor.foldSummary(.script)) {
             TextField("Läuft beim Einsprechen als Teleprompter mit", text: Binding(get: { editor.settings.script ?? "" }, set: { editor.settings.script = $0.isEmpty ? nil : $0 }), axis: .vertical)
                 .lineLimit(3...8)
             if !editor.settings.words.isEmpty {
@@ -1126,7 +1223,7 @@ struct InspectorView: View {
     }
 
     private var voiceOverSection: some View {
-        Section("Voice-over") {
+        FoldSection(.voiceOver, summary: editor.foldSummary(.voiceOver)) {
             Button {
                 editor.toggleVoiceOver()
             } label: {
@@ -1146,7 +1243,7 @@ struct InspectorView: View {
     }
 
     private var echoSection: some View {
-        Section("Echo") {
+        FoldSection(.echo, summary: editor.foldSummary(.echo)) {
             Toggle("Lautsprecher-Echo entfernen", isOn: $editor.settings.removeEcho)
                 .help("Entfernt den über die Lautsprecher ins Mikrofon gelangten Systemton (klingt sonst wie ein Chorus).")
             Group {
@@ -1179,7 +1276,7 @@ struct InspectorView: View {
     // MARK: Texts
 
     private var textsSection: some View {
-        Section("Texte") {
+        FoldSection(.texts, summary: editor.foldSummary(.texts)) {
             HStack {
                 Button {
                     editor.addLowerThird()

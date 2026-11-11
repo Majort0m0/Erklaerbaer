@@ -1006,6 +1006,21 @@ extension EditorModel {
         libraryVersion &+= 1
     }
 
+    /// How often the project uses a file of the library (images, clips, sound, logo, texts …).
+    func libraryUses(_ url: URL) -> Int {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        guard let data = try? encoder.encode(settings), let json = String(data: data, encoding: .utf8) else { return 1 }
+        return json.components(separatedBy: "media/" + url.lastPathComponent).count - 1
+    }
+
+    /// Moves a file the project no longer uses from the library to the Trash.
+    func removeFromLibrary(_ url: URL) {
+        guard libraryUses(url) == 0 else { return }
+        try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        libraryVersion &+= 1
+    }
+
     func useLibraryItem(_ url: URL) {
         switch Self.libraryKind(url) {
         case UTType.image: addImage(url: url, at: currentTime)
