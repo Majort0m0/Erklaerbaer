@@ -336,6 +336,14 @@ Im Inspektor unter **Kamera** ein Bild wählen: Du stehst dann vor diesem Bild o
 
 **M** setzt am Abspielkopf eine Kapitelmarke (Fähnchen in der Zeitskala, ziehbar). Die Liste im Text-Tab prüft die YouTube-Regeln und kopiert die Kapitel für die Videobeschreibung; beim Export entsteht zusätzlich eine `….kapitel.txt`.
 
+### Titelkarte über dem Video
+
+Eine Titelkarte **über dem Video** kann einen **transparenten Hintergrund** haben (Inspektor › Platzierung): dann steht nur der Text auf dem laufenden Video.
+
+### Eingefügte Videoclips
+
+Ein Clip in der Hauptspur erscheint **wie die Aufnahme**, also mit Hintergrund und Rand, in einer Szene auf deren Bildschirm. Oder er erscheint **bildschirmfüllend** über das ganze Bild. Bildschirmfüllend kannst du ihn ganz zeigen oder das Bild ausfüllen lassen, vergrößern und den Ausschnitt verschieben, wenn das Seitenverhältnis nicht passt.
+
 ### Bibliothek
 
 Im Medien-Tab sammelt die **Bibliothek** alle Dateien des Projekts. Einmal importiert, setzt ein Klick sie am Abspielkopf ein, oder du ziehst sie in die Timeline.

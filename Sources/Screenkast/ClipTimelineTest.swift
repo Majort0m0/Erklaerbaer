@@ -1214,6 +1214,58 @@ enum ClipTimelineTest {
         let expected = lens.zoomArea(focus: still.focus!, scale: 2, at: 0.5)
         guard abs(atMiddle.x - expected.midX) < 0.01, abs(atMiddle.y - expected.midY) < 0.01 else { throw fail("fixed zoom camera: \(atMiddle) vs \(expected)") }
 
+        // A clip inserted at the very start stays in the kept part (trimmed start, cut before the first part).
+        try await MainActor.run {
+            for change in [{ (s: inout EditSettings) in s.trimStart = 1 }, { (s: inout EditSettings) in s.cuts = [CutRange(start: 0, end: 1)] }] {
+                let first = EditorModel(project: project(base, change))
+                let before = first.timeMap.total
+                first.seek(to: 1)
+                first.placeInsert(InsertClip(file: "media/x.mov", name: "x", at: first.currentTime, duration: 2, fileDuration: 2))
+                let clip = first.settings.inserts[0]
+                guard first.settings.keptSegments(duration: d).contains(where: { $0.contains(clip.sourceRange.lowerBound + 1e-9) && $0.contains(clip.at) }),
+                      near(first.timeMap.total, before + 2, 0.01), first.clipParts.first.map({ abs($0.range.lowerBound - clip.sourceRange.lowerBound) < 1e-6 }) == true else {
+                    throw fail("insert at the start: \(clip.at), total \(first.timeMap.total) of \(before)")
+                }
+            }
+        }
+        // An inserted clip over the whole picture: filling, and showing the chosen part.
+        var wide = InsertClip(file: "media/x.mov", name: "x", at: 1, duration: 2, fileDuration: 2)
+        wide.fullFrame = true
+        wide.fill = true
+        wide.offsetY = 1
+        let tall = FrameRenderer.fullFrameLayout(wide, out: CGSize(width: 1920, height: 1080), sourceSize: CGSize(width: 800, height: 600))
+        guard near(Double(tall.content.width), 1920, 0.5), near(Double(tall.content.maxY), 1080, 0.5), tall.content.minY < 0 else { throw fail("full frame layout: \(tall.content)") }
+        wide.fill = nil
+        wide.offsetY = nil
+        let whole = FrameRenderer.fullFrameLayout(wide, out: CGSize(width: 1920, height: 1080), sourceSize: CGSize(width: 800, height: 600))
+        guard near(Double(whole.content.height), 1080, 0.5), near(Double(whole.content.midX), 960, 0.5) else { throw fail("full frame fit: \(whole.content)") }
+        var clipFull = InsertClip(file: "media/x.mov", name: "x", at: 1, duration: 2, fileDuration: 2)
+        clipFull.fullFrame = true
+        clipFull.fill = true
+        let filled = FrameRenderer(project: project(base) { $0.inserts = [clipFull]; $0.exportShortSide = 720 })
+        let green = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 640, height: 480))
+        let shot = filled.render(source: green, camera: nil, time: clipFull.sourceRange.lowerBound + FreezeFrame.span / 2, plain: true)
+        var corner = [UInt8](repeating: 0, count: 4)
+        CIContext().render(shot, toBitmap: &corner, rowBytes: 4, bounds: CGRect(x: 2, y: 2, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        guard corner[1] > 200, corner[0] < 60 else { throw fail("full frame insert: corner \(corner)") }
+
+        // A title card over the video without a background: away from the text the video stays visible.
+        var overCard = TextOverlay(kind: .titleCard, start: 1, end: 3, title: "Hallo")
+        overCard.placement = .overlay
+        overCard.free = true
+        let video = CIImage(color: CIColor(red: 0, green: 1, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: base.info.pixelWidth, height: base.info.pixelHeight))
+        func pictureBelow(_ cards: [TextOverlay]) -> [UInt8] {
+            let r = FrameRenderer(project: project(base) { $0.texts = cards; $0.exportShortSide = 720; $0.showCursor = false })
+            var px = [UInt8](repeating: 0, count: 4)
+            CIContext().render(r.render(source: video, camera: nil, time: 2), toBitmap: &px, rowBytes: 4,
+                               bounds: CGRect(x: r.outputSize.width / 2, y: r.outputSize.height * 0.1, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            return px
+        }
+        let plainPicture = pictureBelow([])
+        guard pictureBelow([overCard]) != plainPicture else { throw fail("title card without its background") }
+        overCard.clearBackground = true
+        guard pictureBelow([overCard]) == plainPicture else { throw fail("clear title card hides the video: \(pictureBelow([overCard])) vs \(plainPicture)") }
+
         // A followed mask: between its points, and it moves along with the content.
         var mask = BlurMask(start: 0, end: 2)
         mask.track = [MaskPoint(t: 0, x: 0.1, y: 0.1), MaskPoint(t: 2, x: 0.5, y: 0.3)]

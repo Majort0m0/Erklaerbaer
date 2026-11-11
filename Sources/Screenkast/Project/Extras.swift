@@ -333,6 +333,14 @@ struct InsertClip: Codable, Identifiable, Equatable {
     var volume: Double = 1
     /// Rotation of the video in degrees (portrait phone videos: 90), nil = 0.
     var rotation: Int? = nil
+    /// Over the whole picture instead of in the frame of the recording (nil: like the recording).
+    var fullFrame: Bool? = nil
+    /// Over the whole picture: filling it (cut off where it does not fit) instead of showing all of it,
+    /// enlarged by `zoom`, and which part shows (−1 … 1: left … right, bottom … top).
+    var fill: Bool? = nil
+    var zoom: Double? = nil
+    var offsetX: Double? = nil
+    var offsetY: Double? = nil
 
     /// Tiny source range stretched over the clip (see `FreezeFrame`).
     var sourceRange: ClosedRange<Double> { max(0, at - FreezeFrame.span)...max(at, FreezeFrame.span) }

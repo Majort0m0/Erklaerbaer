@@ -298,9 +298,23 @@ extension EditorModel {
                 clip.at = (before.last?.at ?? 0) + gap            // at the end of the row
             }
         } else {
-            // Not on top of a freeze frame at the same moment.
+            // The clip takes a tiny moment just before `at`: it must lie in a part that is kept,
+            // or the clip disappears with the part that was cut off (at the very start: the trimmed
+            // beginning or a cut right before the first part).
+            let kept = settings.keptSegments(duration: duration)
+            var lowest = FreezeFrame.span
+            if let part = kept.first(where: { clip.at >= $0.lowerBound - 1e-6 && clip.at <= $0.upperBound + 1e-6 }) {
+                clip.at = min(max(clip.at, part.lowerBound + FreezeFrame.span), part.upperBound)
+                lowest = part.lowerBound + FreezeFrame.span
+            } else if let next = kept.first(where: { $0.lowerBound > clip.at }) {
+                clip.at = next.lowerBound + FreezeFrame.span
+                lowest = clip.at
+            } else if let last = kept.last {
+                clip.at = last.upperBound
+            }
+            // Not on top of a freeze frame at the same moment (and still in the kept part).
             clip.at = max(FreezeFrame.span, clip.at)
-            if settings.freezes.contains(where: { abs($0.at - clip.at) < gap }) { clip.at -= gap }
+            if settings.freezes.contains(where: { abs($0.at - clip.at) < gap }) { clip.at = clip.at - gap >= lowest ? clip.at - gap : clip.at + gap }
         }
         settings.inserts.append(clip)
         if autoTrim { applyBlankTrim() }

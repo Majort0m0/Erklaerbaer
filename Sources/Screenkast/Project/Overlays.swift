@@ -208,6 +208,8 @@ struct TextOverlay: Codable, Identifiable, Equatable {
     var design: TextDesign? = nil
     /// Picture or logo shown in the box next to the text (project file).
     var image: String? = nil
+    /// A title card over the video without a background of its own: only the text is shown.
+    var clearBackground: Bool? = nil
     /// Animation when it comes in and goes out (nil: standard).
     var motionIn: TextMotion? = nil
     var motionOut: TextMotion? = nil

@@ -134,6 +134,8 @@ final class FrameRenderer: @unchecked Sendable {
         // Masks and annotations belong to the recording or to the inserted clip they start in.
         let insert = plain ? st.map.insertID(atSource: t) : nil
         if let insert, maybeSource != nil { lock.withLock { insertSizes[insert] = normalized.extent.size } }
+        // An inserted clip can fill the whole picture: no scene, frame or background around it.
+        let fullClip = insert.flatMap { id in s.inserts.first { $0.id == id && $0.fullFrame == true } }
         if !s.color.isNeutral, plain ? s.color.applyToMedia : s.color.applyToScreen {
             normalized = Self.graded(normalized, s.color)
         }
@@ -145,10 +147,11 @@ final class FrameRenderer: @unchecked Sendable {
         let camState = Self.cameraState(at: t, settings: s)
         let regions = camera != nil && !plain ? Self.splitRegions(out: out, split: camState.split) : nil
         // In a scene the video fills the screen of the device.
-        let sceneArea = Self.sceneRects(s, info: st.info, out: out)
+        let sceneArea = fullClip == nil ? Self.sceneRects(s, info: st.info, out: out) : nil
         let mockupScreen = sceneArea?.screen
-        let layout = FrameLayout(out: out, sourceSize: source.extent.size, padding: sceneArea == nil ? s.padding : 0, contentY: s.contentY,
-                                 region: sceneArea?.video ?? regions?.screen)
+        let layout = fullClip.map { Self.fullFrameLayout($0, out: out, sourceSize: source.extent.size) }
+            ?? FrameLayout(out: out, sourceSize: source.extent.size, padding: sceneArea == nil ? s.padding : 0, contentY: s.contentY,
+                           region: sceneArea?.video ?? regions?.screen)
         let ref = layout.ref, pad = layout.pad, fit = layout.fit, content = layout.content
         func toOutput(_ p: CGPoint) -> CGPoint { layout.toOutput(p) }
 
@@ -158,16 +161,17 @@ final class FrameRenderer: @unchecked Sendable {
         let zoomT = view.transform
 
         // 1. Background
-        var image = mockupScreen.flatMap { scene(s.mockup, size: out, screen: $0) } ?? background(style: s.background, blur: s.backgroundBlur, size: out)
+        var image = fullClip != nil ? CIImage(color: .black).cropped(to: outRect)
+            : mockupScreen.flatMap { scene(s.mockup, size: out, screen: $0) } ?? background(style: s.background, blur: s.backgroundBlur, size: out)
         if z > 1.0001 { image = image.transformed(by: zoomT) }
 
         // An enlarged video shows only what lies on the screen of the device.
-        let visibleContent = mockupScreen.map { content.intersection($0) } ?? content
+        let visibleContent = fullClip != nil ? content.intersection(outRect) : mockupScreen.map { content.intersection($0) } ?? content
         let screenRect = visibleContent.applying(zoomT)
-        let radius = (mockupScreen.flatMap { s.mockup?.cornerRadius(screen: $0) } ?? s.cornerRadius * ref) * z
+        let radius = fullClip != nil ? 0 : (mockupScreen.flatMap { s.mockup?.cornerRadius(screen: $0) } ?? s.cornerRadius * ref) * z
 
         // 2. Shadow
-        if s.shadow > 0.01 && pad > 0.5 && mockupScreen == nil {
+        if s.shadow > 0.01 && pad > 0.5 && mockupScreen == nil && fullClip == nil {
             let shape = roundedRect(screenRect, radius: radius, color: CIColor(red: 0, green: 0, blue: 0, alpha: 0.35 + 0.5 * s.shadow))
             let sigma = (10 + 30 * s.shadow) * ref * z
             let shadow = shape
@@ -574,7 +578,9 @@ final class FrameRenderer: @unchecked Sendable {
     /// Full-screen title card: background plus centered title and subtitle.
     private func cardImage(_ o: TextOverlay, settings s: EditSettings, out: CGSize, textAlpha: Double, rise: Double) -> CIImage {
         let outRect = CGRect(origin: .zero, size: out)
-        let bg = o.look.cardBackground.map { CIImage(color: CIColor(cgColor: $0.cgColor)).cropped(to: outRect) }
+        // Over the video it can leave the background away: the text stands on the video itself.
+        let bg = o.placement == .overlay && o.clearBackground == true ? CIImage.empty()
+            : o.look.cardBackground.map { CIImage(color: CIColor(cgColor: $0.cgColor)).cropped(to: outRect) }
             ?? background(style: s.background, blur: s.backgroundBlur, size: out)
         let short = min(out.width, out.height)
         let block = textBlocks.image(title: o.title, subtitle: o.subtitle, design: o.look, align: .center,
@@ -1096,9 +1102,11 @@ final class FrameRenderer: @unchecked Sendable {
         let insert = st.map.insertID(atSource: t)
         let size = insert.flatMap { sizes[$0] } ?? CGSize(width: st.info.pixelWidth, height: st.info.pixelHeight)
         let regions = hasCamera && insert == nil ? Self.splitRegions(out: out, split: Self.cameraState(at: t, settings: st.settings).split) : nil
-        let scene = Self.sceneRects(st.settings, info: st.info, out: out)
-        let layout = FrameLayout(out: out, sourceSize: size, padding: scene == nil ? st.settings.padding : 0, contentY: st.settings.contentY,
-                                 region: scene?.video ?? regions?.screen)
+        let full = insert.flatMap { id in st.settings.inserts.first { $0.id == id && $0.fullFrame == true } }
+        let scene = full == nil ? Self.sceneRects(st.settings, info: st.info, out: out) : nil
+        let layout = full.map { Self.fullFrameLayout($0, out: out, sourceSize: size) }
+            ?? FrameLayout(out: out, sourceSize: size, padding: scene == nil ? st.settings.padding : 0, contentY: st.settings.contentY,
+                           region: scene?.video ?? regions?.screen)
         let cam = Self.camera(at: t, layout: layout, segments: insert == nil ? st.settings.zoomSegments : [], motion: st.motion)
         return (out, layout, cam)
     }
@@ -1327,6 +1335,19 @@ final class FrameRenderer: @unchecked Sendable {
     }
 
     /// Screen of the chosen scene and the area the video is fitted into.
+    /// An inserted clip over the whole picture: all of it or filling it, enlarged, and moved to the
+    /// part that should show where it does not fit.
+    static func fullFrameLayout(_ clip: InsertClip, out: CGSize, sourceSize: CGSize) -> FrameLayout {
+        let W = max(1, sourceSize.width), H = max(1, sourceSize.height)
+        let base = clip.fill == true ? max(out.width / W, out.height / H) : min(out.width / W, out.height / H)
+        let fit = base * CGFloat(max(1, clip.zoom ?? 1))
+        let cw = W * fit, ch = H * fit
+        let extraX = max(0, cw - out.width), extraY = max(0, ch - out.height)
+        let x = (out.width - cw) / 2 - CGFloat(clip.offsetX ?? 0) * extraX / 2
+        let y = (out.height - ch) / 2 - CGFloat(clip.offsetY ?? 0) * extraY / 2
+        return FrameLayout(out: out, content: CGRect(x: x, y: y, width: cw, height: ch), fit: fit)
+    }
+
     static func sceneRects(_ s: EditSettings, info: RecordingInfo, out: CGSize) -> (screen: CGRect, video: CGRect)? {
         guard let kind = s.mockup else { return nil }
         let video = CGFloat(info.pixelWidth) / CGFloat(max(1, info.pixelHeight))
@@ -1454,6 +1475,15 @@ struct FrameLayout {
             y = min(max(pad, (1 - CGFloat(contentY)) * out.height - ch / 2), max(pad, out.height - pad - ch))
         }
         content = CGRect(x: area.minX + (area.width - cw) / 2, y: y, width: cw, height: ch)
+    }
+
+    /// A layout with the content given directly (an inserted clip over the whole picture).
+    init(out: CGSize, content: CGRect, fit: CGFloat) {
+        self.out = out
+        self.content = content
+        self.fit = fit
+        ref = min(out.width, out.height) / 1080
+        pad = 0
     }
 
     /// Normalized capture coordinates (top-left origin) → output coordinates (CI, bottom-left origin).

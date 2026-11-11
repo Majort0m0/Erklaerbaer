@@ -455,6 +455,7 @@ struct InspectorView: View {
         }
     }
 
+    @ViewBuilder
     private func insertSection(_ c: InsertClip) -> some View {
         Section {
             LabeledSlider(title: "Lautstärke", value: Binding(get: { c.volume }, set: { v in editor.updateInsert(id: c.id) { $0.volume = v } }),
@@ -464,6 +465,30 @@ struct InspectorView: View {
             Text("Die Aufnahme wartet, während der Clip läuft. Kürzen: rechte Kante in der Timeline ziehen.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        Section("Darstellung") {
+            Picker("Zeigen", selection: Binding(get: { c.fullFrame == true }, set: { v in editor.updateInsert(id: c.id) { $0.fullFrame = v ? true : nil } })) {
+                Text(editor.settings.mockup == nil ? "Wie die Aufnahme" : "Im Rahmen").tag(false)
+                Text("Bildschirmfüllend").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .help("Wie die Aufnahme: mit Hintergrund und Rand, in einer Szene auf deren Bildschirm. Bildschirmfüllend: über das ganze Bild.")
+            if c.fullFrame == true {
+                Picker("Einpassen", selection: Binding(get: { c.fill == true }, set: { v in editor.updateInsert(id: c.id) { $0.fill = v ? true : nil } })) {
+                    Text("Ganz zeigen").tag(false)
+                    Text("Ausfüllen").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .help("Ganz zeigen: mit schwarzen Rändern, wenn das Seitenverhältnis nicht passt. Ausfüllen: ohne Ränder, dafür wird abgeschnitten.")
+                LabeledSlider(title: "Vergrößern", value: Binding(get: { c.zoom ?? 1 }, set: { v in editor.updateInsert(id: c.id) { $0.zoom = v <= 1.001 ? nil : v } }),
+                              range: 1...3, format: { String(format: "%.1f×", $0) })
+                LabeledSlider(title: "Ausschnitt links – rechts", value: Binding(get: { c.offsetX ?? 0 }, set: { v in editor.updateInsert(id: c.id) { $0.offsetX = abs(v) < 0.01 ? nil : v } }),
+                              range: -1...1, format: { abs($0) < 0.01 ? "Mitte" : String(format: "%+.0f %%", $0 * 100) })
+                LabeledSlider(title: "Ausschnitt unten – oben", value: Binding(get: { c.offsetY ?? 0 }, set: { v in editor.updateInsert(id: c.id) { $0.offsetY = abs(v) < 0.01 ? nil : v } }),
+                              range: -1...1, format: { abs($0) < 0.01 ? "Mitte" : String(format: "%+.0f %%", $0 * 100) })
+                Text("Der Ausschnitt verschiebt sich nur dort, wo der Clip über das Bild hinausragt (beim Ausfüllen oder Vergrößern).")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -1253,9 +1278,16 @@ struct InspectorView: View {
                                           format: { $0 < 0.05 ? "keine" : String(format: "%.1f s", $0) })
                         }
                     }
-                    Text(text.look.cardBackground == nil ? "Hintergrund wie im Video." : "Eigener Hintergrund für die Titelkarte.")
+                    if text.placement == .overlay {
+                        Toggle("Transparenter Hintergrund", isOn: Binding(get: { text.clearBackground == true },
+                                                                           set: { v in editor.updateText(id: id) { $0.clearBackground = v ? true : nil } }))
+                            .help("Nur der Text erscheint, direkt über dem Video")
+                    }
+                    Text(text.placement == .overlay && text.clearBackground == true ? "Der Text steht direkt auf dem Video. Ein Design mit Schatten oder Kasten hält ihn auf hellen Stellen lesbar."
+                         : text.look.cardBackground == nil ? "Hintergrund wie im Video." : "Eigener Hintergrund für die Titelkarte.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             } else {
                 Section("Position") {
