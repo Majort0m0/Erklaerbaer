@@ -845,7 +845,9 @@ final class EditorModel: ObservableObject {
         commitUndoStep(); defer { commitUndoStep() }   // one undo step of its own
         let end = min(duration, start + length)
         guard end - start > 0.5 else { return }
-        let seg = ZoomSegment(start: start, end: end, scale: settings.defaultZoom, isAuto: false)
+        var seg = ZoomSegment(start: start, end: end, scale: settings.defaultZoom, isAuto: false)
+        // Without a mouse (an iPad, an own video) the zoom goes to a fixed point, at first the middle.
+        if !hasCursorData { seg.focusX = 0.5; seg.focusY = 0.5 }
         settings.zoomSegments.append(seg)
         settings.zoomSegments.sort { $0.start < $1.start }
         selectedZoomID = seg.id
@@ -855,6 +857,41 @@ final class EditorModel: ObservableObject {
         guard let id = selectedZoomID else { return }
         settings.zoomSegments.removeAll { $0.id == id }
         selectedZoomID = nil
+    }
+
+    /// The recording has mouse movements a zoom can follow.
+    var hasCursorData: Bool { !project.cursor.samples.isEmpty }
+
+    /// Fixed point or following the mouse; a fixed point starts where the mouse was in the middle of the zoom.
+    func setZoomFixed(_ id: UUID, _ fixed: Bool) {
+        guard let i = settings.zoomSegments.firstIndex(where: { $0.id == id }) else { return }
+        commitUndoStep(); defer { commitUndoStep() }
+        let seg = settings.zoomSegments[i]
+        if fixed {
+            let p = renderer.cursorPosition(at: (seg.start + seg.end) / 2) ?? CGPoint(x: 0.5, y: 0.5)
+            settings.zoomSegments[i].focusX = min(1, max(0, Double(p.x)))
+            settings.zoomSegments[i].focusY = min(1, max(0, Double(p.y)))
+            placeZoom(id)
+        } else {
+            settings.zoomSegments[i].focusX = nil
+            settings.zoomSegments[i].focusY = nil
+        }
+    }
+
+    /// Goes to the start of the zoom, where the picture is not zoomed yet: there the frame of the
+    /// zoomed part can be moved in the preview.
+    func placeZoom(_ id: UUID) {
+        guard let seg = settings.zoomSegments.first(where: { $0.id == id }) else { return }
+        if isPlaying { pause() }
+        seek(to: seg.start)
+    }
+
+    /// Sets the fixed point and the strength of a zoom from the frame drawn in the preview.
+    func setZoomArea(_ id: UUID, area: CGRect) {
+        guard let i = settings.zoomSegments.firstIndex(where: { $0.id == id }) else { return }
+        settings.zoomSegments[i].focusX = min(1, max(0, Double(area.midX)))
+        settings.zoomSegments[i].focusY = min(1, max(0, Double(area.midY)))
+        settings.zoomSegments[i].scale = min(4, max(1.1, renderer.zoomScale(forWidth: area.width, at: currentTime)))
     }
 
     var selectedZoomIndex: Int? {

@@ -195,6 +195,15 @@ struct ZoomSegment: Codable, Identifiable, Equatable {
     var end: Double
     var scale: Double
     var isAuto: Bool = true
+    /// A fixed point the zoom goes to (fractions of the recording, origin top left);
+    /// nil: it follows the mouse pointer.
+    var focusX: Double? = nil
+    var focusY: Double? = nil
+
+    var focus: CGPoint? {
+        guard let focusX, let focusY else { return nil }
+        return CGPoint(x: focusX, y: focusY)
+    }
 }
 
 enum OutputAspect: String, Codable, CaseIterable, Identifiable {

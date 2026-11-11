@@ -243,6 +243,7 @@ enum HelpContent {
                 "**Auto-Zoom:** Erklärbär legt nach der Aufnahme Zooms auf deine Klicks – mit einer ruhigen Kamerafahrt, die an den Rändern weich abbremst. **Auto-Zoom neu** (Inspektor › Zoom) erzeugt sie noch einmal.",
                 "Eigene Zooms: in die leere Zoom-Spur klicken oder **Hinzufügen › Zoom**.",
                 "Zoom-Blöcke lassen sich verschieben und an den Kanten verlängern; die Stärke stellst du im Inspektor ein (für alle neuen Zooms: **Standard-Stärke**).",
+                "**Feste Stelle:** Im Inspektor eines Zooms **Ziel › Feste Stelle** wählen. Am Anfang des Zooms zeigt das Vorschaubild dann einen Rahmen mit dem Ausschnitt: verschieben legt die Stelle fest, an den Ecken ziehen ändert die Stärke. Aufnahmen ohne Mausbewegungen (iPad, eigenes Video) bekommen neue Zooms automatisch mit fester Stelle.",
                 "**Bewegungsunschärfe** (Inspektor › Zoom) lässt Kamerafahrt und Cursor natürlicher wirken.",
             ]),
             .heading("Cursor"),

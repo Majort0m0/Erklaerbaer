@@ -153,6 +153,7 @@ struct PreviewArea: View {
             .overlay { MaskOverlay(editor: editor) }
             .overlay { AnnotationHandle(editor: editor) }
             .overlay { ImageHandle(editor: editor) }
+            .overlay { ZoomAreaHandle(editor: editor) }
             .overlay { VideoOverlayHandle(editor: editor) }
             .overlay { TextOverlayHandle(editor: editor) }
             .overlay { VoiceOverStatus(editor: editor) }
@@ -507,6 +508,28 @@ struct AnnotationHandle: View {
                 drag.end()
                 editor.endInteraction()
             }
+    }
+}
+
+/// The part a zoom with a fixed point shows, as a frame on the not yet zoomed preview: dragging
+/// moves the point, the corners change the strength.
+struct ZoomAreaHandle: View {
+    @ObservedObject var editor: EditorModel
+
+    var body: some View {
+        GeometryReader { geo in
+            if let i = editor.selectedZoomIndex, let focus = editor.settings.zoomSegments[i].focus,
+               AutoZoom.zoom(at: editor.currentTime, segments: editor.settings.zoomSegments) < 1.01 {
+                let seg = editor.settings.zoomSegments[i]
+                let g = PreviewGeometry(editor: editor, size: geo.size)
+                let area = editor.renderer.zoomArea(focus: focus, scale: seg.scale, at: editor.currentTime)
+                let view = g.view(area)
+                PreviewRectEditor(editor: editor, rect: view, color: .purple, aspect: view.height > 0 ? view.width / view.height : nil, dashed: true,
+                                  help: "Zoom-Ausschnitt: verschieben legt die Stelle fest, an den Ecken ziehen ändert die Stärke") { r in
+                    editor.setZoomArea(seg.id, area: g.normalized(r))
+                }
+            }
+        }
     }
 }
 

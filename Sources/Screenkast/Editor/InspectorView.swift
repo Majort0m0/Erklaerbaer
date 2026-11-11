@@ -1456,9 +1456,24 @@ struct InspectorView: View {
                                              set: { editor.updateZoom(id: seg.id, scale: $0) }),
                               range: 1.1...4,
                               format: { String(format: "%.1f×", $0) })
-                Text("Dauer und Lage in der Timeline ändern. Die Kamera folgt dem Mauszeiger.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Picker("Ziel", selection: Binding(get: { seg.focus != nil }, set: { editor.setZoomFixed(seg.id, $0) })) {
+                    Text("Mauszeiger").tag(false)
+                    Text("Feste Stelle").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!editor.hasCursorData && seg.focus != nil)
+                .help(editor.hasCursorData ? "Dem Mauszeiger folgen oder auf eine Stelle zoomen, die du im Vorschaubild festlegst" : "Diese Aufnahme hat keine Mausbewegungen: der Zoom geht auf eine feste Stelle")
+                if seg.focus != nil {
+                    Button { editor.placeZoom(seg.id) } label: { Label("Ausschnitt im Vorschaubild festlegen", systemImage: "viewfinder") }
+                    Text("Am Anfang des Zooms zeigt das Vorschaubild einen Rahmen: verschieben legt die Stelle fest, an den Ecken ziehen die Stärke.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Dauer und Lage in der Timeline ändern. Die Kamera folgt dem Mauszeiger.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }

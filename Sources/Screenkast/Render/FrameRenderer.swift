@@ -1110,6 +1110,23 @@ final class FrameRenderer: @unchecked Sendable {
         return CGPoint(x: q.x, y: out.height - q.y)
     }
 
+    /// The part of the recording a zoom of `scale` on `focus` shows (fractions, origin top left),
+    /// kept inside the recording like the camera does.
+    func zoomArea(focus: CGPoint, scale: Double, at t: Double) -> CGRect {
+        let (out, layout, _) = frameGeometry(at: t)
+        let w = out.width / (CGFloat(max(1, scale)) * max(1, layout.content.width))
+        let h = out.height / (CGFloat(max(1, scale)) * max(1, layout.content.height))
+        func axis(_ v: CGFloat, _ size: CGFloat) -> CGFloat { size >= 1 ? 0.5 : min(max(v, size / 2), 1 - size / 2) }
+        let cx = axis(focus.x, w), cy = axis(focus.y, h)
+        return CGRect(x: cx - w / 2, y: cy - h / 2, width: w, height: h)
+    }
+
+    /// The zoom at which the shown part of the recording is `width` wide (fraction of the recording).
+    func zoomScale(forWidth width: CGFloat, at t: Double) -> Double {
+        let (out, layout, _) = frameGeometry(at: t)
+        return Double(out.width / (max(0.01, width) * max(1, layout.content.width)))
+    }
+
     /// Inverse of `outputPoint`.
     func normalizedPoint(fromOutput q: CGPoint, at t: Double) -> CGPoint {
         let (out, layout, cam) = frameGeometry(at: t)
@@ -1471,16 +1488,19 @@ extension FrameRenderer {
         // Keep the fully zoomed view inside the recording; center it if the recording is too small.
         // Soft limits: the camera eases into the edge instead of stopping abruptly.
         let soften = 90 * layout.ref
+        // A fixed point is where it was put, the mouse is followed with soft edges.
+        let fixed = dominant.segment.focus
         func clampAxis(_ v: CGFloat, half: CGFloat, lo: CGFloat, hi: CGFloat) -> CGFloat {
             let a = lo + half, b = hi - half
             guard a < b else { return (lo + hi) / 2 }
+            if fixed != nil { return min(max(v, a), b) }
             let k = min(soften, (b - a) / 2)
             guard k > 0.5 else { return min(max(v, a), b) }
             if v > b - k { return b - k * exp(-(v - (b - k)) / k) }
             if v < a + k { return a + k * exp(-((a + k) - v) / k) }
             return v
         }
-        let f = layout.toOutput(motion.focus(at: t) ?? CGPoint(x: 0.5, y: 0.5))
+        let f = layout.toOutput(fixed ?? motion.focus(at: t) ?? CGPoint(x: 0.5, y: 0.5))
         let target = CGPoint(x: clampAxis(f.x, half: out.width / (2 * scale), lo: content.minX, hi: content.maxX),
                              y: clampAxis(f.y, half: out.height / (2 * scale), lo: content.minY, hi: content.maxY))
         let start = CGPoint(x: content.midX, y: content.midY)

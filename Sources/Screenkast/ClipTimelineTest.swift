@@ -1184,6 +1184,36 @@ enum ClipTimelineTest {
             try? FileManager.default.removeItem(at: stored)
         }
 
+        // A zoom on a fixed point goes there, whatever the mouse does; the frame and the strength belong together.
+        try await MainActor.run {
+            var fixed = ZoomSegment(start: 1, end: 3, scale: 2, isAuto: false)
+            fixed.focusX = 0.2
+            fixed.focusY = 0.3
+            let zoomed = EditorModel(project: project(base) { $0.zoomSegments = [fixed] })
+            let area = zoomed.renderer.zoomArea(focus: fixed.focus!, scale: 2, at: 2)
+            // Near the edge the frame stays inside the recording, like the camera.
+            guard near(Double(area.midX), max(0.2, Double(area.width) / 2), 0.001), near(Double(area.midY), max(0.3, Double(area.height) / 2), 0.001),
+                  near(zoomed.renderer.zoomScale(forWidth: area.width, at: 2), 2, 0.001) else { throw fail("zoom area: \(area)") }
+            zoomed.selectedZoomID = fixed.id
+            zoomed.setZoomArea(fixed.id, area: CGRect(x: 0.5, y: 0.4, width: area.width * 2 / 3, height: area.height * 2 / 3))
+            let set = zoomed.settings.zoomSegments[0]
+            guard near(set.scale, 3, 0.01), near(set.focusX ?? 0, 0.5 + Double(area.width) / 3, 0.001) else { throw fail("zoom from frame: \(set)") }
+            zoomed.setZoomFixed(fixed.id, false)
+            guard zoomed.settings.zoomSegments[0].focus == nil else { throw fail("zoom back to the mouse") }
+            let noMouse = EditorModel(project: Project(url: base.url, info: base.info, cursor: CursorTrack(), settings: project(base) { _ in }.settings))
+            noMouse.addZoom(start: 1)
+            guard noMouse.settings.zoomSegments.last?.focus == CGPoint(x: 0.5, y: 0.5), !noMouse.hasCursorData else { throw fail("zoom without a mouse") }
+            guard try JSONDecoder().decode(ZoomSegment.self, from: Data(#"{"id":"E621E1F8-C36C-495A-93FC-0C247A3E6E5F","start":1,"end":2,"scale":2,"isAuto":true}"#.utf8)).focus == nil else { throw fail("old zoom") }
+        }
+        // The camera of a fixed zoom: in the middle of the zoom it looks at the fixed point.
+        var still = ZoomSegment(start: 0.5, end: 3.5, scale: 2, isAuto: false)
+        still.focusX = 0.3
+        still.focusY = 0.6
+        let lens = FrameRenderer(project: project(base) { $0.zoomSegments = [still]; $0.padding = 0; $0.showCursor = false })
+        let atMiddle = lens.normalizedPoint(fromOutput: CGPoint(x: lens.outputSize.width / 2, y: lens.outputSize.height / 2), at: 2)
+        let expected = lens.zoomArea(focus: still.focus!, scale: 2, at: 0.5)
+        guard abs(atMiddle.x - expected.midX) < 0.01, abs(atMiddle.y - expected.midY) < 0.01 else { throw fail("fixed zoom camera: \(atMiddle) vs \(expected)") }
+
         // A followed mask: between its points, and it moves along with the content.
         var mask = BlurMask(start: 0, end: 2)
         mask.track = [MaskPoint(t: 0, x: 0.1, y: 0.1), MaskPoint(t: 2, x: 0.5, y: 0.3)]
