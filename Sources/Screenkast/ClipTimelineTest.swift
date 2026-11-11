@@ -30,6 +30,7 @@ enum ClipTimelineTest {
         try await voiceExchangeTest(base, dir)
         try await thumbnailTest(dir)
         try await urlImportTest(dir)
+        try await libraryTest(base, dir)
         try await deviceWriterTest(dir)
     }
 
@@ -1396,6 +1397,62 @@ enum ClipTimelineTest {
         saved.cameraBackground = nil
         guard try JSONDecoder().decode(EditSettings.self, from: JSONEncoder().encode(saved)).script == "Hallo" else { throw fail("script not saved") }
         print("✓ editing: clicks to markings, steps, selecting, roll, slip, lanes, keyframes, library and packs")
+    }
+
+    /// The media library: a dragged file arrives in the timeline as a file, a picture goes into
+    /// the main track (as a still movie the length can be changed), exported names stay apart.
+    private static func libraryTest(_ base: Project, _ dir: URL) async throws {
+        let work = dir.appendingPathComponent("bibliothek", isDirectory: true)
+        try? FileManager.default.removeItem(at: work)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: work) }
+        // A red picture, 400 × 300.
+        let picture = work.appendingPathComponent("ABCD1234-Rot.png")
+        let ctx = CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        let destination = CGImageDestinationCreateWithURL(picture as CFURL, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, ctx.makeImage()!, nil)
+        guard CGImageDestinationFinalize(destination) else { throw fail("test picture") }
+
+        // Dragging a file of the library gives the timeline a file, as from the Finder.
+        let provider = NSItemProvider(object: picture as NSURL)
+        guard provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier), await provider.loadFileURL() == picture else {
+            throw fail("dragged library file is not a file for the timeline")
+        }
+
+        // The picture as a still movie in the main track.
+        let stills = base.url.appendingPathComponent("media/stills", isDirectory: true)
+        try FileManager.default.createDirectory(at: stills, withIntermediateDirectories: true)
+        let movie = stills.appendingPathComponent("selbsttest-rot.mov")
+        defer { try? FileManager.default.removeItem(at: movie) }
+        try await EditorModel.stillMovie(from: picture, to: movie, seconds: EditorModel.stillLength)
+        let length = try await AVURLAsset(url: movie).load(.duration).seconds
+        guard abs(length - EditorModel.stillLength) < 0.05 else { throw fail("still movie length \(length)") }
+        let p = project(base) { s in
+            s.inserts = [InsertClip(file: "media/stills/selbsttest-rot.mov", name: "Rot", at: 1.0, duration: 5, fileDuration: EditorModel.stillLength, fullFrame: true)]
+        }
+        let renderer = FrameRenderer(project: p)
+        let media = try await MediaBuilder.make(project: p, renderer: renderer, fps: 30)
+        let size = renderer.outputSize
+        func centre(_ t: Double) async throws -> (Int, Int, Int) {
+            let image = try await EditorModel.renderFrame(media: media, renderSize: size, at: t)
+            let c = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            c.draw(image, in: CGRect(x: -CGFloat(image.width) / 2, y: -CGFloat(image.height) / 2, width: CGFloat(image.width), height: CGFloat(image.height)))
+            let px = c.data!.assumingMemoryBound(to: UInt8.self)
+            return (Int(px[0]), Int(px[1]), Int(px[2]))
+        }
+        let during = try await centre(3.0), later = try await centre(5.9)
+        guard during.0 > 200, during.1 < 100, during.2 < 60, later.0 > 200, later.1 < 100 else { throw fail("picture in the main track: \(during) \(later)") }
+        let total = media.totalDuration
+        guard abs(total - (base.info.duration + 5)) < 0.1 else { throw fail("main track length with the picture: \(total)") }
+
+        // Exported names: without the project's number, never overwriting.
+        try Data().write(to: work.appendingPathComponent("Rot.png"))
+        guard EditorModel.uniqueExportURL(in: work, for: picture).lastPathComponent == "Rot 2.png" else { throw fail("export name") }
+        print("✓ library: dragged files reach the timeline, a picture stands 5 s in the main track (stretchable to a minute), export names")
     }
 
     /// Loading from an address, without the internet: addresses, yt-dlp's output, a stand-in

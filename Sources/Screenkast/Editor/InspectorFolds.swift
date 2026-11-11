@@ -43,7 +43,7 @@ enum InspectorFold: String, CaseIterable {
         case .captionStyle: return "Untertitel-Stil"
         case .captionPosition: return "Position der Untertitel"
         case .library: return "Bibliothek"
-        case .media: return "Bilder & Videos"
+        case .media: return "Im Video verwendet"
         case .logo: return "Logo / Wasserzeichen"
         }
     }
@@ -314,7 +314,8 @@ extension EditorModel {
             let y = s.captionStyle.y
             return y > 0.75 ? "unten" : y < 0.25 ? "oben" : "Mitte"
         case .library:
-            return count(mediaLibrary.count, "Datei", "Dateien", none: "leer")
+            let used = s.images.count + s.videoOverlays.count + s.inserts.count
+            return join([count(mediaLibrary.count, "Datei", "Dateien", none: "leer"), used > 0 ? "\(used) im Video" : nil])
         case .media:
             return count(s.images.count + s.videoOverlays.count + s.inserts.count, "Element", "Elemente")
         case .logo:

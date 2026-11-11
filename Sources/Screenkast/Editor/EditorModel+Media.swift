@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import ImageIO
 import UniformTypeIdentifiers
 
 // MARK: - Time ranges in timeline time
@@ -168,6 +169,8 @@ extension EditorModel {
             switch (kind, target) {
             case (.movie, .mainTrack):
                 insertClip(url: url, at: time)
+            case (.image, .mainTrack):
+                insertImage(url: url, at: time)
             case (.movie, .preview(let p)):
                 addVideoOverlay(url: url, at: time, center: p)
             case (.movie, _):
@@ -187,6 +190,73 @@ extension EditorModel {
             time = min(duration - 0.2, sourceTime(display(time) + 0.5))
         }
         return used
+    }
+
+    /// A picture in the main track at source time `at`, like a video clip (5 seconds, can be
+    /// stretched to a minute): it becomes a short still movie in media/stills (not listed in the
+    /// library).
+    func insertImage(url: URL, at: Double, seconds: Double = 5) {
+        let folder = project.url.appendingPathComponent("media/stills", isDirectory: true)
+        let name = url.deletingPathExtension().lastPathComponent
+        let shown = Self.libraryName(url)
+        Task {
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let movie = folder.appendingPathComponent("\(UUID().uuidString.prefix(8))-\(name).mov")
+                try await Self.stillMovie(from: url, to: movie, seconds: Self.stillLength)
+                placeInsert(InsertClip(file: "media/stills/\(movie.lastPathComponent)", name: shown, at: at,
+                                       duration: min(seconds, Self.stillLength), fileDuration: Self.stillLength))
+            } catch {
+                libraryMessage = "Das Bild ließ sich nicht einfügen: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Longest a picture can stand in the main track (its still movie is this long).
+    static let stillLength = 60.0
+
+    /// A movie that shows one picture for `seconds` (H.264, the picture's own size up to 3840
+    /// pixels, its orientation applied; transparent parts become black).
+    nonisolated static func stillMovie(from image: URL, to movie: URL, seconds: Double) async throws {
+        guard let source = CGImageSourceCreateWithURL(image as CFURL, nil),
+              let picture = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 3840] as CFDictionary) else {
+            throw RecorderError.writerFailed("Bild lesen")
+        }
+        let w = max(16, picture.width & ~1), h = max(16, picture.height & ~1)
+        try? FileManager.default.removeItem(at: movie)
+        let writer = try AVAssetWriter(outputURL: movie, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h])
+        guard writer.canAdd(input) else { throw RecorderError.writerFailed("Standbild") }
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? RecorderError.writerFailed("Standbild") }
+        writer.startSession(atSourceTime: .zero)
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(nil, w, h, kCVPixelFormatType_32BGRA, [kCVPixelBufferCGImageCompatibilityKey: true] as CFDictionary, &buffer)
+        guard let buffer else { throw RecorderError.writerFailed("Standbild") }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let ctx = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: w, height: h, bitsPerComponent: 8,
+                               bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                               bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) {
+            ctx.setFillColor(CGColor(gray: 0, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.draw(picture, in: CGRect(x: 0, y: 0, width: w, height: h))
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        // The same picture at the start and just before the end: the movie is exactly `seconds` long.
+        for t in [0, seconds - 1.0 / 30] {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            guard adaptor.append(buffer, withPresentationTime: CMTime(seconds: t, preferredTimescale: 600)) else {
+                throw writer.error ?? RecorderError.writerFailed("Standbild")
+            }
+        }
+        input.markAsFinished()
+        writer.endSession(atSourceTime: CMTime(seconds: seconds, preferredTimescale: 600))
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? RecorderError.writerFailed("Standbild") }
     }
 
     /// Picture from a file at source time `at` (4 timeline seconds).

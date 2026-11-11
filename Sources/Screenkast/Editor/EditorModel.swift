@@ -1,6 +1,8 @@
 import SwiftUI
 import AVFoundation
 import CoreImage
+import ImageIO
+import UniformTypeIdentifiers
 
 /// What is selected in the timeline (one thing at a time). `segment`: the part of the recording
 /// between two split points that starts at this source time.
@@ -220,6 +222,8 @@ final class EditorModel: ObservableObject {
     @Published var showYouTubeAssistant = false
     /// "Von einer Adresse laden" (media library).
     @Published var showURLImport = false
+    /// A problem with the media library (shown below it).
+    @Published var libraryMessage: String?
     enum EchoState: Equatable {
         case notNeeded, processing, ready(EchoCanceller.Stats?), failed(String)
     }
@@ -1079,6 +1083,41 @@ final class EditorModel: ObservableObject {
         let T = display(currentTime)
         settings.captionsFrom = T > 0.05 ? T : nil
         commitUndoStep()
+    }
+
+    /// The picture at the playhead, as it will be exported, into the media library (PNG).
+    func snapshotToLibrary() {
+        guard let media else { return }
+        let renderSize = renderer.outputSize
+        let compositionTime = display(currentTime) + playerOffset
+        let T = outputTime
+        let folder = project.url.appendingPathComponent("media", isDirectory: true)
+        Task {
+            do {
+                let image = try await Self.renderFrame(media: media, renderSize: renderSize, at: compositionTime)
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let seconds = Int(T.rounded(.down))
+                let name = String(format: "%@-Standbild %d.%02d.png", String(UUID().uuidString.prefix(8)), seconds / 60, seconds % 60)
+                let url = folder.appendingPathComponent(name)
+                guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+                    throw RecorderError.writerFailed("Standbild")
+                }
+                CGImageDestinationAddImage(destination, image, nil)
+                guard CGImageDestinationFinalize(destination) else { throw RecorderError.writerFailed("Standbild") }
+                libraryVersion &+= 1
+            } catch {
+                libraryMessage = "Standbild ging nicht: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// One frame of the finished video (composition time `t`), in the export's size.
+    nonisolated static func renderFrame(media: MediaComposition, renderSize: CGSize, at t: Double) async throws -> CGImage {
+        let gen = AVAssetImageGenerator(asset: media.asset)
+        gen.videoComposition = media.videoComposition(renderSize: renderSize, fps: 30)
+        gen.requestedTimeToleranceBefore = .zero
+        gen.requestedTimeToleranceAfter = .zero
+        return try await gen.image(at: CMTime(seconds: max(0, t), preferredTimescale: 600)).image
     }
 
     /// The captions as SRT in output time.

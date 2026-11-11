@@ -986,7 +986,7 @@ extension EditorModel {
     }
 
     /// Without the number that keeps file names apart in the project.
-    static func libraryName(_ url: URL) -> String {
+    nonisolated static func libraryName(_ url: URL) -> String {
         let name = url.deletingPathExtension().lastPathComponent
         guard name.count > 9, name[name.index(name.startIndex, offsetBy: 8)] == "-" else { return name }
         return String(name.dropFirst(9))
@@ -1019,6 +1019,71 @@ extension EditorModel {
         guard libraryUses(url) == 0 else { return }
         try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
         libraryVersion &+= 1
+    }
+
+    /// Where a file of the library goes.
+    enum LibraryPlacement { case overlay, mainTrack, narration, music }
+
+    static func libraryIsAudio(_ url: URL) -> Bool { libraryKind(url) == UTType.audio }
+
+    /// Puts a file of the library at the playhead: over the recording (picture in picture), into
+    /// the main track (behind a selected part, the recording waits), or as sound.
+    func placeLibraryItem(_ url: URL, _ placement: LibraryPlacement) {
+        let isImage = Self.libraryKind(url) == UTType.image
+        switch placement {
+        case .overlay:
+            if isImage { addImage(url: url, at: currentTime) } else { addVideoOverlay(url: url, at: currentTime, name: Self.libraryName(url)) }
+        case .mainTrack:
+            let at = selectedSegment?.upperBound ?? min(max(currentTime, 0), duration)
+            if isImage { insertImage(url: url, at: at) } else { insertClip(url: url, at: at) }
+        case .narration:
+            addNarrationFile(url: url, at: currentTime)
+        case .music:
+            setMusic(url: url)
+        }
+    }
+
+    /// Saves a copy of a library file under its name (without the project's number).
+    func exportLibraryItem(_ url: URL) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = Self.libraryName(url) + (url.pathExtension.isEmpty ? "" : "." + url.pathExtension)
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+            try FileManager.default.copyItem(at: url, to: target)
+        } catch {
+            libraryMessage = "Export fehlgeschlagen: \(error.localizedDescription)"
+        }
+    }
+
+    /// Copies all files of the library into a folder (nothing there is overwritten).
+    func exportLibrary() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Exportieren"
+        panel.message = "Ordner für alle \(mediaLibrary.count) Dateien der Bibliothek wählen"
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        var failed = 0
+        for url in mediaLibrary {
+            do { try FileManager.default.copyItem(at: url, to: Self.uniqueExportURL(in: folder, for: url)) } catch { failed += 1 }
+        }
+        libraryMessage = failed > 0 ? "\(failed) Datei(en) ließen sich nicht exportieren." : nil
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
+    }
+
+    /// "<Name>.<ext>" in the folder, "<Name> 2.<ext>" … when the name is taken.
+    nonisolated static func uniqueExportURL(in folder: URL, for file: URL) -> URL {
+        let base = libraryName(file), ext = file.pathExtension
+        func url(_ name: String) -> URL { folder.appendingPathComponent(ext.isEmpty ? name : name + "." + ext) }
+        var candidate = url(base)
+        var n = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = url("\(base) \(n)")
+            n += 1
+        }
+        return candidate
     }
 
     func useLibraryItem(_ url: URL) {

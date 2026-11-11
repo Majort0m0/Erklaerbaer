@@ -114,7 +114,6 @@ struct InspectorView: View {
             if !editor.settings.captions.isEmpty { CaptionStyleSection(editor: editor) }
         case .media:
             librarySection
-            imagesSection
             logoSection
         case .transcript:
             AutoEditsSection(editor: editor)
@@ -719,112 +718,146 @@ struct InspectorView: View {
 
     // MARK: Pictures, chapters
 
+    /// The media of the project in one place: what was imported, loaded or snapped, each file
+    /// with its ways into the video; below, what the video already uses.
     private var librarySection: some View {
         let _ = editor.libraryVersion
         return FoldSection(.library, summary: editor.foldSummary(.library)) {
-            HStack {
+            HStack(spacing: 6) {
                 Button { editor.importToLibrary() } label: { Label("Dateien …", systemImage: "square.and.arrow.down") }
                     .help("Bilder, Videos und Ton vom Mac in die Bibliothek übernehmen")
-                Button { editor.showURLImport = true } label: { Label("Von Adresse …", systemImage: "link") }
+                Button { editor.showURLImport = true } label: { Label("Adresse …", systemImage: "link") }
                     .help("Ein Video, Bild oder Ton aus dem Internet laden – direkte Links, YouTube, Vimeo, Mediatheken …")
+                Spacer(minLength: 0)
+                Menu {
+                    Button("Alle Dateien exportieren …") { editor.exportLibrary() }
+                        .disabled(editor.mediaLibrary.isEmpty)
+                    Button("Ordner im Finder zeigen") {
+                        NSWorkspace.shared.activateFileViewerSelecting([editor.project.url.appendingPathComponent("media")])
+                    }
+                } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Bibliothek exportieren")
             }
-            ForEach(editor.mediaLibrary, id: \.self) { url in
-                let uses = editor.libraryUses(url)
-                HStack {
-                    Button { editor.useLibraryItem(url) } label: {
+            Button { editor.snapshotToLibrary() } label: { Label("Standbild der Abspielposition", systemImage: "camera") }
+                .help("Das Bild an der Abspielposition, so wie es exportiert wird, als PNG in die Bibliothek")
+            ForEach(editor.mediaLibrary, id: \.self) { url in libraryRow(url) }
+            if editor.mediaLibrary.isEmpty {
+                Text("Noch leer. Importierte, geladene und Standbilder bleiben hier und lassen sich mehrfach verwenden.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let message = editor.libraryMessage {
+                Text(message).font(.caption).foregroundStyle(.red)
+            }
+            let usedCount = editor.settings.videoOverlays.count + editor.settings.images.count + editor.settings.inserts.count
+            if usedCount > 0 {
+                FoldGroup(.media, summary: editor.foldSummary(.media)) {
+                ForEach(editor.settings.videoOverlays) { o in
+                    Button {
+                        editor.selection = .videoOverlay(o.id)
+                    } label: {
                         HStack {
-                            Image(systemName: EditorModel.libraryIcon(url)).foregroundStyle(.secondary).frame(width: 18)
-                            Text(EditorModel.libraryName(url)).lineLimit(1).truncationMode(.middle)
+                            Image(systemName: o.synced ? "macwindow.on.rectangle" : "pip").foregroundStyle(.secondary)
+                            Text(o.name).lineLimit(1)
                             Spacer()
+                            Text("\(formatTime(editor.displayRange(o).lowerBound))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .draggable(url)
-                    .help("Klick setzt die Datei am Abspielkopf ein, oder in die Timeline ziehen")
-                    Button { editor.removeFromLibrary(url) } label: { Image(systemName: "trash") }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .disabled(uses > 0)
-                        .help(uses > 0 ? "Wird im Projekt verwendet (\(uses)×) – erst dort entfernen" : "Aus der Bibliothek entfernen (in den Papierkorb)")
                 }
-                .contextMenu {
-                    Button("Am Abspielkopf einsetzen") { editor.useLibraryItem(url) }
-                    Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                    Divider()
-                    Button(uses > 0 ? "Wird im Projekt verwendet (\(uses)×)" : "Aus der Bibliothek entfernen", role: .destructive) {
-                        editor.removeFromLibrary(url)
+                ForEach(editor.settings.images) { o in
+                    Button {
+                        editor.selection = .image(o.id)
+                        editor.seek(to: o.start + min(0.5, (o.end - o.start) / 2))
+                    } label: {
+                        HStack {
+                            Image(systemName: "photo").foregroundStyle(.secondary)
+                            Text(URL(fileURLWithPath: o.file).lastPathComponent).lineLimit(1)
+                            Spacer()
+                            Text("\(formatTime(editor.display(o.start)))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .disabled(uses > 0)
+                    .buttonStyle(.plain)
                 }
-            }
-            if editor.mediaLibrary.isEmpty {
-                Text("Noch leer. Importierte Dateien bleiben hier und lassen sich mehrfach verwenden.").font(.caption).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var imagesSection: some View {
-        FoldSection(.media, summary: editor.foldSummary(.media)) {
-            HStack {
-                Button { editor.addImage() } label: { Label("Bild …", systemImage: "photo") }
-                Menu {
-                    Button("Als Bild im Bild (über dem Video) …") { editor.addVideoOverlay() }
-                    Button("In die Hauptspur einfügen …") { editor.addInsertClip() }
-                } label: {
-                    Label("Video", systemImage: "film")
-                }
-                .fixedSize()
-            }
-            ForEach(editor.settings.videoOverlays) { o in
-                Button {
-                    editor.selection = .videoOverlay(o.id)
-                } label: {
-                    HStack {
-                        Image(systemName: o.synced ? "macwindow.on.rectangle" : "pip").foregroundStyle(.secondary)
-                        Text(o.name).lineLimit(1)
-                        Spacer()
-                        Text("\(formatTime(editor.displayRange(o).lowerBound))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                ForEach(editor.settings.inserts) { c in
+                    Button {
+                        editor.selection = .insert(c.id)
+                        editor.seek(to: c.sourceRange.lowerBound + FreezeFrame.span / 2)
+                    } label: {
+                        HStack {
+                            Image(systemName: "film.stack").foregroundStyle(.secondary)
+                            Text(c.name).lineLimit(1)
+                            Spacer()
+                            Text(String(format: "%.1f s", c.duration)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-            }
-            ForEach(editor.settings.images) { o in
-                Button {
-                    editor.selection = .image(o.id)
-                    editor.seek(to: o.start + min(0.5, (o.end - o.start) / 2))
-                } label: {
-                    HStack {
-                        Image(systemName: "photo").foregroundStyle(.secondary)
-                        Text(URL(fileURLWithPath: o.file).lastPathComponent).lineLimit(1)
-                        Spacer()
-                        Text("\(formatTime(editor.display(o.start)))").font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
             }
-            ForEach(editor.settings.inserts) { c in
-                Button {
-                    editor.selection = .insert(c.id)
-                    editor.seek(to: c.sourceRange.lowerBound + FreezeFrame.span / 2)
-                } label: {
-                    HStack {
-                        Image(systemName: "film.stack").foregroundStyle(.secondary)
-                        Text(c.name).lineLimit(1)
-                        Spacer()
-                        Text(String(format: "%.1f s", c.duration)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Text("Bilder und Videos „Bild im Bild“ liegen über der Aufnahme. Ein eingefügter Videoclip unterbricht sie – die Aufnahme wartet, solange er läuft. "
-                 + "Dateien lassen sich auch aus dem Finder in die Timeline ziehen: auf die Video-Spur zum Einfügen, auf die Medien-Spur oder ins Vorschaubild als Overlay.")
+            Text("Bild im Bild liegt über der Aufnahme; in der Timeline (Hauptspur) unterbricht ein Clip oder Bild die Aufnahme – sie wartet, solange es läuft. "
+                 + "Dateien lassen sich auch in die Timeline ziehen: auf die Video-Spur zum Einfügen, auf die Medien-Spur oder ins Vorschaubild als Bild im Bild.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// A file of the library: drag it into the timeline or put it at the playhead.
+    private func libraryRow(_ url: URL) -> some View {
+        let uses = editor.libraryUses(url)
+        let audio = EditorModel.libraryIsAudio(url)
+        return HStack(spacing: 6) {
+            Image(systemName: EditorModel.libraryIcon(url)).foregroundStyle(.secondary).frame(width: 18)
+            Text(EditorModel.libraryName(url)).lineLimit(1).truncationMode(.middle)
+            if uses > 0 {
+                Text("\(uses)×").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    .help("Wird im Projekt \(uses)× verwendet")
+            }
+            Spacer(minLength: 4)
+            if audio {
+                Button { editor.placeLibraryItem(url, .narration) } label: { Image(systemName: "waveform.badge.plus") }
+                    .help("Als Sprachspur (Voice-over) am Abspielkopf")
+            } else {
+                Button { editor.placeLibraryItem(url, .overlay) } label: { Image(systemName: "pip") }
+                    .help("Bild im Bild am Abspielkopf – liegt über der Aufnahme")
+                Button { editor.placeLibraryItem(url, .mainTrack) } label: { Image(systemName: "rectangle.stack.badge.plus") }
+                    .help("In die Timeline (Hauptspur) am Abspielkopf – die Aufnahme wartet, solange es läuft")
+            }
+            Menu { libraryMenu(url, uses: uses, audio: audio) } label: { Image(systemName: "ellipsis") }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+        }
+        .buttonStyle(.borderless)
+        .contentShape(Rectangle())
+        .onDrag { NSItemProvider(object: url as NSURL) }
+        .contextMenu { libraryMenu(url, uses: uses, audio: audio) }
+        .help("In die Timeline ziehen: Video-Spur zum Einfügen, Medien-Spur oder Vorschaubild als Bild im Bild")
+    }
+
+    @ViewBuilder
+    private func libraryMenu(_ url: URL, uses: Int, audio: Bool) -> some View {
+        if audio {
+            Button("Als Sprachspur am Abspielkopf") { editor.placeLibraryItem(url, .narration) }
+            Button("Als Hintergrundmusik") { editor.placeLibraryItem(url, .music) }
+        } else {
+            Button("Bild im Bild am Abspielkopf") { editor.placeLibraryItem(url, .overlay) }
+            Button("In die Timeline (Hauptspur) am Abspielkopf") { editor.placeLibraryItem(url, .mainTrack) }
+        }
+        Divider()
+        Button("Exportieren …") { editor.exportLibraryItem(url) }
+        Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        Divider()
+        Button(uses > 0 ? "Wird im Projekt verwendet (\(uses)×)" : "Aus der Bibliothek entfernen", role: .destructive) {
+            editor.removeFromLibrary(url)
+        }
+        .disabled(uses > 0)
     }
 
     /// Settings behind a lane header or an element of the picture (camera, captions, logo).
@@ -872,7 +905,6 @@ struct InspectorView: View {
             textDesignDefaultsSection
         case .media:
             librarySection
-            imagesSection
         case .captions:
             captionSection
             if !editor.settings.captions.isEmpty { CaptionStyleSection(editor: editor) }
