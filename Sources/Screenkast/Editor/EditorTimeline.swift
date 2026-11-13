@@ -774,10 +774,23 @@ private struct TimelineContent: View {
                     .help("Kante ziehen: kürzt den Teil, die Lücke schließt sich – zurückziehen holt das Entfernte wieder")
             }
         }
-        .help("Teil des Videos: klicken wählt aus, ziehen verschiebt ihn an eine andere Stelle, S teilt am Abspielkopf")
+        .contextMenu { partMenu(part) }
+        .help("Teil des Videos: klicken wählt aus, ziehen verschiebt ihn an eine andere Stelle, S teilt am Abspielkopf, ⇧S verbindet geteilte Teile wieder")
         .offset(x: dragged ? CGFloat(editor.clipDrag?.dt ?? 0) * scale.pps : 0)
         .shadow(color: dragged ? .black.opacity(0.35) : .clear, radius: dragged ? 8 : 0, y: dragged ? 3 : 0)
         .zIndex(dragged ? 5 : 0)
+    }
+
+    /// Right click on a part of the video.
+    @ViewBuilder
+    private func partMenu(_ part: EditSettings.ClipPart) -> some View {
+        let n = editor.joinNeighbors(of: part)
+        if let previous = n.previous { Button("Mit dem Teil davor verbinden") { editor.join([previous]) } }
+        if let next = n.next { Button("Mit dem Teil danach verbinden") { editor.join([next]) } }
+        Button("Am Abspielkopf teilen") { editor.perform(.split) }
+        Button("Teil entfernen") {
+            editor.removeSegment(part.range)
+        }
     }
 
     /// Fade curves of a dissolve at a cut: the part before the cut fades out, the part after it fades in.
@@ -1813,7 +1826,23 @@ private struct JoinMark: View {
         // Only the mark itself: above it the edges of the two parts can be grabbed.
         .contentShape(Rectangle().size(width: Self.width, height: 18).offset(y: height - 18))
         .onTapGesture { editor.selection = .join(key) }
-        .help(active ? "Übergang zwischen den Teilen – anklicken zum Einstellen" : "Hier treffen sich zwei Teile – anklicken, um einen Übergang einzustellen")
+        .contextMenu {
+            let parts = editor.clipParts
+            if let i = parts.firstIndex(where: { abs($0.key - key) < 1e-4 }), i > 0, let t = editor.splitPoint(after: parts[i - 1], before: parts[i]) {
+                Button("Teilung aufheben – wieder ein Clip") { editor.join([.parts(at: t)]) }
+            }
+            Section("Übergang") {
+                ForEach([0.0, 0.5, 1.0, 2.0], id: \.self) { length in
+                    Button(length == 0 ? "Harter Schnitt" : String(format: "%.1f s", length)) {
+                        editor.commitUndoStep()
+                        editor.setJoinTransition(key: key, length: length)
+                        editor.commitUndoStep()
+                    }
+                }
+            }
+        }
+        .help(active ? "Übergang zwischen den Teilen – anklicken zum Einstellen, ⇧S oder Rechtsklick verbindet geteilte Teile wieder"
+                     : "Hier treffen sich zwei Teile – anklicken, um einen Übergang einzustellen; ⇧S oder Rechtsklick verbindet geteilte Teile wieder")
     }
 }
 

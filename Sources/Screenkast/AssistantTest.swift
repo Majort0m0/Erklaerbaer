@@ -10,11 +10,39 @@ enum AssistantTest {
 
     static func run(base: Project, dir: URL) async throws {
         try parseTest()
+        try transcriptToolsTest()
         try await MainActor.run { try editorTest(base) }
         try await speechTest(dir)
         try await polishTest(base)
         try await appleTest()
         try await RoundTwoTest.run(base: base, dir: dir)
+    }
+
+    /// Searching the transcript (case, accents, across words) and its parts between chapters.
+    private static func transcriptToolsTest() throws {
+        let words = ["Ja", " du", " möchtest", " das", " Lernsachenheft", " wie", " eine", " App", " benutzen.", " Eine", " App!"]
+        let m = { (q: String) in TranscriptTools.matches(in: words, query: q) }
+        guard m("MOCHTEST") == [2...2], m("eine  app") == [6...7, 9...10], m("sachen") == [4...4], m("app benutzen") == [7...8],
+              m("") == [], m("  ") == [], m("gibt es nicht") == [] else {
+            throw fail("transcript search: \(m("MOCHTEST")) \(m("eine  app")) \(m("app benutzen"))")
+        }
+        let starts: [Double] = [0, 1, 2, 3, 4]
+        let a = Chapter(time: 0.5, title: "A"), b = Chapter(time: 1.5, title: "B"), empty = Chapter(time: 1.7, title: "Leer")
+        let parts = TranscriptTools.parts(wordStarts: starts, chapters: [b, a, empty])
+        guard parts.map(\.chapter?.title) == [nil, "A", "B", "Leer"], parts.map(\.words) == [0..<1, 1..<2, 2..<2, 2..<5],
+              TranscriptTools.parts(wordStarts: starts, chapters: []).map(\.words) == [0..<5],
+              TranscriptTools.parts(wordStarts: starts, chapters: [Chapter(time: 0, title: "Start")]).map(\.words) == [0..<5] else {
+            throw fail("transcript parts: \(parts.map(\.words))")
+        }
+        // Inside an inserted clip all words and chapters share a tiny source range: they are
+        // divided on the timeline.
+        let clipStarts = [0.999, 0.999001, 0.999002, 0.999003]
+        let inClip = [Chapter(time: 0.9990005, title: "Eins"), Chapter(time: 0.9990025, title: "Zwei")]
+        let clipParts = TranscriptTools.parts(wordStarts: clipStarts, chapters: inClip) { ($0 - 0.999) * 600_000 }
+        guard clipParts.map(\.chapter?.title) == [nil, "Eins", "Zwei"], clipParts.map(\.words) == [0..<1, 1..<3, 3..<4] else {
+            throw fail("transcript parts in an inserted clip: \(clipParts.map(\.words))")
+        }
+        print("✓ transcript: search ignores case and accents and finds phrases across words; chapters divide the words (also inside an inserted clip)")
     }
 
     private static func parseTest() throws {
@@ -67,7 +95,6 @@ enum AssistantTest {
               clip.settings.aspect == .vertical, clip.settings.contentY != nil else {
             throw fail("clip project: trim \(clip.settings.trimStart)–\(String(describing: clip.settings.trimEnd)), \(clip.settings.aspect)")
         }
-        guard editor.youTubeText().contains("D"), editor.youTubeText().contains("#a") else { throw fail("YouTube text") }
         // YouTube upload helper: a draft from the suggestions, kept with the project, its chapters
         // brought up to date, checked like YouTube Studio checks, captions as SRT next to the video.
         let draft = editor.loadYouTubeDraft()
@@ -84,6 +111,22 @@ enum AssistantTest {
         editor.saveYouTubeDraft(YouTubeDraft(title: "Mein Titel", description: "Text\n\n0:00 Alt\n\nLinks"))
         let saved = editor.loadYouTubeDraft()
         guard saved.title == "Mein Titel", saved.description == "Text\n\n" + editor.youTubeChapterText + "\n\nLinks" else { throw fail("saved YouTube draft: \(saved)") }
+        // The exported video is remembered with the draft (the helper opens any time later) and
+        // knows whether the project changed since.
+        let exported = editor.project.url.deletingLastPathComponent().appendingPathComponent("export-test.mp4")
+        editor.rememberExport(exported)
+        let remembered = editor.loadYouTubeDraft()
+        guard remembered.video == exported.path, remembered.videoEdit == editor.editFingerprint, remembered.title == "Mein Titel" else {
+            throw fail("remembered export: \(remembered)")
+        }
+        let paddingBefore = editor.settings.padding
+        editor.settings.padding += 0.01
+        guard editor.editFingerprint != remembered.videoEdit else { throw fail("edit fingerprint did not change") }
+        editor.settings.padding = paddingBefore
+        guard editor.editFingerprint == remembered.videoEdit,
+              EditorModel.isChapterLine("0:00 Start"), EditorModel.isChapterLine("1:02:03 Ende"), !EditorModel.isChapterLine("Links 0:00") else {
+            throw fail("edit fingerprint / chapter lines")
+        }
         let captionsBefore = editor.settings.captions
         editor.settings.captions = [Caption(start: 0.5, end: 1.0, text: "Hallo YouTube")]
         let video = editor.project.url.deletingLastPathComponent().appendingPathComponent("upload-test.mp4")

@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 
@@ -7,6 +8,9 @@ import UniformTypeIdentifiers
 struct YouTubeDraft: Codable, Equatable {
     var title: String
     var description: String
+    /// The last video exported as MP4 (absolute path), and a fingerprint of the edit it shows.
+    var video: String? = nil
+    var videoEdit: String? = nil
 
     static let fileName = "youtube.json"
     static let titleLimit = 100
@@ -48,12 +52,55 @@ extension EditorModel {
         try? JSONEncoder().encode(draft).write(to: url, options: .atomic)
     }
 
+    /// Fingerprint of the edit: tells whether an exported video still shows the project as it is.
+    var editFingerprint: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let data = try? encoder.encode(settings) else { return "" }
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// An exported MP4 is remembered with the project, so the upload helper finds it any time later.
+    func rememberExport(_ url: URL) {
+        var draft = loadYouTubeDraft()
+        draft.video = url.path
+        draft.videoEdit = editFingerprint
+        saveYouTubeDraft(draft)
+    }
+
+    /// Opens the export sheet (from the YouTube helper: it leads back there when done).
+    func openExportSheet(forYouTube: Bool = false) {
+        pause()
+        if !isExporting {
+            exportResult = nil
+            exportError = nil
+        }
+        exportForYouTube = forYouTube
+        showExportSheet = true
+    }
+
+    /// Called when a sheet has closed: opens the one asked for next.
+    func openNextSheet() {
+        guard let next = nextSheet else { return }
+        nextSheet = nil
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            switch next {
+            case .export: self.openExportSheet(forYouTube: true)
+            case .youTube: self.showYouTubeSheet = true
+            case .ai: self.showAISheet = true
+            }
+        }
+    }
+
+    /// True for a "0:00 Title" line of a description.
+    static func isChapterLine(_ line: String) -> Bool { line.wholeMatch(of: #/\d{1,2}:\d{2}(:\d{2})? .*/#) != nil }
+
     /// The first block of "0:00 Title" lines in a description replaced by the current chapters
     /// (a description without one stays as it is).
     static func replacingChapters(in description: String, with chapters: String) -> String {
-        let pattern = #/\d{1,2}:\d{2}(:\d{2})? .*/#
         var lines = description.components(separatedBy: "\n")
-        let isChapter = { (line: String) in line.wholeMatch(of: pattern) != nil }
+        let isChapter = isChapterLine
         guard let first = lines.firstIndex(where: isChapter) else { return description }
         var last = first
         while last + 1 < lines.count, isChapter(lines[last + 1]) { last += 1 }
@@ -94,12 +141,22 @@ extension EditorModel {
     }
 }
 
+/// Sheets of the editor that lead to one another (only one can be open at a time).
+enum EditorSheet { case export, youTube, ai }
+
 /// Upload helper: YouTube Studio's upload page, the files to drag into it and the texts to copy.
+/// The one place for everything YouTube needs; it can be opened any time (toolbar, ⌘K, after an
+/// export), the last exported video is remembered with the project.
 /// (A real upload through the YouTube API would need a Google Cloud project that passed Google's
 /// audit, otherwise every video stays locked to private.)
 @MainActor
 final class YouTubeUploadModel: ObservableObject {
     @Published var draft = YouTubeDraft(title: "", description: "")
+    @Published var video: URL?
+    /// Name of a remembered video that is no longer where it was.
+    @Published var missingVideo: String?
+    /// The project was changed after the video was exported.
+    @Published var outdated = false
     @Published var captions: URL?
     @Published var thumbnail: URL?
     @Published var thumbnailImage: NSImage?
@@ -110,73 +167,38 @@ final class YouTubeUploadModel: ObservableObject {
 
 struct YouTubeUploadView: View {
     @ObservedObject var editor: EditorModel
-    let video: URL
+    /// Shows this video instead of the remembered one (UI snapshots).
+    var videoOverride: URL? = nil
     let close: () -> Void
     @StateObject private var m = YouTubeUploadModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Auf YouTube hochladen").font(.title3.bold())
-            step(1, "Upload-Seite öffnen") {
-                Button {
-                    NSWorkspace.shared.open(URL(string: "https://www.youtube.com/upload")!)
-                } label: { Label("YouTube Studio öffnen", systemImage: "safari") }
-                Text("Im Browser bei deinem Kanal angemeldet sein.").font(.caption).foregroundStyle(.secondary)
-            }
-            step(2, "Video hineinziehen") {
-                FileDragTile(url: video, hint: "In das Upload-Fenster im Browser ziehen")
-            }
-            step(3, "Titel und Beschreibung einfügen") {
-                HStack {
-                    TextField("Titel", text: $m.draft.title).textFieldStyle(.roundedBorder)
-                    counter(m.draft.title.count, YouTubeDraft.titleLimit)
-                    copyButton("Titel", m.draft.title)
-                }
-                HStack(alignment: .top) {
-                    TextEditor(text: $m.draft.description)
-                        .font(.callout)
-                        .frame(height: 120)
-                        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.3)))
-                        .overlay(alignment: .topLeading) {
-                            if m.draft.description.isEmpty {
-                                Text("Beschreibung – Vorschläge samt Kapiteln und Schlagwörtern liefern die KI-Vorschläge (⌘K › „KI“).")
-                                    .font(.callout)
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 1)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                    VStack(alignment: .trailing) {
-                        counter(m.draft.description.count, YouTubeDraft.descriptionLimit)
-                        copyButton("Beschreibung", m.draft.description)
-                    }
-                }
-                ForEach(m.draft.problems + [editor.youTubeChapterProblem].compactMap { $0 }, id: \.self) { problem in
-                    Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
-                }
-            }
-            if let captions = m.captions {
-                step(4, "Untertitel hochladen") {
-                    FileDragTile(url: captions, hint: "In YouTube Studio: Untertitel › Sprache \(captionLanguage) › Datei hochladen › „Mit Timing“")
-                }
-            }
-            step(m.captions == nil ? 4 : 5, "Vorschaubild (optional)") {
-                HStack {
-                    if let thumbnail = m.thumbnail {
-                        FileDragTile(url: thumbnail, image: m.thumbnailImage, hint: "Unter „Vorschaubild“ hineinziehen")
-                    }
-                    Button(m.thumbnail == nil ? "Bild an der Abspielposition (\(formatTime(playheadTime)))" : "Neu (\(formatTime(playheadTime)))") {
-                        makeThumbnail()
-                    }
-                    .help("Das Bild des exportierten Videos an der Stelle des Abspielkopfs, 1280 Pixel breit")
-                }
-                if let thumbnailError = m.thumbnailError { Text(thumbnailError).font(.caption).foregroundStyle(.red) }
-            }
-            Text("Sichtbarkeit, Playlists und „Für Kinder“ stellst du direkt in YouTube Studio ein.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
+                Text("Auf YouTube veröffentlichen").font(.title3.bold())
+                Spacer()
+                Button {
+                    editor.saveYouTubeDraft(m.draft)
+                    editor.nextSheet = .ai
+                    close()
+                } label: { Label("KI-Vorschläge …", systemImage: "sparkles") }
+                .help("Titel, Beschreibung, Kapitel und Schlagwörter aus dem Transkript vorschlagen lassen")
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+            ScrollView {
+                steps
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            HStack {
+                Text("Sichtbarkeit, Playlists und „Für Kinder“ stellst du direkt in YouTube Studio ein. Alles hier bleibt beim Projekt gespeichert.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button("Fertig") {
                     editor.saveYouTubeDraft(m.draft)
@@ -184,14 +206,202 @@ struct YouTubeUploadView: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
         }
-        .onAppear {
-            guard !m.loaded else { return }
-            m.loaded = true
-            m.draft = editor.loadYouTubeDraft()
-            m.captions = editor.writeUploadCaptions(nextTo: video)
-        }
+        .frame(width: 620, height: 720)
+        .onAppear(perform: load)
         .onDisappear { editor.saveYouTubeDraft(m.draft) }
+    }
+
+    private var steps: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            step(1, "Upload-Seite öffnen") {
+                Button {
+                    NSWorkspace.shared.open(URL(string: "https://www.youtube.com/upload")!)
+                } label: { Label("YouTube Studio öffnen", systemImage: "safari") }
+                Text("Im Browser bei deinem Kanal angemeldet sein.").font(.caption).foregroundStyle(.secondary)
+            }
+            step(2, "Video hineinziehen") { videoStep }
+            step(3, "Titel und Beschreibung einfügen") { textStep }
+            if let captions = m.captions {
+                step(4, "Untertitel hochladen") {
+                    FileDragTile(url: captions, hint: "In YouTube Studio: Untertitel › Sprache \(captionLanguage) › Datei hochladen › „Mit Timing“")
+                }
+            }
+            step(m.captions == nil ? 4 : 5, "Vorschaubild (optional)") { thumbnailStep }
+        }
+    }
+
+    @ViewBuilder
+    private var videoStep: some View {
+        if let video = m.video {
+            FileDragTile(url: video, hint: "In das Upload-Fenster im Browser ziehen")
+            HStack {
+                if m.outdated {
+                    Label("Das Projekt wurde seit diesem Export geändert.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if let date = (try? video.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate {
+                    Text("Exportiert \(date.formatted(.relative(presentation: .named)))").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Neu exportieren …") { exportFirst() }
+                Button("Andere Datei …") { chooseVideo() }
+            }
+            .controlSize(.small)
+        } else {
+            Text(m.missingVideo.map { "„\($0)“ ist nicht mehr da – verschoben oder gelöscht?" } ?? "Noch kein Video exportiert.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button { exportFirst() } label: { Label("Video exportieren …", systemImage: "square.and.arrow.up") }
+                    .buttonStyle(.borderedProminent)
+                    .help("Öffnet den Export; danach geht es hier weiter")
+                Button("Vorhandenes Video wählen …") { chooseVideo() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var textStep: some View {
+        HStack {
+            TextField("Titel", text: $m.draft.title).textFieldStyle(.roundedBorder)
+            if let titles = editor.aiSuggestions?.titles, !titles.isEmpty {
+                Menu {
+                    ForEach(titles, id: \.self) { title in Button(title) { m.draft.title = title } }
+                } label: { Image(systemName: "sparkles") }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Einen Titel aus den KI-Vorschlägen nehmen")
+            }
+            counter(m.draft.title.count, YouTubeDraft.titleLimit)
+            copyButton("Titel", m.draft.title)
+        }
+        HStack(alignment: .top) {
+            TextEditor(text: $m.draft.description)
+                .font(.callout)
+                .frame(height: 150)
+                .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.3)))
+                .overlay(alignment: .topLeading) {
+                    if m.draft.description.isEmpty {
+                        Text("Beschreibung – einen Vorschlag samt Kapiteln und Schlagwörtern machen die KI-Vorschläge (oben rechts).")
+                            .font(.callout)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .allowsHitTesting(false)
+                    }
+                }
+            VStack(alignment: .trailing) {
+                counter(m.draft.description.count, YouTubeDraft.descriptionLimit)
+                copyButton("Beschreibung", m.draft.description)
+            }
+        }
+        let chapters = !editor.settings.chapters.isEmpty
+        let hasAI = !(editor.aiSuggestions?.description ?? "").isEmpty
+        if chapters || hasAI {
+            HStack {
+                if hasAI {
+                    Button("KI-Beschreibung einsetzen") { m.draft.description = editor.youTubeDescriptionSuggestion }
+                        .help("Ersetzt die Beschreibung durch den KI-Vorschlag mit Kapiteln und Schlagwörtern")
+                }
+                if chapters, !m.draft.description.components(separatedBy: "\n").contains(where: EditorModel.isChapterLine) {
+                    Button("Kapitel einfügen") {
+                        let text = m.draft.description.trimmingCharacters(in: .whitespacesAndNewlines)
+                        m.draft.description = text.isEmpty ? editor.youTubeChapterText : text + "\n\n" + editor.youTubeChapterText
+                    }
+                    .help("Hängt die Kapitelmarken als „0:00 Titel“-Zeilen an die Beschreibung an")
+                }
+                Spacer()
+                if chapters {
+                    Button {
+                        editor.copyChapters()
+                        m.copied = "Kapitel"
+                    } label: { Label("Nur Kapitel kopieren", systemImage: m.copied == "Kapitel" ? "checkmark" : "doc.on.doc") }
+                    .help("Die Kapitel als „0:00 Titel“-Zeilen in die Zwischenablage")
+                }
+            }
+            .controlSize(.small)
+        }
+        if chapters {
+            Text("Die Kapitel in der Beschreibung folgen den Kapitelmarken des Projekts von selbst.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        ForEach(m.draft.problems + [editor.youTubeChapterProblem].compactMap { $0 }, id: \.self) { problem in
+            Label(problem, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var thumbnailStep: some View {
+        if m.video == nil {
+            Text("Nach dem Export: ein Bild aus dem Video an der Stelle des Abspielkopfs.").font(.caption).foregroundStyle(.secondary)
+        } else {
+            HStack {
+                if let thumbnail = m.thumbnail {
+                    FileDragTile(url: thumbnail, image: m.thumbnailImage, hint: "Unter „Vorschaubild“ hineinziehen")
+                }
+                Button(m.thumbnail == nil ? "Bild an der Abspielposition (\(formatTime(playheadTime)))" : "Neu (\(formatTime(playheadTime)))") {
+                    makeThumbnail()
+                }
+                .help("Das Bild des exportierten Videos an der Stelle des Abspielkopfs, 1280 Pixel breit")
+            }
+            if let thumbnailError = m.thumbnailError { Text(thumbnailError).font(.caption).foregroundStyle(.red) }
+        }
+    }
+
+    private func load() {
+        guard !m.loaded else { return }
+        m.loaded = true
+        m.draft = editor.loadYouTubeDraft()
+        if let videoOverride {
+            use(videoOverride)
+        } else if let path = m.draft.video {
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                use(url)
+                m.outdated = m.draft.videoEdit.map { $0 != editor.editFingerprint } ?? false
+            } else {
+                m.missingVideo = url.lastPathComponent
+            }
+        }
+    }
+
+    private func use(_ video: URL) {
+        m.video = video
+        m.missingVideo = nil
+        m.captions = editor.writeUploadCaptions(nextTo: video)
+        let picture = video.deletingPathExtension().appendingPathExtension("vorschaubild.jpg")
+        if FileManager.default.fileExists(atPath: picture.path) {
+            m.thumbnail = picture
+            m.thumbnailImage = NSImage(contentsOf: picture)
+        } else {
+            m.thumbnail = nil
+            m.thumbnailImage = nil
+        }
+    }
+
+    /// Closes the helper for the export; it comes back afterwards.
+    private func exportFirst() {
+        editor.saveYouTubeDraft(m.draft)
+        editor.nextSheet = .export
+        close()
+    }
+
+    private func chooseVideo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie, .movie]
+        panel.message = "Video für YouTube wählen"
+        panel.directoryURL = m.video?.deletingLastPathComponent() ?? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        use(url)
+        m.outdated = false
+        m.draft.video = url.path
+        m.draft.videoEdit = nil
+        editor.saveYouTubeDraft(m.draft)
     }
 
     private var playheadTime: Double { min(max(0, editor.outputTime), editor.outputDuration) }
@@ -202,8 +412,9 @@ struct YouTubeUploadView: View {
     }
 
     private func makeThumbnail() {
+        guard let video = m.video else { return }
         m.thumbnailError = nil
-        let video = self.video, t = playheadTime, m = self.m
+        let t = playheadTime, m = self.m
         Task {
             do {
                 let url = try await EditorModel.writeThumbnail(from: video, at: t)

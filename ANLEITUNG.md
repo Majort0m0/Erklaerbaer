@@ -171,7 +171,7 @@ Erklärbär nimmt den Bildschirm und den Ton eines per Kabel verbundenen iPads o
 
 - **Vorschau** (oben): das fertige Video, genau so, wie es exportiert wird.
 - **Steuerleiste** (darunter): links die Zeit des fertigen Videos, in der Mitte Abspielen, rechts **Hinzufügen** für alles, was seltener gebraucht wird (Titelkarten, Musik, Logo, Clips …).
-- **Symbolleiste** (direkt über der Timeline): alle Schnitt- und Einfüge-Werkzeuge in einer Reihe – Widerrufen, Teilen, Löschen, Kopieren, Kürzen, Standbild, Überblendung, Tempo, Zoom, Text, Maske, Pfeil, Rahmen, Spotlight, Bild, Video, Einsprechen, Einrasten und Zusammenkleben. Fährst du mit der Maus darüber, steht das **Tastenkürzel** dabei.
+- **Symbolleiste** (direkt über der Timeline): alle Schnitt- und Einfüge-Werkzeuge in einer Reihe – Widerrufen, Teilen, Verbinden, Löschen, Kopieren, Kürzen, Standbild, Überblendung, Tempo, Zoom, Text, Maske, Pfeil, Rahmen, Spotlight, Bild, Video, Einsprechen, Einrasten und Zusammenkleben. Fährst du mit der Maus darüber, steht das **Tastenkürzel** dabei.
 - **Timeline** (unten): die Spuren Video, Kamera, Zoom, Cursor, Masken, Markierung, Text, Medien und die Tonspuren. Den Griff zwischen Vorschau und Timeline ziehen, um die Timeline größer oder kleiner zu machen.
 - **Inspektor** (rechts): ohne Auswahl die Seiten **Stil, Kamera, Cursor, Zoom, Audio, Text, Medien, Skript**; mit Auswahl nur die Einstellungen des gewählten Elements.
 - Die Bereiche im Inspektor klappen mit einem Klick auf ihre Überschrift auf und zu; zugeklappt steht daneben, was eingestellt ist (z. B. „Rauschen 45 % · Hall 50 %“). **⌥-Klick** klappt alle Bereiche des Tabs auf oder zu. Erklärbär merkt sich das; ⌘K › „Inspektor: Bereiche wie am Anfang“ stellt es zurück.
@@ -217,6 +217,13 @@ Der Teil verschwindet aus der Timeline und die Lücke schließt sich. An der Ste
 ### Clips umstellen
 
 Einen Teil der Video-Spur **mit der Maus an eine andere Stelle ziehen**. Eine gelbe Linie zeigt, wo er landet. Eingefügte Clips lassen sich genauso verschieben. **⌘Z** nimmt es zurück.
+
+### Geteilte Clips wieder verbinden
+
+- Einen geteilten Clip anklicken und **⇧S** drücken (oder **Verbinden** neben der Schere): Er wird wieder eins mit dem Stück danach – am Ende mit dem davor. Ohne Auswahl verbindet ⇧S den Teil am Abspielkopf; direkt nach **S** macht es das Teilen also wieder rückgängig.
+- Mehrere nebeneinanderliegende Stücke mit ⇧-Klick auswählen: ⇧S macht aus allen einen Clip.
+- Im Inspektor stehen dafür **Mit dem Teil davor / danach verbinden**, in der Video-Spur auch per Rechtsklick auf den Teil oder auf die kleine Raute an der Teilungsstelle.
+- Das geht in der Video-Spur, in den Medien-Spuren und bei Voice-over- und Musik-Clips – überall dort, wo die Stücke nahtlos aneinanderpassen. Ein Übergang an der Stelle fällt dabei weg. Stücke, zwischen denen etwas entfernt oder die umgestellt wurden, bleiben getrennt.
 
 ### Kürzen an den Kanten
 
@@ -335,7 +342,7 @@ Im Inspektor unter **Kamera** ein Bild wählen: Du stehst dann vor diesem Bild o
 
 ### Kapitelmarken
 
-**M** setzt am Abspielkopf eine Kapitelmarke (Fähnchen in der Zeitskala, ziehbar). Die Liste im Text-Tab prüft die YouTube-Regeln und kopiert die Kapitel für die Videobeschreibung; beim Export entsteht zusätzlich eine `….kapitel.txt`.
+**M** setzt am Abspielkopf eine Kapitelmarke (Fähnchen in der Zeitskala, ziehbar). Die Liste im Text-Tab prüft die YouTube-Regeln und kopiert die Kapitel für die Videobeschreibung; im YouTube-Fenster stehen sie von selbst in der Beschreibung, und beim Export entsteht zusätzlich eine `….kapitel.txt`.
 
 ### Titelkarte über dem Video
 
@@ -487,6 +494,10 @@ Trage im Audio-Bereich unter **Sprechtext** deinen Text ein oder übernimm ihn a
 
 Im **Skript**-Tab steht das Transkript: Wörter anklicken, mit ⇧-Klick erweitern und mit **⌫** herausschneiden. Durchgestrichene Wörter lassen sich wiederherstellen.
 
+- **Suchen:** Das Suchfeld über dem Transkript findet Wörter und ganze Wortfolgen (Groß- und Kleinschreibung und Akzente egal) und färbt alle Treffer. **↩** bzw. der Pfeil nach unten springt zum nächsten Treffer, **⇧↩** zum vorigen: Er wird ausgewählt, der Abspielkopf springt hin, und **⌫** schneidet ihn heraus.
+- **Kapitel** gliedern das Transkript wie Überschriften in einem Textdokument, mit ihrer Zeit im Video. Der Pfeil davor klappt den Text des Kapitels ein (⌥-Klick: alle Kapitel), ein Klick auf die Überschrift springt dorthin. Das Listen-Symbol neben dem Suchfeld klappt alle ein oder aus und führt direkt zu einem Kapitel.
+- **Beim Abspielen** klappt das Kapitel mit dem gesprochenen Text von selbst auf, das gesprochene Wort ist gelb markiert, und mit **Mitlaufen** (Symbol neben dem Suchfeld) bleibt es im Blick.
+
 ## Assistenten & KI
 
 *Automatisch aufpolieren, KI-Vorschläge, Text sprechen und Anleitungen aus Klicks.*
@@ -503,7 +514,7 @@ Der Zauberstab **Aufpolieren** in der Fensterleiste (nach jeder Aufnahme auch al
 - **Claude** – mit eigenem API-Schlüssel; er bleibt im Schlüsselbund des Macs.
 - **Beliebige KI-App** – Erklärbär kopiert eine fertige Anfrage in die Zwischenablage. In der KI-App einfügen, die Antwort kopieren und zurück in Erklärbär einfügen.
 
-Aus einem Kurzclip-Vorschlag entsteht mit einem Klick ein eigenes Hochformat-Projekt. **Für YouTube vorbereiten** kopiert Titel, Beschreibung, Kapitel und Schlagwörter und öffnet YouTube Studio.
+Aus einem Kurzclip-Vorschlag entsteht mit einem Klick ein eigenes Hochformat-Projekt. Die vorgeschlagenen Kapitel lassen sich markieren und kopieren oder als Kapitelmarken übernehmen. **Weiter zu YouTube …** öffnet das YouTube-Fenster: Dort wählst du einen der Titel (✨ neben dem Titelfeld) und setzt die Beschreibung samt Kapiteln und Schlagwörtern ein.
 
 ### Weitere Helfer
 
@@ -529,16 +540,27 @@ Beim **Sichern** eines Stils kannst du Vorspann, Abspann und das Bauchbinden-Des
 
 ## Exportieren
 
-*Das fertige Video als MP4 oder GIF sichern.*
+*Das fertige Video als MP4 oder GIF sichern und auf YouTube veröffentlichen.*
 
 1. **Exportieren** oben rechts klicken oder **⌘E** drücken.
 2. Eine Vorlage wählen: YouTube (1080p, 60 fps), YouTube 4K, Hochformat (Shorts, Reels, TikTok), Quadratisch (Instagram, LinkedIn), Klein (720p, zum Verschicken), animiertes GIF – oder eigene Einstellungen (H.264/HEVC, 720p bis 4K, 30/60 fps).
 3. **Exportieren …** klicken und den Speicherort wählen. Ist das Video fertig, zeigt **Im Finder zeigen** die Datei.
 
 - Kapitelmarken landen zusätzlich als `….kapitel.txt` neben dem Video.
-- **Auf YouTube …** (nach dem Export oder ⌘K › „Auf YouTube hochladen“) hilft beim Hochladen: öffnet YouTube Studio, das Video zieht man direkt aus dem Fenster in den Browser. Titel und Beschreibung samt Kapiteln lassen sich prüfen und kopieren (sie bleiben im Projekt gespeichert), die Untertitel liegen als SRT bereit, und ein Vorschaubild entsteht aus der Abspielposition (1280 Pixel, unter 2 MB). Sichtbarkeit und Playlists stellst du in YouTube Studio ein.
+- Nach einem MP4-Export führt **Auf YouTube …** direkt ins YouTube-Fenster (siehe unten).
 - Mit **Gesamtlautstärke beim Export** (Audio-Tab) bekommt das Video die richtige Lautheit für YouTube & Co.
 - Vorschau und Export nutzen denselben Renderer – was du siehst, ist was du bekommst.
+
+### Auf YouTube veröffentlichen
+
+Alles für YouTube liegt an einem Ort: **YouTube** oben in der Fensterleiste (oder ⌘K › „Auf YouTube veröffentlichen“). Das Fenster lässt sich jederzeit wieder öffnen – auch Tage später, denn das zuletzt exportierte Video merkt sich das Projekt.
+
+1. **YouTube Studio öffnen** – im Browser bei deinem Kanal angemeldet sein.
+2. Das **Video** aus dem Fenster in den Browser ziehen. Gibt es noch keins, führt **Video exportieren …** zum Export und danach wieder zurück. Wurde das Projekt nach dem Export geändert, steht ein Hinweis dabei.
+3. **Titel und Beschreibung** bearbeiten und mit den Kopieren-Knöpfen übernehmen. Die Kapitel stehen als „0:00 Titel“-Zeilen in der Beschreibung und folgen den Kapitelmarken von selbst; **Nur Kapitel kopieren** legt nur sie in die Zwischenablage. Mit KI-Vorschlägen gibt es Titel zur Auswahl und **KI-Beschreibung einsetzen**.
+4. Die **Untertitel** liegen als SRT-Datei bereit, ein **Vorschaubild** entsteht aus der Abspielposition (1280 Pixel, unter 2 MB).
+
+Titel und Beschreibung bleiben beim Projekt gespeichert. Sichtbarkeit, Playlists und „Für Kinder“ stellst du in YouTube Studio ein.
 
 ## Screenshots
 
@@ -622,6 +644,7 @@ Oben auf der Startseite und bei den Aufnahme-Einstellungen wählst du, wo neue A
 | Taste | Funktion |
 |---|---|
 | S  oder  ⌘B | Am Abspielkopf teilen |
+| ⇧S | Geteilte Clips wieder verbinden |
 | ⌫ | Auswahl löschen / Teil entfernen / wiederherstellen |
 | Q / W | Anfang / Ende hierher kürzen |
 | ⌥F | Standbild |

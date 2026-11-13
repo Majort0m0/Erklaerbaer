@@ -46,10 +46,15 @@ struct EditorView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     editor.pause()
-                    editor.exportResult = nil
-                    editor.exportError = nil
-                    editor.showYouTubeAssistant = false
-                    editor.showExportSheet = true
+                    editor.showYouTubeSheet = true
+                } label: {
+                    Label("YouTube", systemImage: "play.rectangle")
+                }
+                .help("Auf YouTube veröffentlichen: Titel, Beschreibung mit Kapiteln, Untertitel, Vorschaubild und das zuletzt exportierte Video – jederzeit wieder aufrufbar")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    editor.openExportSheet()
                 } label: {
                     Label("Exportieren", systemImage: "square.and.arrow.up")
                 }
@@ -60,12 +65,15 @@ struct EditorView: View {
             }
         }
         .navigationTitle(editor.project.name)
-        .sheet(isPresented: $editor.showExportSheet) {
+        .sheet(isPresented: $editor.showExportSheet, onDismiss: { editor.openNextSheet() }) {
             ExportSheet(editor: editor, isPresented: $editor.showExportSheet)
+        }
+        .sheet(isPresented: $editor.showYouTubeSheet, onDismiss: { editor.openNextSheet() }) {
+            YouTubeUploadView(editor: editor) { editor.showYouTubeSheet = false }
         }
         .sheet(isPresented: $editor.showPolishSheet) { PolishSheet(editor: editor) }
         .sheet(isPresented: $editor.showURLImport) { URLImportSheet(editor: editor, isPresented: $editor.showURLImport) }
-        .sheet(isPresented: $editor.showAISheet) { AISheet(editor: editor) }
+        .sheet(isPresented: $editor.showAISheet, onDismiss: { editor.openNextSheet() }) { AISheet(editor: editor) }
         .sheet(isPresented: $editor.showSpeechSheet) { SpeechSheet(editor: editor) }
         .sheet(isPresented: $editor.showPalette) { CommandPalette(editor: editor) }
         .sheet(isPresented: $editor.showSensitiveSheet) { SensitiveSheet(editor: editor) }
@@ -762,7 +770,7 @@ struct ShortcutHelp: View {
         ("Abspielen", [("Leertaste", "Abspielen / Pause"), ("← →", "Ein Bild zurück / vor"), ("⇧← ⇧→", "Eine Sekunde"),
                        ("Pos1 / Ende", "Zum Anfang / Ende"),
                        ("J  /  K  /  L", "Rückwärts / Stopp / Vorwärts (mehrfach: schneller)")]),
-        ("Bearbeiten", [("S  oder  ⌘B", "Am Abspielkopf teilen"), ("⌫", "Auswahl löschen / Teil entfernen"),
+        ("Bearbeiten", [("S  oder  ⌘B", "Am Abspielkopf teilen"), ("⇧S", "Geteilte Clips wieder verbinden"), ("⌫", "Auswahl löschen / Teil entfernen"),
                         ("Q  /  W", "Anfang / Ende hierher kürzen"), ("⌥F", "Standbild (Ende des ausgewählten Teils)"),
                         ("⌘T", "Überblendung an der Schnittstelle"), ("⌥↑  /  ⌥↓", "Teil schneller / langsamer"),
                         ("⌘Z  /  ⇧⌘Z", "Widerrufen / Wiederholen"), ("⌘C  /  ⌘V", "Element kopieren / am Abspielkopf einfügen"),
@@ -979,12 +987,6 @@ struct ExportSheet: View {
                     Spacer()
                     Button("Abbrechen") { editor.cancelExport() }
                 }
-            } else if let url = editor.exportResult, editor.showYouTubeAssistant, url.pathExtension.lowercased() == "mp4",
-                      FileManager.default.fileExists(atPath: url.path) {
-                YouTubeUploadView(editor: editor, video: url) {
-                    editor.showYouTubeAssistant = false
-                    isPresented = false
-                }
             } else if let url = editor.exportResult {
                 Label("Export fertig", systemImage: "checkmark.circle.fill")
                     .font(.headline)
@@ -994,13 +996,16 @@ struct ExportSheet: View {
                     Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     Button("Abspielen") { NSWorkspace.shared.open(url) }
                     Spacer()
-                    if url.pathExtension.lowercased() == "mp4" {
+                    let mp4 = url.pathExtension.lowercased() == "mp4"
+                    if mp4 {
                         Button {
-                            editor.showYouTubeAssistant = true
-                        } label: { Label("Auf YouTube …", systemImage: "play.rectangle") }
-                        .help("Hilft beim Hochladen: YouTube Studio öffnen, Video hineinziehen, Titel, Beschreibung, Kapitel und Untertitel")
+                            editor.nextSheet = .youTube
+                            isPresented = false
+                        } label: { Label(editor.exportForYouTube ? "Weiter zu YouTube" : "Auf YouTube …", systemImage: "play.rectangle") }
+                        .keyboardShortcut(editor.exportForYouTube ? .defaultAction : nil)
+                        .help("Hilft beim Hochladen: Video, Titel, Beschreibung, Kapitel, Untertitel und Vorschaubild – auch später jederzeit über „YouTube“ in der Symbolleiste")
                     }
-                    Button("Fertig") { isPresented = false }.keyboardShortcut(.defaultAction)
+                    Button("Fertig") { isPresented = false }.keyboardShortcut(editor.exportForYouTube && mp4 ? nil : .defaultAction)
                 }
             } else if let error = editor.exportError {
                 Label("Export fehlgeschlagen", systemImage: "xmark.octagon.fill")
@@ -1016,7 +1021,7 @@ struct ExportSheet: View {
             }
         }
         .padding(24)
-        .frame(width: editor.showYouTubeAssistant && editor.exportResult != nil ? 600 : 440)
+        .frame(width: 440)
     }
 
     private var settings: some View {

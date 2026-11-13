@@ -520,8 +520,47 @@ enum EditorFeatureTest {
         guard kept == [0...1.0, 3.0...base.info.duration], editor.selection == nil else { throw fail("remove part: kept \(kept)") }
         editor.undo()
         guard editor.settings.cuts.isEmpty, editor.settings.splits.count == 2 else { throw fail("undo remove: \(editor.settings.cuts)") }
+        // Joining again (⇧S): the selected part with the next one, a transition at the join goes with it.
+        let d = base.info.duration
         editor.selection = .segment(1.0)
-        editor.joinWithNext(1.0...3.0)
+        guard editor.joinNeighbors.previous == .parts(at: 1.0), editor.joinNeighbors.next == .parts(at: 3.0) else {
+            throw fail("join neighbors: \(editor.joinNeighbors)")
+        }
+        editor.settings.joinTransitions = [JoinTransition(key: 3.0, length: 0.5)]
+        editor.perform(.join)
+        guard editor.videoSegments == [0...1.0, 1.0...d], editor.settings.joinTransitions.isEmpty, editor.selection == .segment(1.0) else {
+            throw fail("join: \(editor.videoSegments), \(editor.settings.joinTransitions.count), \(String(describing: editor.selection))")
+        }
+        editor.undo()
+        editor.settings.joinTransitions = []
+        guard editor.settings.splits == [1.0, 3.0] else { throw fail("undo join: \(editor.settings.splits)") }
+        // Several selected parts become one.
+        editor.selectGroup([.segment(0), .segment(1.0), .segment(3.0)])
+        guard editor.joinPlan == [.parts(at: 1.0), .parts(at: 3.0)] else { throw fail("join plan of a group: \(editor.joinPlan)") }
+        editor.perform(.join)
+        guard editor.videoSegments == [0...d], editor.selection == .segment(0), editor.multiSelection.isEmpty else {
+            throw fail("join a group: \(editor.videoSegments)")
+        }
+        editor.undo()
+        // Nothing selected: the part under the playhead with the nearer join (right after S the playhead stands on it).
+        editor.selection = nil
+        editor.seek(to: 2.8)
+        guard editor.joinPlan == [.parts(at: 3.0)] else { throw fail("join at the playhead: \(editor.joinPlan)") }
+        editor.seek(to: 1.0)
+        guard editor.joinPlan == [.parts(at: 1.0)] else { throw fail("join at a split: \(editor.joinPlan)") }
+        // Moved parts: only neighbors whose recording runs on seamlessly join; the order is kept.
+        editor.settings.clipOrder = [3.0, 0, 1.0]
+        editor.selection = .segment(3.0)
+        guard editor.joinNeighbors.previous == nil, editor.joinNeighbors.next == nil else { throw fail("moved parts must not join: \(editor.joinNeighbors)") }
+        editor.selection = .segment(0)
+        guard editor.joinNeighbors.next == .parts(at: 1.0) else { throw fail("moved neighbors: \(editor.joinNeighbors)") }
+        editor.perform(.join)
+        guard editor.videoSegments == [3.0...d, 0...3.0], editor.settings.clipOrder == [3.0, 0] else {
+            throw fail("join moved parts: \(editor.videoSegments), order \(String(describing: editor.settings.clipOrder))")
+        }
+        editor.settings.clipOrder = nil
+        editor.settings.splits = [1.0]
+        editor.selection = nil
         guard editor.videoSegments.count == 2 else { throw fail("join: \(editor.videoSegments)") }
 
         // A selected voice-over clip under the playhead is split instead of the recording.
@@ -532,6 +571,51 @@ enum EditorFeatureTest {
         let clips = editor.settings.voiceOvers.sorted { $0.start < $1.start }
         guard clips.count == 2, abs(clips[0].end - 1.5) < 1e-9, abs(clips[1].start - 1.5) < 1e-9,
               abs(clips[1].fileOffset - 1.2) < 1e-9, abs(clips[1].end - 2.5) < 1e-9 else { throw fail("voice-over split: \(clips)") }
+        // … and joined again: one clip as before.
+        guard editor.joinNeighbors.previous == .voiceOvers(clips[0].id, clips[1].id), editor.joinNeighbors.next == nil else {
+            throw fail("voice-over join neighbors: \(editor.joinNeighbors)")
+        }
+        editor.perform(.join)
+        guard editor.settings.voiceOvers.count == 1, let whole = editor.settings.voiceOvers.first, whole.id == clips[0].id,
+              abs(whole.start - 0.5) < 1e-9, abs(whole.fileOffset - 0.2) < 1e-9, abs(whole.duration - 2.0) < 1e-9,
+              editor.selectedVoiceOverID == whole.id else { throw fail("voice-over join: \(editor.settings.voiceOvers)") }
+        editor.undo()
+        // A video in the media lane: split and joined, its keyframes stay as they were.
+        var pip = VideoOverlay(file: "media/none.mov", name: "PiP", start: 0.5, duration: 2, fileDuration: 4)
+        pip.keys = [MotionKey(t: 0, x: 0.2, y: 0.3, width: 0.3, opacity: 1, volume: 1), MotionKey(t: 2, x: 0.7, y: 0.3, width: 0.4, opacity: 1, volume: 1)]
+        editor.settings.videoOverlays = [pip]
+        editor.selection = .videoOverlay(pip.id)
+        editor.seek(to: 1.5)
+        editor.splitAtPlayhead()
+        guard editor.settings.videoOverlays.count == 2, editor.joinPlan == [.videoOverlays(pip.id, editor.settings.videoOverlays[1].id)] else {
+            throw fail("video split for join: \(editor.settings.videoOverlays.count), \(editor.joinPlan)")
+        }
+        // Each half keeps its own movement: the second one's keyframes count from its own start,
+        // both meet at the cut with what was shown there.
+        let halves = editor.settings.videoOverlays.sorted { $0.start < $1.start }
+        guard let mid = Motion.value(pip.keys!, at: 1), halves[0].keys?.map(\.t) == [0, 1], halves[1].keys?.map(\.t) == [0, 1],
+              halves[0].keys?.last?.matches(mid) == true, halves[1].keys?.first?.matches(mid) == true,
+              halves[1].keys?.last?.matches(pip.keys![1]) == true else {
+            throw fail("keyframes of split halves: \(halves.map { $0.keys?.map(\.t) ?? [] })")
+        }
+        editor.perform(.join)
+        guard editor.settings.videoOverlays.count == 1, let joinedPip = editor.settings.videoOverlays.first, joinedPip.id == pip.id,
+              abs(joinedPip.duration - 2) < 1e-9, abs(joinedPip.fileOffset) < 1e-9, joinedPip.keys == pip.keys else {
+            throw fail("video join: \(editor.settings.videoOverlays)")
+        }
+        // Keyframes of two different clips: the second one's come after the first one's.
+        let k = { (t: Double, x: Double) in MotionKey(t: t, x: x, y: 0.5, width: 0.3, opacity: 1, volume: 1) }
+        let onlyBefore = Motion.split([k(0, 0.1), k(1, 0.2)], at: 2), onlyAfter = Motion.split([k(3, 0.5)], at: 1)
+        guard onlyBefore.first?.map(\.t) == [0, 1], onlyBefore.second?.map(\.t) == [0], onlyBefore.second?.first?.x == 0.2,
+              onlyAfter.first?.map(\.t) == [1], onlyAfter.first?.first?.x == 0.5, onlyAfter.second?.map(\.t) == [2] else {
+            throw fail("keyframes split before or after all keys")
+        }
+        guard Motion.joined([k(0, 0.1), k(1, 0.2)], [k(0, 0.2), k(0.5, 0.9)], offset: 1)?.map(\.t) == [0, 1, 1.5],
+              Motion.joined(nil, [k(0.5, 0.9)], offset: 2)?.map(\.t) == [2.5], Motion.joined([k(0, 0.1)], nil, offset: 2)?.count == 1 else {
+            throw fail("keyframes of joined clips")
+        }
+        editor.settings.videoOverlays = []
+        editor.selection = nil
 
         // Snapping: an edge near the playhead lands on it; off, nothing changes.
         editor.seek(to: 2.0)
@@ -554,7 +638,7 @@ enum EditorFeatureTest {
         editor.add(.zoom, range: 0.2...1.0)
         guard editor.settings.zoomSegments.count == 2, editor.selectedZoomIndex != nil else { throw fail("add zoom in lane") }
         print("✓ editing: text alignment keeps the box, drag stays on screen and snaps to the center, position grid, "
-              + "undo/redo, split/remove/join, voice-over split, snapping, adding in empty lanes")
+              + "undo/redo, split/remove/join (parts, a group, at the playhead, moved parts, voice-over, video), snapping, adding in empty lanes")
     }
 
     // MARK: Speed, freeze frames, transition styles, fades

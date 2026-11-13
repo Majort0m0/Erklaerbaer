@@ -289,11 +289,14 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 18)], spacing: 22) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 28, alignment: .top)], spacing: 30) {
                         ForEach(model.library, id: \.self) { url in
                             ProjectCard(url: url)
                         }
                     }
+                    // Room for the hover zoom and shadow at the edges.
+                    .padding(.horizontal, 6)
+                    .padding(.top, 6)
                     .padding(.bottom, 16)
                 }
             }
@@ -361,20 +364,23 @@ struct ProjectCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            ZStack {
-                Theme.raised
-                if let thumbnail = card.thumbnail {
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Image(systemName: card.info?.blank == true ? "rectangle.dashed" : "film")
-                        .font(.system(size: 26, weight: .light))
-                        .foregroundStyle(.tertiary)
+            // The frame sets the size; the picture fills it and is cut off at its edges (a picture
+            // filling a ZStack would make the card as large as the picture and overlap its neighbors).
+            Theme.raised
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    if let thumbnail = card.thumbnail {
+                        Image(nsImage: thumbnail)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Image(systemName: card.info?.blank == true ? "rectangle.dashed" : "film")
+                            .font(.system(size: 26, weight: .light))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-            }
-            .aspectRatio(16 / 10, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(alignment: .bottomTrailing) {
                 if let info = card.info {
                     Text(formatTime(info.duration, fractional: false))

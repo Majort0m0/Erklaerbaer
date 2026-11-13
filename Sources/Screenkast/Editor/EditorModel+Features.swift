@@ -66,9 +66,12 @@ extension EditorModel {
     }
 
     /// Index of the word being spoken at the playhead.
+    /// The word being spoken at the playhead. Compared in timeline time: inside an inserted clip
+    /// all words share a tiny source range.
     var currentWordIndex: Int? {
-        let t = currentTime
-        return settings.words.lastIndex { $0.start <= t + 0.02 }.flatMap { i in t <= settings.words[i].end + 0.25 ? i : nil }
+        let T = display(currentTime)
+        let words = settings.words
+        return words.lastIndex { display($0.start) <= T + 0.02 }.flatMap { i in T <= display(words[i].end) + 0.25 ? i : nil }
     }
 
     /// Source range a run of words takes, including the gap up to the next word.

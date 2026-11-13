@@ -240,14 +240,15 @@ struct AISheet: View {
             if !s.chapters.isEmpty {
                 GroupBox("Kapitel") {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(s.chapters.enumerated()), id: \.offset) { _, c in
-                            HStack {
-                                Text(formatTime(c.time, fractional: false)).monospacedDigit().foregroundStyle(.secondary)
-                                Text(c.title)
-                            }
+                        let lines = s.chapters.map { "\(formatTime($0.time, fractional: false)) \($0.title)" }
+                        HStack(alignment: .top) {
+                            Text(lines.joined(separator: "\n")).monospacedDigit().textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            Spacer()
+                            copyButton(lines.joined(separator: "\n"))
                         }
                         Button("Als Kapitelmarken übernehmen") { editor.applyAIChapters() }
                             .padding(.top, 4)
+                            .help("Setzt die Kapitelmarken des Projekts – sie stehen dann auch in der YouTube-Beschreibung")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -278,13 +279,12 @@ struct AISheet: View {
                 }
                 Spacer()
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(editor.youTubeText(), forType: .string)
-                    NSWorkspace.shared.open(URL(string: "https://studio.youtube.com")!)
+                    editor.nextSheet = .youTube
+                    editor.showAISheet = false
                 } label: {
-                    Label("Für YouTube vorbereiten", systemImage: "play.rectangle.on.rectangle")
+                    Label("Weiter zu YouTube …", systemImage: "play.rectangle")
                 }
-                .help("Kopiert Titel, Beschreibung, Kapitel und Schlagwörter und öffnet YouTube Studio zum Hochladen")
+                .help("Im YouTube-Fenster einen der Titel wählen und die Beschreibung samt Kapiteln und Schlagwörtern einsetzen")
             }
         }
     }
@@ -454,7 +454,7 @@ struct CommandPalette: View {
             .init(title: "Füllwörter entfernen", icon: "text.badge.minus", keywords: "äh ähm") { e.removeFillerWords() },
             .init(title: "Pausen kürzen", icon: "pause", keywords: "stille") { e.removePauses() },
             .init(title: "Pegel angleichen", icon: "slider.horizontal.3", keywords: "lautstärke audio") { Task { await e.autoLevel() } },
-            .init(title: "Video exportieren …", icon: "square.and.arrow.up", keywords: "export mp4") { e.showExportSheet = true },
+            .init(title: "Video exportieren …", icon: "square.and.arrow.up", keywords: "export mp4") { e.openExportSheet() },
             .init(title: "Video von einer Adresse laden …", icon: "link", keywords: "url link internet youtube vimeo herunterladen download bibliothek") {
                 e.showURLImport = true
             },
@@ -462,10 +462,11 @@ struct CommandPalette: View {
             .init(title: "Inspektor: Bereiche wie am Anfang auf- und zuklappen", icon: "sidebar.right", keywords: "inspektor aufklappen zuklappen bereiche") {
                 InspectorFolds.shared.restoreDefaults()
             },
-            .init(title: "Auf YouTube hochladen …", icon: "play.rectangle", keywords: "youtube upload studio hochladen veröffentlichen") {
-                // With an exported video the upload helper, else the export first.
-                e.showYouTubeAssistant = e.exportResult.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
-                e.showExportSheet = true
+            .init(title: "Auf YouTube veröffentlichen …", icon: "play.rectangle", keywords: "youtube upload studio hochladen veröffentlichen titel beschreibung kapitel") {
+                e.showYouTubeSheet = true
+            },
+            .init(title: "Geteilte Clips wieder verbinden", icon: "arrow.triangle.merge", keywords: "join zusammenfügen verbinden teilung aufheben") {
+                e.joinClips()
             },
             .init(title: e.simpleMode ? "Profi-Modus (alle Spuren)" : "Einfach-Modus (weniger Spuren)", icon: "slider.horizontal.below.square.filled.and.square",
                   keywords: "ansicht modus") { e.simpleMode.toggle() },

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Editor keys: Space = play/pause, ⌫ = delete the selected item, ←/→ = one frame (⇧: one second),
-/// Home/End = start/end, S or ⌘B = split, ⌥F = freeze frame, ⌘Z / ⇧⌘Z = undo/redo, N = snapping, Esc = deselect,
+/// Home/End = start/end, S or ⌘B = split, ⇧S = join again, ⌥F = freeze frame, ⌘Z / ⇧⌘Z = undo/redo, N = snapping, Esc = deselect,
 /// ⌘+ / ⌘− = zoom the timeline, ⇧Z or ⌘0 = fit the timeline.
 ///
 /// A local event monitor instead of SwiftUI's `onKeyPress`: `onKeyPress` on the editor also
@@ -14,7 +14,7 @@ enum EditorKeyCommand: Equatable {
     case split, undo, redo, toggleSnapping, deselect, freeze, chapter, copy, paste, shuttle(Int)
     case selectRight, addStep, cycleTrimMode
     case trimStart, trimEnd, addZoom, addText, addMask, addArrow, addFrame, addSpotlight, addFinger, addCursor, addImage, addVideo
-    case voiceOver, toggleMagnet, transition, speed(Int), memeBoard, meme(Int)
+    case voiceOver, toggleMagnet, transition, join, speed(Int), memeBoard, meme(Int)
 }
 
 struct EditorKeyHandler: NSViewRepresentable {
@@ -124,8 +124,11 @@ final class EditorKeyHandlerView: NSView {
             case 123: onCommand(.stepSeconds(-1))
             case 124: onCommand(.stepSeconds(1))
             default:
-                guard chars.lowercased() == "z" else { return event }
-                onCommand(.zoomFit)
+                switch chars.lowercased() {
+                case "z": onCommand(.zoomFit)
+                case "s": onCommand(.join)   // ⇧S: join split clips again
+                default: return event
+                }
             }
             return nil
         }

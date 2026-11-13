@@ -51,14 +51,12 @@ enum UISnapshot {
             default: break
             }
             RunLoop.main.run(until: Date().addingTimeInterval(0.5))
-            // SCREENKAST_YOUTUBE=<video.mp4>: the YouTube upload helper in the export sheet.
+            // SCREENKAST_YOUTUBE=<video.mp4>: the YouTube upload helper ("-": without an exported video).
             if let video = ProcessInfo.processInfo.environment["SCREENKAST_YOUTUBE"] {
-                editor.exportResult = URL(fileURLWithPath: video)
-                editor.showYouTubeAssistant = true
-                let sheet = ExportSheet(editor: editor, isPresented: .constant(true))
+                let sheet = YouTubeUploadView(editor: editor, videoOverride: video == "-" ? nil : URL(fileURLWithPath: video)) {}
                     .tint(Theme.brand)
                     .background(Color(nsColor: .windowBackgroundColor))
-                return try write(sheet, width: 600, height: 860, to: outputPath)
+                return try write(sheet, width: 620, height: 720, to: outputPath)
             }
             // SCREENKAST_SNAPSHOT_SIZE="1000x700" (default 1400x900)
             let sizeParts = (ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_SIZE"] ?? "1400x900")

@@ -12,6 +12,8 @@ enum InspectorFold: String, CaseIterable {
     case texts, textDesign, chapters, captions, captionStyle, captionPosition
     // Medien
     case library, media, logo
+    // Skript
+    case pauses, fillers
 
     var title: String {
         switch self {
@@ -45,6 +47,8 @@ enum InspectorFold: String, CaseIterable {
         case .library: return "Bibliothek"
         case .media: return "Im Video verwendet"
         case .logo: return "Logo / Wasserzeichen"
+        case .pauses: return "Pausen entfernen"
+        case .fillers: return "Füllwörter"
         }
     }
 
@@ -55,7 +59,7 @@ enum InspectorFold: String, CaseIterable {
              .texts, .captions, .library, .media:
             return true
         case .scene, .scenePosition, .sceneVideo, .color, .fades, .master, .voiceColor, .voiceBreaths, .voiceLoudness,
-             .voiceExchange, .music, .script, .echo, .textDesign, .chapters, .captionStyle, .captionPosition, .logo:
+             .voiceExchange, .music, .script, .echo, .textDesign, .chapters, .captionStyle, .captionPosition, .logo, .pauses, .fillers:
             return false
         }
     }
@@ -68,6 +72,7 @@ enum InspectorFold: String, CaseIterable {
              .music, .script, .voiceOver, .echo: return .audio
         case .texts, .textDesign, .chapters, .captions, .captionStyle, .captionPosition: return .text
         case .library, .media, .logo: return .media
+        case .pauses, .fillers: return .transcript
         }
     }
 
@@ -320,6 +325,8 @@ extension EditorModel {
             return count(s.images.count + s.videoOverlays.count + s.inserts.count, "Element", "Elemente")
         case .logo:
             return s.watermark == nil ? "keins" : "an"
+        case .pauses, .fillers:
+            return ""   // given by the panel (it knows what was found)
         }
     }
 }

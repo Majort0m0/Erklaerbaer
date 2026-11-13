@@ -12,6 +12,9 @@ struct EditToolbar: View {
                 tool("arrow.uturn.forward", "Wiederholen (⇧⌘Z)", .redo).disabled(!editor.canRedo)
                 divider
                 tool("scissors", "Am Abspielkopf teilen (S)", .split)
+                Button { editor.perform(.join) } label: { icon("arrow.triangle.merge").rotationEffect(.degrees(90)) }
+                    .help("Geteilte Clips wieder verbinden (⇧S) – den ausgewählten mit seinem Nachbarn, mehrere ausgewählte oder den Teil am Abspielkopf")
+                    .disabled(editor.joinPlan.isEmpty)
                 Button { editor.deleteSelection() } label: { icon("trash") }
                     .help("Auswahl löschen (⌫)")
                     .disabled(editor.selection == nil)

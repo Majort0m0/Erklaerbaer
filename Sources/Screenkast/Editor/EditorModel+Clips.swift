@@ -107,7 +107,17 @@ extension EditorModel {
         split(&settings.cursorRanges, \.start, \.end, \.id)
         split(&settings.audioMutes, \.start, \.end, \.id)
         split(&settings.texts, \.start, \.end, \.id, skip: { $0.isFree || $0.placement != .overlay && $0.kind != .lowerThird })
-        split(&settings.images, \.start, \.end, \.id, skip: { $0.isFree })
+        // Pictures: each half keeps its own movement (keyframes count from the start of the clip).
+        for i in settings.images.indices where !settings.images[i].isFree && settings.images[i].start < t - 1e-3 && settings.images[i].end > t + 1e-3 {
+            let keys = Motion.split(settings.images[i].keys, at: display(t) - display(settings.images[i].start))
+            var second = settings.images[i]
+            second.id = UUID()
+            second.start = t
+            second.keys = keys.second
+            settings.images[i].end = t
+            settings.images[i].keys = keys.first
+            settings.images.append(second)
+        }
         // Clips that play in real time: the second half continues later in the file.
         let base = settings.timeMap(duration: duration)
         func cut(_ start: Double, _ seconds: Double) -> Double? {
@@ -127,11 +137,14 @@ extension EditorModel {
         for i in settings.videoOverlays.indices where !settings.videoOverlays[i].isFree && !settings.videoOverlays[i].synced {
             guard let first = cut(settings.videoOverlays[i].start, settings.videoOverlays[i].duration) else { continue }
             var second = settings.videoOverlays[i]
+            let keys = Motion.split(second.keys, at: first)
             second.id = UUID()
             second.start = t
             second.fileOffset += first
             second.duration -= first
+            second.keys = keys.second
             settings.videoOverlays[i].duration = first
+            settings.videoOverlays[i].keys = keys.first
             settings.videoOverlays.append(second)
         }
     }

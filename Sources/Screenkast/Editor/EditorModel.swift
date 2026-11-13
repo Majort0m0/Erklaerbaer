@@ -218,8 +218,12 @@ final class EditorModel: ObservableObject {
 
     @Published var isExporting = false
     @Published var showExportSheet = false
-    /// The export sheet shows the YouTube upload helper for the exported video.
-    @Published var showYouTubeAssistant = false
+    /// The YouTube upload helper (title, description, chapters, captions, picture, exported video).
+    @Published var showYouTubeSheet = false
+    /// The export was started from the YouTube helper: afterwards it leads back there.
+    @Published var exportForYouTube = false
+    /// Sheet to open once the current one has closed (sheets cannot be stacked).
+    var nextSheet: EditorSheet?
     /// "Von einer Adresse laden" (media library).
     @Published var showURLImport = false
     /// A problem with the media library (shown below it).
@@ -1621,6 +1625,7 @@ final class EditorModel: ObservableObject {
             }
             exportProgress = 1
             exportResult = url
+            rememberExport(url)
             // Chapters for the video description, next to the video.
             if !settings.chapters.isEmpty {
                 let text = url.deletingPathExtension().appendingPathExtension("kapitel.txt")
@@ -1842,6 +1847,7 @@ extension EditorModel {
         case .voiceOver: toggleVoiceOver()
         case .toggleMagnet: magnet.toggle()
         case .transition: addTransitionHere()
+        case .join: joinClips()
         case .speed(let direction): changeSpeed(direction)
         }
     }
@@ -1963,7 +1969,10 @@ extension EditorModel {
             second.start = o.isFree ? T : t
             second.duration = o.duration - first
             if !o.synced { second.fileOffset = o.fileOffset + first }
-            updateVideoOverlay(id: o.id) { $0.duration = first }
+            // Each half keeps its own movement (the second one's keyframes from its own start).
+            let keys = Motion.split(o.keys, at: first)
+            second.keys = keys.second
+            updateVideoOverlay(id: o.id) { $0.duration = first; $0.keys = keys.first }
             settings.videoOverlays.append(second)
             selection = .videoOverlay(second.id)
             return
@@ -2011,12 +2020,6 @@ extension EditorModel {
         selection = nil
     }
 
-    /// Joins a part with the next one (removes the split point at its end).
-    func joinWithNext(_ segment: ClosedRange<Double>) {
-        commitUndoStep(); defer { commitUndoStep() }   // one undo step of its own
-        settings.splits.removeAll { abs($0 - segment.upperBound) < 1e-6 }
-        selection = .segment(segment.lowerBound)
-    }
 }
 
 // MARK: - Snapping

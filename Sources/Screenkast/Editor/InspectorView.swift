@@ -266,11 +266,16 @@ struct InspectorView: View {
                 imageSection(o)
                 MotionSection(editor: editor, target: .image(o.id))
             }
-        case .insert: if let c = editor.selectedInsert { insertSection(c) }
+        case .insert:
+            if let c = editor.selectedInsert {
+                insertSection(c)
+                joinRow("dem Teil")
+            }
         case .chapter: if let c = editor.selectedChapter { chapterSection(c) }
         case .videoOverlay:
             if let o = editor.selectedVideoOverlay {
                 VideoOverlaySection(editor: editor, overlay: o)
+                joinRow("dem Clip")
                 if !o.synced { MotionSection(editor: editor, target: .video(o.id), showsVolume: true) }
             }
         case .audioLane(let lane): AudioLaneSection(editor: editor, lane: lane)
@@ -335,16 +340,33 @@ struct InspectorView: View {
                 Label("Teil entfernen", systemImage: "trash")
             }
             .disabled(editor.isRemoved(segment))
-            if segment.upperBound < editor.duration - 0.01 {
-                Button {
-                    editor.joinWithNext(segment)
-                } label: {
-                    Label("Mit dem nächsten Teil verbinden", systemImage: "arrow.triangle.merge")
-                }
-            }
-            Text("Entfernte Teile werden beim Abspielen und im Export übersprungen. Teilen: Abspielkopf setzen und S drücken.")
+            joinButtons("dem Teil")
+            Text("Entfernte Teile werden beim Abspielen und im Export übersprungen. Teilen: Abspielkopf setzen und S drücken; ⇧S verbindet geteilte Teile wieder.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Buttons that make the selected clip one again with the clip before or after it (after a split).
+    @ViewBuilder
+    private func joinButtons(_ noun: String) -> some View {
+        let n = editor.joinNeighbors
+        if let previous = n.previous {
+            Button { editor.join([previous]) } label: { Label("Mit \(noun) davor verbinden", systemImage: "arrow.triangle.merge") }
+                .help("Macht aus den beiden geteilten Stücken wieder einen Clip (⇧S)")
+        }
+        if let next = n.next {
+            Button { editor.join([next]) } label: { Label("Mit \(noun) danach verbinden", systemImage: "arrow.triangle.merge") }
+                .help("Macht aus den beiden geteilten Stücken wieder einen Clip (⇧S)")
+        }
+    }
+
+    /// Own section with the join buttons, only when there is something to join.
+    @ViewBuilder
+    private func joinRow(_ noun: String) -> some View {
+        let n = editor.joinNeighbors
+        if n.previous != nil || n.next != nil {
+            Section { joinButtons(noun) }
         }
     }
 
@@ -963,7 +985,7 @@ struct InspectorView: View {
             if let problem = editor.youTubeChapterProblem {
                 Text(problem).font(.caption).foregroundStyle(.orange)
             } else if !editor.settings.chapters.isEmpty {
-                Text("Mit dem Kopieren-Symbol in die YouTube-Beschreibung übernehmen; der Export legt sie auch als Textdatei neben das Video.")
+                Text("Im YouTube-Fenster (Fensterleiste › YouTube) stehen sie von selbst in der Beschreibung; das Kopieren-Symbol legt sie in die Zwischenablage, der Export auch als Textdatei neben das Video.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1466,7 +1488,8 @@ struct InspectorView: View {
                         .compactMap { $0 }.joined(separator: ", "))
                 }
             }
-            Text("In der Timeline verschieben, an den Kanten kürzen, mit S am Abspielkopf teilen. "
+            joinButtons("dem Clip")
+            Text("In der Timeline verschieben, an den Kanten kürzen, mit S am Abspielkopf teilen, mit ⇧S wieder verbinden. "
                  + "Über einen anderen Clip geschoben, blenden beide ineinander über.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1474,6 +1497,7 @@ struct InspectorView: View {
     }
 
     /// The transition where two parts meet without a cut.
+    @ViewBuilder
     private func joinSection(_ key: Double) -> some View {
         Section {
             Picker("Übergang", selection: Binding(get: { editor.joinTransition(key: key)?.style ?? .dissolve },
@@ -1488,6 +1512,14 @@ struct InspectorView: View {
             Text("Schiebt die beiden Teile übereinander; Bild und Ton blenden weich über. Das Video wird dadurch um die Länge des Übergangs kürzer.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        if let next = editor.joinNeighbors.next {
+            Section {
+                Button { editor.join([next]) } label: { Label("Teilung aufheben – wieder ein Clip (⇧S)", systemImage: "arrow.triangle.merge") }
+                Text("Hier wurde nur geteilt: Beide Teile werden wieder ein Clip, ein Übergang an dieser Stelle fällt weg.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

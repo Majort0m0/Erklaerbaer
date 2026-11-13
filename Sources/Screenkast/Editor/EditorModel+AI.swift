@@ -61,15 +61,6 @@ extension EditorModel {
         }
     }
 
-    /// Title, description, tags and chapters ready for the upload page.
-    func youTubeText(title: String? = nil) -> String {
-        var parts: [String] = []
-        if let title = title ?? aiSuggestions?.titles.first { parts.append(title) }
-        let description = youTubeDescriptionSuggestion
-        if !description.isEmpty { parts.append(description) }
-        return parts.joined(separator: "\n\n")
-    }
-
     /// A suggested clip becomes its own project: a copy (cloned on APFS, no extra space) trimmed to
     /// the clip, in portrait with the recording at the top.
     func createClipProject(_ clip: AISuggestions.Clip) {
