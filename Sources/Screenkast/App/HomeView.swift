@@ -200,6 +200,9 @@ struct HomeView: View {
             }
             .disabled(model.isBusy || model.selection == nil)
 
+            WebVideoButton { model.newProjectFromURL() }
+                .disabled(model.creatingProject || model.isRecording)
+
             HStack {
                 Menu {
                     ScreenshotMenuItems(model: model)
@@ -285,7 +288,7 @@ struct HomeView: View {
             if model.library.isEmpty {
                 ContentUnavailableView("Noch keine Projekte",
                                        systemImage: "film.stack",
-                                       description: Text("Starte links eine Aufnahme – oder lege hier ein eigenes Video ab bzw. wähle „Neues Projekt“. Den Speicherort wählst du oben."))
+                                       description: Text("Starte links eine Aufnahme oder lade ein Video aus dem Internet – oder lege hier ein eigenes Video bzw. einen Link ab. Den Speicherort wählst du oben."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
@@ -308,17 +311,23 @@ struct HomeView: View {
                 RoundedRectangle(cornerRadius: 14)
                     .strokeBorder(Theme.brand, style: StrokeStyle(lineWidth: 3, dash: [8, 5]))
                     .background(Theme.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-                    .overlay(Label("Video ablegen – wird zum neuen Projekt", systemImage: "film.stack").font(.title3.bold()))
+                    .overlay(Label("Video oder Link ablegen – wird zum neuen Projekt", systemImage: "film.stack").font(.title3.bold()))
                     .padding(12)
                     .allowsHitTesting(false)
             }
         }
-        // An own video dropped onto the list becomes a project.
-        .onDrop(of: [.movie, .fileURL], isTargeted: $drop.targeted) { providers in
+        // An own video dropped onto the list becomes a project – a link (from the browser's
+        // address bar) is loaded from the internet first.
+        .onDrop(of: [.movie, .fileURL, .url], isTargeted: $drop.targeted) { providers in
             guard let p = providers.first else { return false }
             _ = p.loadObject(ofClass: URL.self) { url, _ in
-                guard let url, let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .movie) else { return }
-                Task { @MainActor in model.newProject(fromVideo: url) }
+                guard let url else { return }
+                if url.isFileURL {
+                    guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .movie) else { return }
+                    Task { @MainActor in model.newProject(fromVideo: url) }
+                } else if ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                    Task { @MainActor in model.newProjectFromURL(url.absoluteString) }
+                }
             }
             return true
         }
@@ -339,6 +348,7 @@ struct NewProjectMenu: View {
     var body: some View {
         Menu {
             Button("Aus eigenem Video …") { model.newProjectFromVideo() }
+            Button("Aus Video im Internet …") { model.newProjectFromURL() }
             Menu("Leeres Projekt") {
                 Button("Querformat 16:9 (YouTube)") { model.newEmptyProject(aspect: .wide) }
                 Button("Hochformat 9:16 (Reels, TikTok)") { model.newEmptyProject(aspect: .vertical) }
@@ -351,7 +361,7 @@ struct NewProjectMenu: View {
         .menuStyle(.button)
         .buttonStyle(.borderedProminent)
         .tint(Theme.brand)
-        .help("Eigenes Video schneiden oder mit einer leeren Fläche für Clips, Bilder und Texte beginnen")
+        .help("Eigenes Video oder eines aus dem Internet schneiden – oder mit einer leeren Fläche für Clips, Bilder und Texte beginnen")
     }
 }
 
@@ -490,6 +500,43 @@ struct CameraPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+/// The alternative to recording on the start page: a video from YouTube, Instagram & Co. becomes a
+/// new project.
+struct WebVideoButton: View {
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+    @StateObject private var hover = HoverFlag()
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                IconTile(icon: "globe", color: Theme.brand, size: 26)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Video aus dem Internet").font(.system(size: 13, weight: .semibold))
+                    Text("YouTube, Instagram-Reels, Vimeo & Co.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 46)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.raised))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(hover.on && enabled ? Theme.brand : Theme.stroke, lineWidth: hover.on && enabled ? 1.5 : 1))
+            .opacity(enabled ? 1 : 0.45)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hover.on = $0 }
+        .help("Adresse eines Videos einfügen – es wird geladen und als neues Projekt geöffnet. Ein Link lässt sich auch auf die Projektliste ziehen.")
+    }
 }
 
 /// The big red record button of the start page.

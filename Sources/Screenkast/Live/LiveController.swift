@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import SwiftUI
 import ScreenCaptureKit
 
@@ -104,6 +105,18 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var recordingTime: TimeInterval = 0
     @Published private(set) var framesPerSecond = 0
     @Published var message: String?
+    /// Why the screen or window no longer comes in (nil: it does).
+    @Published private(set) var sourceLost: String?
+    /// How far the live picture is from the camera "Erklärbär".
+    @Published private(set) var meetingCameraState: VirtualCameraFeed.State = .off
+    private var meetingCameraWatch: AnyCancellable?
+    /// How far the sound is from the microphone "Erklärbär".
+    @Published private(set) var meetingMicState: VirtualMicFeed.State = .off
+    private let meetingMic = VirtualMicFeed()
+    private var meetingMicWatch: AnyCancellable?
+    let overlays = LiveOverlayLibrary.shared
+    private var overlayWatch: AnyCancellable?
+    private var bannerEditor: NSWindow?
 
     var isDeviceSource: Bool { if case .device = source { return true } else { return false } }
 
@@ -116,6 +129,12 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         microphoneID = app.microphones.contains { $0.uniqueID == savedMic } ? savedMic : ""
         hearDevice = app.hearDevice
         super.init()
+        adoptOldLogo()
+        syncOverlays()
+        // Edited or removed logos and banners show at once.
+        overlayWatch = overlays.objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { self?.syncOverlays() }
+        }
     }
 
     func begin() {
@@ -136,7 +155,39 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         engine.onProblem = { [weak self] text in
             Task { @MainActor in self?.message = text }
         }
+        engine.onSourceLost = { [weak self] error in
+            Task { @MainActor in self?.lostSource(error) }
+        }
+        engine.virtualCamera.onState = { [weak self] state in
+            Task { @MainActor in self?.meetingCameraState = state }
+        }
         engine.start()
+        let meetingCamera = VirtualCamera.shared
+        meetingCamera.refresh()
+        meetingCameraWatch = meetingCamera.$sending.combineLatest(meetingCamera.$status).sink { [weak self] sending, status in
+            // Only once macOS has answered (and an update is through): using the camera during an update can
+            // keep macOS from starting the new one.
+            self?.engine.virtualCamera.setActive(sending && status == .ready)
+        }
+        let mic = VirtualMicrophone.shared
+        mic.refresh()
+        // The meeting needs a voice: without a chosen microphone the Mac's own one is taken.
+        if microphoneID.isEmpty, mic.status == .ready, mic.sending, let standard = AVCaptureDevice.default(for: .audio),
+           app.microphones.contains(where: { $0.uniqueID == standard.uniqueID }) {
+            microphoneID = standard.uniqueID
+        }
+        meetingMic.onState = { [weak self] state in
+            Task { @MainActor in self?.meetingMicState = state }
+        }
+        // Memes and the iPad go into the microphone directly (Erklärbär's own sound is never taken up).
+        engine.onMemeSound = { [weak meetingMic] url in meetingMic?.playClip(url) }
+        engine.onDeviceSound = { [weak meetingMic] sample in meetingMic?.takeDeviceSound(sample) }
+        meetingMicWatch = mic.$status.combineLatest(mic.$sending, mic.$systemAudio, mic.$meetingApp)
+            .combineLatest($microphoneID)
+            .sink { [weak self] values, micID in
+                let (status, sending, system, meetingApp) = values
+                self?.meetingMic.apply(mic: micID.isEmpty ? nil : micID, system: system, exclude: meetingApp, on: sending && status == .ready)
+            }
         if config.keys == true, KeyShortcuts.isTrusted(prompt: false) { engine.watchKeys(true) }
         program.onClose = { [weak self] in Task { @MainActor in await self?.end() } }
         program.show()
@@ -229,6 +280,11 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         if isRecording { await stopRecording() }
         areaTimer?.invalidate()
         statsTimer?.invalidate()
+        meetingCameraWatch = nil
+        meetingMicWatch = nil
+        await meetingMic.stopNow()
+        bannerEditor?.close()
+        bannerEditor = nil
         engine.onPresent = nil
         program.onClose = nil
         program.close()
@@ -278,26 +334,95 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         config.background = true
     }
 
-    /// A logo in a corner of the live picture (kept in the app's own folder).
-    func chooseLogo() {
+    // MARK: Logos and banners
+
+    /// Older versions kept one logo in the live settings: it becomes the first logo of the library.
+    private func adoptOldLogo() {
+        guard config.logoID == nil, let old = config.logo,
+              let logo = overlays.adopt(file: old.file, corner: old.corner, size: old.size, opacity: old.opacity) else { return }
+        config.logoID = config.logoOn == true ? logo.id : nil
+        if config.logoOn != true { config.logo = nil }
+    }
+
+    /// Puts the current state of the shown logo and banner into the picture (after edits in the library).
+    private func syncOverlays() {
+        var new = config
+        if let logo = overlays.logo(new.logoID), new.logoOn == true {
+            new.logo = overlays.watermark(logo)
+        } else {
+            new.logoID = nil
+            new.logoOn = false
+        }
+        new.banner = overlays.banner(new.banner?.id).map(overlays.resolved)
+        if new != config { config = new }
+    }
+
+    var shownLogoID: UUID? { config.logoOn == true ? config.logoID : nil }
+    var shownBannerID: UUID? { config.banner?.id }
+
+    /// Shows the logo, or takes it away when it is already shown. Another logo takes its place.
+    func toggle(logo: LiveLogo) {
+        if shownLogoID == logo.id {
+            config.logoOn = false
+            config.logoID = nil
+        } else {
+            config.logoID = logo.id
+            config.logo = overlays.watermark(logo)
+            config.logoOn = true
+        }
+    }
+
+    func toggle(banner: LiveBanner) {
+        config.banner = shownBannerID == banner.id ? nil : overlays.resolved(banner)
+    }
+
+    /// Asks for picture files and keeps them as logos. Returns the new logos.
+    @discardableResult
+    func pickLogos() -> [LiveLogo] {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
-        panel.message = "Logo für das Live-Bild (am besten ein PNG mit transparentem Hintergrund)"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Screenkast/Logos", isDirectory: true)
-        let target = folder.appendingPathComponent(UUID().uuidString + "." + url.pathExtension)
+        panel.allowsMultipleSelection = true
+        panel.message = "Logos für das Live-Bild (am besten PNGs mit transparentem Hintergrund)"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return [] }
         do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: url, to: target)
+            return try overlays.addLogos(panel.urls)
         } catch {
             message = "Das Logo ließ sich nicht übernehmen: \(error.localizedDescription)"
-            return
+            return []
         }
-        if let old = config.logo?.file, old != target.path { try? FileManager.default.removeItem(atPath: old) }
-        var logo = config.logo ?? Watermark(file: target.path)
-        logo.file = target.path
-        config.logo = logo
-        config.logoOn = true
+    }
+
+    /// New logos from files; a single new one is shown at once.
+    func addLogos() {
+        let added = pickLogos()
+        if added.count == 1, let first = added.first { toggle(logo: first) }
+    }
+
+    func newBanner() {
+        let banner = overlays.addBanner()
+        editBanner(banner.id)
+    }
+
+    /// The banner in its own window: typing there never reaches the shortcuts of the control window.
+    func editBanner(_ id: UUID) {
+        bannerEditor?.close()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 520), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Banner bearbeiten"
+        window.isReleasedWhenClosed = false
+        window.sharingType = .none
+        window.level = .floating
+        let controller = NSHostingController(rootView: LiveBannerEditor(live: self, library: overlays, bannerID: id))
+        controller.sizingOptions = [.preferredContentSize]
+        window.contentViewController = controller
+        window.center()
+        bannerEditor = window
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func closeBannerEditor() {
+        bannerEditor?.close()
+        bannerEditor = nil
     }
 
     func playMeme(_ slot: MemeSlot) {
@@ -306,7 +431,23 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
 
     // MARK: Source
 
+    func lostSource(_ error: Error) {
+        let what = if case .window = source { "Die Aufnahme des Fensters" } else { "Die Bildschirmaufnahme" }
+        let error = error as NSError
+        if error.domain == SCStreamErrorDomain, error.code == SCStreamError.Code.userStopped.rawValue {
+            sourceLost = "\(what) wurde beendet, wohl über „Nicht mehr teilen“ im macOS-Menü oben rechts. Das Live-Bild zeigt so lange das letzte Bild."
+        } else if error.domain == SCStreamErrorDomain, error.code == SCStreamError.Code.noCaptureSource.rawValue {
+            sourceLost = "\(what) ist nicht mehr möglich: Das Fenster oder der Bildschirm ist weg. Bitte eine andere Quelle wählen."
+        } else {
+            sourceLost = "macOS hat \(what.replacingOccurrences(of: "Die ", with: "die ")) beendet (\(error.localizedDescription)). Das Live-Bild zeigt so lange das letzte Bild."
+        }
+    }
+
+    /// Starts the capture of the chosen screen or window again.
+    func restartSource() { applySource() }
+
     private func applySource() {
+        sourceLost = nil
         let previous = sourceTask
         let selection = source
         let hear = hearDevice

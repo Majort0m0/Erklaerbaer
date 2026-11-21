@@ -28,7 +28,10 @@ final class CameraRecorder: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
 
     static func availableDevices() -> [AVCaptureDevice] {
         AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera],
-                                         mediaType: .video, position: .unspecified).devices.filter { !$0.hasMediaType(.muxed) }
+                                         mediaType: .video, position: .unspecified).devices.filter {
+            // The camera "Erklärbär" shows the live picture itself: as the webcam it would show itself endlessly.
+            !$0.hasMediaType(.muxed) && !VirtualCameraIDs.isOwnCamera(uniqueID: $0.uniqueID, modelID: $0.modelID)
+        }
     }
 
     override init() {

@@ -18,11 +18,15 @@ Voraussetzungen: Mac mit Apple-Chip (M1 oder neuer), macOS 15 oder neuer. Untert
 ## Bauen & Starten
 
 ```bash
-./scripts/build-app.sh                # → ~/Applications/Erklärbär.app (Release, signiert mit „Screenkast Dev“, sonst ad hoc)
-open ~/Applications/Erklärbär.app
+./scripts/build-app.sh                # → Erklärbär.app (Release) in /Applications bzw. ~/Applications
+SCREENKAST_ZIP=~/Desktop/Erklaerbaer-2.0.0-macOS.zip ./scripts/build-app.sh   # nur das ZIP für GitHub, ohne Installation
 ```
 
-Es genügen die Command Line Tools, Xcode wird nicht gebraucht. Das Skript baut in `~/Library/Caches/Screenkast/build` (änderbar mit `SCREENKAST_BUILD_DIR`), signiert in einem temporären Ordner und installiert dann nach `~/Applications`. Grund: Der Projektordner liegt in iCloud-„Dokumente“. Dort hängt macOS neuen Bundles Finder-Metadaten an, die `codesign` ablehnt, und SwiftPM linkt manchmal nicht neu („disk I/O error“). Mit `SCREENKAST_APP_DIR=/anderer/ordner` lässt sich ein anderes Ziel wählen.
+Es genügen die Command Line Tools. Das Skript baut in `~/Library/Caches/Screenkast/build` (änderbar mit `SCREENKAST_BUILD_DIR`) und signiert in einem temporären Ordner. Grund: Der Projektordner liegt in iCloud-„Dokumente“. Dort hängt macOS neuen Bundles Finder-Metadaten an, die `codesign` ablehnt, und SwiftPM linkt manchmal nicht neu („disk I/O error“). Mit `SCREENKAST_APP_DIR=/anderer/ordner` lässt sich ein anderes Ziel wählen.
+
+- **Ohne Xcode** (oder mit `SCREENKAST_NO_CAMERA=1`): Die App wird mit „Screenkast Dev“ signiert (sonst ad hoc) und landet in `~/Applications`.
+- **Mit Xcode und einem Apple-Entwicklerteam** (`SCREENKAST_TEAM`): Zusätzlich entstehen aus `VirtualCamera/` die Kamera „Erklärbär“ (Kamera-Erweiterung) und das Mikrofon „Erklärbär“ (Audiotreiber). Die App wird für die Entwicklung signiert und nach `/Applications` installiert, denn macOS richtet Kamera-Erweiterungen nur von dort ein. So ein Build startet nur auf Macs, die im Team registriert sind.
+- **`SCREENKAST_ZIP=<datei>`**: baut ohne Kamera und Mikrofon und schreibt nur das ZIP für Releases. Installiert und löscht nichts.
 
 Bei der Bildschirmaufnahme fragt macOS nach der Berechtigung **Bildschirm- und Systemaudioaufnahme**, danach muss die App einmal neu gestartet werden. Kamera und Mikrofon fragen beim ersten Benutzen, Tastenkürzel brauchen **Bedienungshilfen**. Das Build-Skript signiert mit dem selbst erstellten Zertifikat „Screenkast Dev“ aus dem Anmelde-Schlüsselbund (falls vorhanden): dann bleiben die Freigaben über Neubauten erhalten. Ohne Zertifikat wird ad hoc signiert, und macOS fragt nach jedem Neubau erneut (`tccutil reset All local.screenkast.app` setzt alle Freigaben zurück).
 

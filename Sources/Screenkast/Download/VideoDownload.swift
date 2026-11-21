@@ -20,6 +20,8 @@ enum DownloadError: LocalizedError, Equatable {
     case network(String)
     case nothing
     case unsupportedFormat
+    case noPicture
+    case browserAccess(CookieBrowser)
     case save(String)
     case cancelled
 
@@ -37,11 +39,13 @@ enum DownloadError: LocalizedError, Equatable {
             case 401, 403: return "Der Server lässt nicht laden (Fehler \(code)) – vielleicht braucht es eine Anmeldung."
             default: return "Der Server antwortet mit Fehler \(code)."
             }
-        case .toolMissing: return "Für Videos auf Seiten wie YouTube, Vimeo oder der Mediathek braucht Erklärbär das kostenlose Programm yt-dlp."
+        case .toolMissing: return "Für Videos auf Seiten wie YouTube, Instagram, Vimeo oder der Mediathek braucht Erklärbär das kostenlose Programm yt-dlp."
         case .tool(let s): return "yt-dlp meldet: \(s)"
         case .network(let s): return "Laden fehlgeschlagen: \(s)"
         case .nothing: return "yt-dlp hat keine Datei geliefert."
         case .unsupportedFormat: return "Dieses Video gibt es nur in einem Format, das macOS nicht abspielt."
+        case .noPicture: return "Unter dieser Adresse kam kein Video, das macOS abspielen kann – nur Ton oder ein Bild. Für ein neues Projekt braucht es ein Video; Ton und Bilder holst du im Editor über Bibliothek › Adresse … ins Projekt."
+        case .browserAccess(let b): return "yt-dlp darf die Anmeldung aus \(b.label) nicht lesen. \(b.note ?? "")"
         case .save(let s): return "Das Video ließ sich nicht sichern: \(s)"
         case .cancelled: return "Abgebrochen."
         }
@@ -93,6 +97,17 @@ enum VideoLink: Equatable {
                             "arte.tv", "phoenix.de", "kika.de", "br.de", "wdr.de", "ndr.de", "swr.de", "mdr.de", "hr.de", "rbb-online.de",
                             "tagesschau.de", "planet-schule.de", "orf.at", "srf.ch", "dailymotion.com", "ted.com", "twitch.tv", "tiktok.com",
                             "instagram.com", "facebook.com", "x.com", "twitter.com", "soundcloud.com"]
+
+    /// The site's name for the project list ("Instagram", "YouTube", otherwise the host).
+    static func siteName(_ url: URL) -> String {
+        let host = (url.host ?? "").lowercased()
+        let names = ["youtube.com": "YouTube", "youtu.be": "YouTube", "youtube-nocookie.com": "YouTube", "instagram.com": "Instagram",
+                     "vimeo.com": "Vimeo", "tiktok.com": "TikTok", "facebook.com": "Facebook", "x.com": "X", "twitter.com": "X",
+                     "dailymotion.com": "Dailymotion", "ted.com": "TED", "twitch.tv": "Twitch", "ardmediathek.de": "ARD Mediathek",
+                     "zdf.de": "ZDF", "arte.tv": "arte"]
+        if let name = names.first(where: { host == $0.key || host.hasSuffix("." + $0.key) })?.value { return name }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
 
     static func isPlatform(_ url: URL) -> Bool {
         guard let host = url.host?.lowercased() else { return false }
@@ -275,22 +290,30 @@ enum YTDLP {
     /// Picture (H.264 in MP4) and sound (M4A) as two separate files – joined afterwards, no
     /// ffmpeg needed; a single MP4 with both when the site has no separate streams. Never HLS
     /// (without ffmpeg that can arrive as MPEG-TS, which macOS does not read).
+    ///
+    /// The pair is joined with "+", not ",": "+" fails as a whole when one half is missing, so
+    /// yt-dlp moves on to the single file. Instagram has its separate picture only as VP9 – with
+    /// "," yt-dlp loaded the sound alone. Without ffmpeg yt-dlp keeps the two files ("won't be
+    /// merged"); with ffmpeg (Homebrew) it joins them itself. Both end up in VideoSaver.finish.
     static func formatSelector(_ quality: VideoQuality) -> String {
         let height = quality.maxHeight.map { "[height<=\($0)]" } ?? ""
         let heightIfKnown = quality.maxHeight.map { "[height<=?\($0)]" } ?? ""
         let noHLS = "[protocol!*=m3u8]"
-        return "(bv[vcodec^=avc1][ext=mp4]\(height)\(noHLS),ba[ext=m4a]\(noHLS))"
+        return "bv[vcodec^=avc1][ext=mp4]\(height)\(noHLS)+ba[ext=m4a]\(noHLS)"
             + "/b[ext=mp4][vcodec^=?avc1]\(heightIfKnown)\(noHLS)/b[ext=mp4]\(heightIfKnown)\(noHLS)"
             + "/ba[ext=m4a]\(noHLS)/ba[ext=mp3]"
     }
 
-    static func arguments(for url: URL, into folder: URL, quality: VideoQuality, runtime: JSRuntime?) -> [String] {
+    /// `browser`: use the login of this browser (only after the user asked for it).
+    static func arguments(for url: URL, into folder: URL, quality: VideoQuality, runtime: JSRuntime?, browser: CookieBrowser? = nil) -> [String] {
         var args = ["--ignore-config", "--no-playlist", "--newline", "--no-mtime", "--no-simulate", "--progress",
                     "--progress-template", "download:[pp-progress] %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s",
                     "--print", "before_dl:[pp-title] %(title)s",
                     "--print", "before_dl:[pp-format] %(vcodec)s|%(acodec)s",
+                    "--print", "before_dl:[pp-parts] %(format_id)s",
                     "--print", "after_move:[pp-file] %(filepath)s"]
         if let runtime { args += ["--js-runtimes", runtime.argument] }
+        if let browser { args += ["--cookies-from-browser", browser.rawValue] }
         args += ["-f", formatSelector(quality), "-o", folder.appendingPathComponent("video.f%(format_id)s.%(ext)s").path]
         return args + ["--", url.absoluteString]
     }
@@ -302,6 +325,10 @@ enum YTDLP {
         case file(String)
         /// What the next file contains (codecs; "none" = no picture or no sound).
         case format(video: Bool, audio: Bool)
+        /// How many files the chosen format loads (2 for picture + sound).
+        case parts(Int)
+        /// yt-dlp starts loading the next file.
+        case partStarted
     }
 
     /// One line of yt-dlp's output (the templates above, plus its normal progress line).
@@ -315,6 +342,11 @@ enum YTDLP {
             let total = parts.dropFirst().compactMap { $0 }.first { $0 > 0 }
             return .progress(received: received, total: total)
         }
+        if l.hasPrefix("[pp-parts] ") {
+            let id = l.dropFirst(11).trimmingCharacters(in: .whitespaces)
+            return id.isEmpty ? nil : .parts(id.split(separator: "+").count)
+        }
+        if l.hasPrefix("[download] Destination:") { return .partStarted }
         if l.hasPrefix("[download]"), let r = l.range(of: #"[0-9]+(\.[0-9]+)?%"#, options: .regularExpression), let p = Double(l[r].dropLast()) {
             return .percent(p)
         }

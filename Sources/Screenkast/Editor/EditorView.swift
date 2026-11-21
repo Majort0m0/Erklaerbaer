@@ -72,7 +72,7 @@ struct EditorView: View {
             YouTubeUploadView(editor: editor) { editor.showYouTubeSheet = false }
         }
         .sheet(isPresented: $editor.showPolishSheet) { PolishSheet(editor: editor) }
-        .sheet(isPresented: $editor.showURLImport) { URLImportSheet(editor: editor, isPresented: $editor.showURLImport) }
+        .sheet(isPresented: $editor.showURLImport) { URLImportSheet(target: .library(editor), isPresented: $editor.showURLImport) }
         .sheet(isPresented: $editor.showAISheet, onDismiss: { editor.openNextSheet() }) { AISheet(editor: editor) }
         .sheet(isPresented: $editor.showSpeechSheet) { SpeechSheet(editor: editor) }
         .sheet(isPresented: $editor.showPalette) { CommandPalette(editor: editor) }

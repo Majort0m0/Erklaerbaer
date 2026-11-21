@@ -37,8 +37,22 @@ enum Entry {
         if let i = args.firstIndex(of: "--newproject"), i + 1 < args.count {
             exit(MainActor.assumeIsolated { ProjectFactory.commandLine(folder: args[i + 1], files: Array(args[(i + 2)...])) })
         }
+        if let i = args.firstIndex(of: "--urlproject"), i + 2 < args.count {
+            _ = NSApplication.shared
+            exit(URLImportModel.commandLine(address: args[i + 1], folder: args[i + 2], quality: i + 3 < args.count ? args[i + 3] : nil,
+                                            browser: i + 4 < args.count ? args[i + 4] : nil))
+        }
         if let i = args.firstIndex(of: "--livetest"), i + 2 < args.count {
             exit(LiveEngine.commandLine(seconds: Int(args[i + 1]) ?? 10, picture: args[i + 2]))
+        }
+        if args.contains("--meetingmictest") {
+            exit(VirtualMicrophoneTest.commandLine())
+        }
+        if let i = args.firstIndex(of: "--meetingcamgrab"), i + 1 < args.count {
+            exit(VirtualCameraTest.grab(path: args[i + 1]))
+        }
+        if let i = args.firstIndex(of: "--meetingcamtest"), i + 2 < args.count {
+            exit(VirtualCameraTest.commandLine(seconds: Int(args[i + 1]) ?? 4, folder: args[i + 2]))
         }
         if let i = args.firstIndex(of: "--devicetest"), i + 2 < args.count {
             exit(DeviceRecorder.commandLine(seconds: Double(args[i + 1]) ?? 3, path: args[i + 2]))
@@ -121,6 +135,7 @@ struct ScreenkastApp: App {
                     model.toggleRecording()
                 }
                 Button("Neues Projekt aus eigenem Video …") { model.newProjectFromVideo() }
+                Button("Neues Projekt aus Video im Internet …") { model.newProjectFromURL() }
                 Button("Projekt umbenennen …") {
                     if let url = model.editor?.project.url { model.renameProject(url) }
                 }
@@ -182,6 +197,9 @@ struct RootView: View {
         .task {
             await model.refreshSources()
             model.updateControlBar()
+        }
+        .sheet(isPresented: $model.showURLProject) {
+            URLImportSheet(target: .newProject(model), isPresented: $model.showURLProject, initialAddress: model.urlProjectAddress)
         }
         .alert("Erklärbär", isPresented: Binding(get: { model.errorMessage != nil },
                                                   set: { if !$0 { model.errorMessage = nil } })) {

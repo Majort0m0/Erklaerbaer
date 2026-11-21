@@ -1,3 +1,4 @@
+import ScreenCaptureKit
 import AppKit
 import SwiftUI
 
@@ -11,12 +12,50 @@ enum UISnapshot {
         InspectorFolds.shared.keepInMemory(open: ProcessInfo.processInfo.environment["SCREENKAST_FOLDS"] == "all"
             ? Set(InspectorFold.allCases) : Set(InspectorFold.allCases.filter(\.defaultOpen)))
         if projectPath == "home" { return home(outputPath: outputPath) }
+        // "Neues Projekt aus dem Internet"; urlproject-login shows the advice after a login error.
+        if projectPath == "urlproject" || projectPath == "urlproject-login" {
+            AppModel.snapshotMode = true
+            let app = AppModel()
+            let m = URLImportModel()
+            if projectPath == "urlproject-login" {
+                m.address = "https://www.instagram.com/reel/DeUxSy_NSim/"
+                m.phase = .failed(DownloadError.tool("Requested content is not available, rate-limit reached or login required").localizedDescription)
+                m.advice = .login
+            }
+            let sheet = URLImportSheet(target: .newProject(app), isPresented: .constant(true), model: m)
+                .background(Theme.panel).tint(Theme.brand)
+            return (try? write(sheet, width: 500, height: projectPath == "urlproject" ? 380 : 560, to: outputPath, settle: Date().addingTimeInterval(2))) ?? 1
+        }
         if projectPath == "live" {
             AppModel.snapshotMode = true
             let app = AppModel()
             let live = LiveModel(app: app)
             live.source = nil
-            return (try? write(LiveControlView(live: live, app: app).background(Theme.panel), width: 400, height: 860, to: outputPath)) == nil ? 1 : 0
+            // SCREENKAST_SNAPSHOT_LOST=1: the capture was ended with "Stop sharing" in the macOS menu.
+            if ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_LOST"] == "1" {
+                live.lostSource(NSError(domain: SCStreamErrorDomain, code: SCStreamError.Code.userStopped.rawValue))
+            }
+            #if DEBUG
+            // SCREENKAST_SNAPSHOT_MEETING=ready|new: camera and microphone set up or not.
+            if let meeting = ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_MEETING"] {
+                VirtualCamera.shared.pretend(meeting == "ready" ? .ready : .notInstalled)
+                VirtualMicrophone.shared.pretend(meeting == "ready" ? .ready : .notInstalled)
+            }
+            #endif
+            // SCREENKAST_SNAPSHOT_ACTIVE=1: the first logo and banner are shown.
+            if ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_ACTIVE"] == "1" {
+                if let logo = live.overlays.logos.first, live.shownLogoID != logo.id { live.toggle(logo: logo) }
+                if let banner = live.overlays.banners.first, live.shownBannerID != banner.id { live.toggle(banner: banner) }
+            }
+            let height = Double(ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_HEIGHT"] ?? "") ?? 860
+            return (try? write(LiveControlView(live: live, app: app).background(Theme.panel), width: 400, height: height, to: outputPath)) == nil ? 1 : 0
+        }
+        if projectPath == "livebanner" {
+            AppModel.snapshotMode = true
+            let live = LiveModel(app: AppModel())
+            guard let banner = live.overlays.banners.first else { print("Kein Banner"); return 1 }
+            return (try? write(LiveBannerEditor(live: live, library: live.overlays, bannerID: banner.id).background(Theme.panel),
+                               width: 556, height: 560, to: outputPath)) == nil ? 1 : 0
         }
         if projectPath.hasPrefix("help") {
             HelpModel.shared.selection = projectPath.split(separator: ":").dropFirst().first.map(String.init) ?? "start"

@@ -18,32 +18,78 @@ private struct LivePreview: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+/// The measured height of the control window's content.
+final class LivePanelHeight: ObservableObject {
+    @Published var content: CGFloat = 700
+
+    struct Key: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    }
+
+    /// The visible height of the screen minus the title bar and a margin.
+    @MainActor static var most: CGFloat { ((NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 900) - 28 - 24 }
+}
+
 /// The control window: never part of the picture that is shared.
 struct LiveControlView: View {
     @ObservedObject var live: LiveModel
     @ObservedObject var app: AppModel
+    @ObservedObject private var meetingCamera = VirtualCamera.shared
+    @ObservedObject private var meetingMic = VirtualMicrophone.shared
     @AppStorage("liveExtrasOpen") private var extrasOpen = false
 
     private let width: CGFloat = 400
     private var previewHeight: CGFloat { (width - 28) * 9 / 16 }
 
+    @StateObject private var height = LivePanelHeight()
+
+    /// Never taller than the screen: then the content scrolls.
     var body: some View {
+        ScrollView(.vertical) {
+            content
+                .background(GeometryReader { g in Color.clear.preference(key: LivePanelHeight.Key.self, value: g.size.height) })
+        }
+        .scrollIndicators(.automatic)
+        .frame(width: width, height: min(height.content, LivePanelHeight.most))
+        .onPreferenceChange(LivePanelHeight.Key.self) { value in
+            MainActor.assumeIsolated { if abs(height.content - value) > 0.5 { height.content = value } }
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             preview
+            if let lost = live.sourceLost {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(lost).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("Wieder aufnehmen") { live.restartSource() }
+                        .controlSize(.small)
+                        .help("Die gewählte Quelle wieder aufnehmen")
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.orange.opacity(0.14)))
+            }
             scenes
             sourceRows
             extras
             effects
+            LiveOverlayStrip(live: live, library: live.overlays)
             memes
             recording
+            meetingSection
             if let message = live.message {
                 Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
-            Text("In Zoom, Teams oder Meet: Bildschirm teilen und das Fenster „\(LiveProgramWindow.title)“ wählen. Dieses Steuerfenster ist im geteilten Bild nie zu sehen.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if meetingCamera.status != .ready {
+                Text("Oder im Meeting den Bildschirm teilen mit dem Fenster „\(LiveProgramWindow.title)“. Dieses Steuerfenster ist nie zu sehen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(14)
         .frame(width: width)
@@ -216,24 +262,10 @@ struct LiveControlView: View {
                             .help("Höher: Der Rand flackert weniger, zieht bei schnellen Bewegungen aber etwas nach.")
                     }
                 }
-                HStack {
-                    Toggle("Logo", isOn: Binding(get: { live.config.logoOn == true }, set: { on in
-                        if on && live.config.logo == nil { live.chooseLogo() } else { live.config.logoOn = on }
-                    }))
-                    Spacer()
-                    Button(live.config.logo == nil ? "Logo wählen …" : "Anderes Logo …") { live.chooseLogo() }
-                }
-                if live.config.logoOn == true, live.config.logo != nil {
-                    Picker("Ecke", selection: Binding(get: { live.config.logo?.corner ?? .topRight }, set: { live.config.logo?.corner = $0 })) {
-                        ForEach(CameraCorner.allCases) { Text($0.label).tag($0) }
-                    }
-                    LabeledSlider(title: "Größe des Logos", value: Binding(get: { live.config.logo?.size ?? 0.14 }, set: { live.config.logo?.size = $0 }),
-                                  range: 0.05...0.4, format: { "\(Int($0 * 100)) %" })
-                }
             }
             .padding(.top, 6)
         } label: {
-            Text("Rahmen, Hintergrund und Logo").font(.subheadline.weight(.semibold))
+            Text("Rahmen und Hintergrund").font(.subheadline.weight(.semibold))
         }
     }
 
@@ -277,7 +309,7 @@ struct LiveControlView: View {
             }
             .labelsHidden()
             .disabled(live.isRecording)
-            .help("Mikrofon für die Aufnahme (das Meeting-Programm benutzt sein eigenes)")
+            .help("Mikrofon für die Aufnahme und für das Mikrofon „\(VirtualCameraIDs.cameraName)“ im Meeting")
             Button { live.toggleRecording() } label: {
                 Label(live.isRecording ? formatTime(live.recordingTime) : "Aufnehmen", systemImage: live.isRecording ? "stop.circle.fill" : "record.circle")
                     .frame(minWidth: 96)
@@ -287,6 +319,174 @@ struct LiveControlView: View {
             .keyboardShortcut("r", modifiers: [])
             .help("Das Live-Bild als neues Projekt aufnehmen (Taste R)")
         }
+    }
+}
+
+extension LiveControlView {
+    /// Camera and microphone "Erklärbär" for meeting programs: each set up once, then switched on and off here.
+    @ViewBuilder
+    var meetingSection: some View {
+        let cameraShown: Bool = { if case .unavailable = meetingCamera.status { return false } else { return true } }()
+        let micShown: Bool = { if case .unavailable = meetingMic.status { return false } else { return true } }()
+        if cameraShown || micShown {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("In Meetings als „\(VirtualCameraIDs.cameraName)“").font(.subheadline.weight(.semibold))
+                if cameraShown {
+                    meetingRow(icon: "web.camera", title: "Kamera", running: meetingCamera.status == .ready && meetingCamera.sending
+                               && live.meetingCameraState == .connected) { meetingCameraControl }
+                }
+                if micShown {
+                    meetingRow(icon: "mic", title: "Mikrofon", running: meetingMic.status == .ready && meetingMic.sending
+                               && live.meetingMicState == .running) { meetingMicControl }
+                    if meetingMic.status == .ready, meetingMic.sending { systemSoundRow }
+                }
+                ForEach(meetingDetails, id: \.text) { detail in
+                    Text(detail.text)
+                        .font(.caption)
+                        .foregroundStyle(detail.warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Theme.lane))
+        }
+    }
+
+    private func meetingRow<Control: View>(icon: String, title: String, running: Bool, @ViewBuilder control: () -> Control) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).foregroundStyle(.secondary).frame(width: 18)
+            Text(title)
+            if running {
+                Circle().fill(Color.green).frame(width: 7, height: 7)
+                    .help("Läuft: Im Meeting-Programm „\(VirtualCameraIDs.cameraName)“ wählen.")
+            }
+            Spacer()
+            control()
+        }
+        .frame(minHeight: 22)
+    }
+
+    @ViewBuilder
+    private var meetingCameraControl: some View {
+        switch meetingCamera.status {
+        case .checking, .installing:
+            ProgressView().controlSize(.small)
+        case .notInstalled:
+            Button("Einrichten …") { meetingCamera.install() }
+                .help("Richtet die Kamera „\(VirtualCameraIDs.cameraName)“ ein. macOS fragt einmal nach deiner Erlaubnis.")
+        case .needsApproval:
+            Button("Systemeinstellungen …") { meetingCamera.openSettings() }
+        case .failed:
+            Button("Erneut versuchen") { meetingCamera.install() }
+        case .ready:
+            switchAndMenu(isOn: $meetingCamera.sending, help: "Das Live-Bild an die Kamera „\(VirtualCameraIDs.cameraName)“ senden",
+                          remove: "Kamera „\(VirtualCameraIDs.cameraName)“ entfernen …") { meetingCamera.remove() }
+        case .unavailable:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var meetingMicControl: some View {
+        switch meetingMic.status {
+        case .checking, .installing:
+            ProgressView().controlSize(.small)
+        case .notInstalled:
+            Button("Einrichten …") { meetingMic.install() }
+                .help("Richtet das Mikrofon „\(VirtualCameraIDs.cameraName)“ ein. macOS fragt einmal nach dem Administrator-Passwort, der Ton setzt dabei kurz aus.")
+        case .outdated:
+            Button("Aktualisieren …") { meetingMic.install() }
+        case .failed:
+            Button("Erneut einrichten …") { meetingMic.install() }
+        case .ready:
+            switchAndMenu(isOn: $meetingMic.sending, help: "Mikrofon und Systemton an das Mikrofon „\(VirtualCameraIDs.cameraName)“ senden",
+                          remove: "Mikrofon „\(VirtualCameraIDs.cameraName)“ entfernen …") { meetingMic.remove() }
+        case .unavailable:
+            EmptyView()
+        }
+    }
+
+    private func switchAndMenu(isOn: Binding<Bool>, help: String, remove: String, removeAction: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Toggle("Senden", isOn: isOn)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .help(help)
+            Menu {
+                Button(remove, action: removeAction)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+    }
+
+    /// The sound of the Mac goes along, except that of the meeting program (it would come back as an echo).
+    private var systemSoundRow: some View {
+        let apps = VirtualMicrophone.runningApps()
+        return HStack(spacing: 6) {
+            Toggle("Systemton", isOn: $meetingMic.systemAudio)
+                .controlSize(.small)
+                .help("Schickt auch den Ton des Macs mit: Videos, Memes, den Ton des iPads.")
+            if meetingMic.systemAudio {
+                Spacer()
+                Text("ohne").font(.caption).foregroundStyle(.secondary)
+                Picker("ohne", selection: $meetingMic.meetingApp) {
+                    Text("–").tag("")
+                    if !meetingMic.meetingApp.isEmpty, !apps.contains(where: { $0.id == meetingMic.meetingApp }) {
+                        Text(meetingMic.meetingApp).tag(meetingMic.meetingApp)
+                    }
+                    ForEach(apps, id: \.id) { Text($0.name).tag($0.id) }
+                }
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(maxWidth: 170)
+                .help("Das Meeting-Programm: Sein Ton (die Stimmen der anderen) wird nie mitgeschickt, sonst hören sie sich als Echo.")
+            }
+        }
+        .padding(.leading, 24)
+    }
+
+    /// Notes below the rows; only what needs attention.
+    private var meetingDetails: [(text: String, warning: Bool)] {
+        let name = "„\(VirtualCameraIDs.cameraName)“"
+        var result: [(String, Bool)] = []
+        switch meetingCamera.status {
+        case .notInstalled where meetingMic.status == .notInstalled:
+            result.append(("Ohne Bildschirm teilen: Erklärbär wird zu Kamera und Mikrofon \(name), die du in Zoom, Teams oder Meet auswählst.", false))
+        case .needsApproval:
+            result.append(("Kamera erlauben: Systemeinstellungen › Allgemein › Anmeldeobjekte & Erweiterungen › Kameraerweiterungen › Erklärbär einschalten.", true))
+        case .failed(let text):
+            result.append((text, true))
+        case .ready where meetingCamera.sending && live.meetingCameraState == .missing:
+            result.append(("Die Kamera \(name) meldet sich nicht. Nach einem Update startet macOS sie manchmal erst nach einem Neustart des Macs.", true))
+        default:
+            break
+        }
+        switch meetingMic.status {
+        case .outdated:
+            result.append(("Eine neuere Fassung des Mikrofons liegt bei. Aktualisieren braucht das Administrator-Passwort.", false))
+        case .failed(let text):
+            result.append((text, true))
+        case .ready where meetingMic.sending:
+            switch live.meetingMicState {
+            case .missing: result.append(("Das Mikrofon \(name) meldet sich nicht. Ein Neustart des Macs hilft meist.", true))
+            case .failed(let text): result.append((text, true))
+            default:
+                if live.microphoneID.isEmpty {
+                    result.append(("Kein Mikrofon gewählt (neben „Aufnehmen“): Ins Meeting geht nur der Systemton.", true))
+                } else if meetingMic.systemAudio && meetingMic.meetingApp.isEmpty {
+                    result.append(("Ohne Meeting-Programm bei „ohne“ hören die anderen sich selbst als Echo.", true))
+                }
+            }
+        default:
+            break
+        }
+        return result
     }
 }
 

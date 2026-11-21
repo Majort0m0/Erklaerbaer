@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 // Helper programs for "Video von einer Adresse laden": yt-dlp and a JavaScript runtime that yt-dlp
 // needs for YouTube. They are found where the user installed them (Homebrew, PATH, the copies
@@ -239,14 +240,65 @@ enum ToolDetector {
 
 /// What helps after a failed download: a newer yt-dlp (YouTube changes often) or a JavaScript runtime.
 enum YtDlpAdvice: Equatable {
-    case update, runtime
+    /// A newer yt-dlp, a JavaScript runtime, or the login of a browser (Instagram and others show
+    /// some posts only to logged-in visitors, or after many visits in a row).
+    case update, runtime, login
 
     static func advice(for stderr: String) -> YtDlpAdvice? {
         let m = stderr.lowercased()
         if ["javascript runtime", "js runtime", "challenge solving failed"].contains(where: { m.contains($0) }) { return .runtime }
         if ["http error 403", "403: forbidden", "sign in to confirm", "nsig extraction failed", "signature extraction failed",
             "unsupported url", "unable to extract", "confirm you are on the latest version"].contains(where: { m.contains($0) }) { return .update }
+        if ["login required", "rate-limit reached", "rate limit reached", "--cookies-from-browser", "empty media response",
+            "this content may be inappropriate", "private video", "account is private"].contains(where: { m.contains($0) }) { return .login }
         return nil
+    }
+}
+
+/// Browsers whose login yt-dlp can use (`--cookies-from-browser`). yt-dlp reads the cookies on
+/// this Mac and sends each site only its own – nothing goes anywhere else.
+enum CookieBrowser: String, CaseIterable, Identifiable, Sendable {
+    case safari, chrome, firefox, brave, edge, vivaldi, opera, chromium
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .safari: return "Safari"
+        case .chrome: return "Google Chrome"
+        case .firefox: return "Firefox"
+        case .brave: return "Brave"
+        case .edge: return "Microsoft Edge"
+        case .vivaldi: return "Vivaldi"
+        case .opera: return "Opera"
+        case .chromium: return "Chromium"
+        }
+    }
+
+    var bundleID: String {
+        switch self {
+        case .safari: return "com.apple.Safari"
+        case .chrome: return "com.google.Chrome"
+        case .firefox: return "org.mozilla.firefox"
+        case .brave: return "com.brave.Browser"
+        case .edge: return "com.microsoft.edgemac"
+        case .vivaldi: return "com.vivaldi.Vivaldi"
+        case .opera: return "com.operasoftware.Opera"
+        case .chromium: return "org.chromium.Chromium"
+        }
+    }
+
+    /// What macOS asks or needs the first time.
+    var note: String? {
+        switch self {
+        case .safari: return "Für Safari braucht Erklärbär den Festplattenvollzugriff (Systemeinstellungen › Datenschutz & Sicherheit)."
+        case .chrome, .brave, .edge, .vivaldi, .opera, .chromium: return "macOS fragt einmal nach dem Schlüsselbund-Zugriff – „Erlauben“ wählen."
+        case .firefox: return nil
+        }
+    }
+
+    @MainActor static var installed: [CookieBrowser] {
+        allCases.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
     }
 }
 

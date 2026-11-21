@@ -25,9 +25,12 @@ struct LiveConfig: Codable, Equatable {
     var keys: Bool? = nil
     /// Scene around the source (laptop, television …), nil: none.
     var mockup: MockupKind? = nil
-    /// Logo in a corner (`file` is a full path) and whether it is shown.
+    /// Logo in a corner (`file` is a full path) and whether it is shown. `logoID`: the logo of the library.
     var logo: Watermark? = nil
     var logoOn: Bool? = nil
+    var logoID: UUID? = nil
+    /// The banner shown at the top or bottom (a copy from the library, nil: none).
+    var banner: LiveBanner? = nil
 }
 
 enum MemeSpot: String, Codable, CaseIterable, Identifiable {
@@ -224,6 +227,12 @@ enum LiveCompositor {
         return CGRect(x: left ? margin : canvas.width - margin - width, y: bottom ? margin : canvas.height - margin - height, width: width, height: height)
     }
 
+    /// Where the banner lies; `shown` below 1 moves it out over its edge.
+    static func bannerRect(_ banner: LiveBanner, shown: Double, height: CGFloat) -> CGRect {
+        let hidden = height * CGFloat(1 - shown)
+        return CGRect(x: 0, y: banner.atTop ? canvas.height - height + hidden : -hidden, width: canvas.width, height: height)
+    }
+
     /// Where the shortcut is shown: at the bottom in the middle.
     static func keyRect(size: CGSize) -> CGRect { CGRect(x: canvas.midX - size.width / 2, y: 56, width: size.width, height: size.height) }
 
@@ -251,8 +260,9 @@ enum LiveCompositor {
         return faded(transparent ? picture : picture.composited(over: border), alpha).composited(over: base)
     }
 
+    /// - Parameter overlays: logos and banners with their animation (nil: as configured, fully shown).
     static func compose(config: LiveConfig, source: CIImage?, camera: CIImage?, effects: LiveEffects = LiveEffects(),
-                        meme: (image: CIImage, alpha: Double, transparent: Bool)? = nil) -> CIImage {
+                        meme: (image: CIImage, alpha: Double, transparent: Bool)? = nil, overlays: [LiveOverlayDraw]? = nil) -> CIImage {
         var image = background
         switch config.scene {
         case .webcam:
@@ -289,11 +299,20 @@ enum LiveCompositor {
             }
             if config.bubble, let camera { image = bubble(camera, over: image, config: config) }
         }
-        if config.logoOn == true, let logo = config.logo, let picture = logoImage(logo.file) {
-            let rect = logoRect(logo, size: picture.extent.size)
-            let placed = picture.transformed(by: CGAffineTransform(scaleX: rect.width / max(1, picture.extent.width), y: rect.height / max(1, picture.extent.height))
-                .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
-            image = faded(placed, logo.opacity).composited(over: image)
+        for overlay in overlays ?? LiveOverlayDraw.steady(config) {
+            switch overlay {
+            case .logo(let logo, let alpha):
+                guard alpha > 0, let picture = logoImage(logo.file) else { continue }
+                let rect = logoRect(logo, size: picture.extent.size)
+                let placed = picture.transformed(by: CGAffineTransform(scaleX: rect.width / max(1, picture.extent.width), y: rect.height / max(1, picture.extent.height))
+                    .concatenating(CGAffineTransform(translationX: rect.minX, y: rect.minY)))
+                image = faded(placed, logo.opacity * alpha).composited(over: image)
+            case .banner(let banner, let shown, let alpha):
+                guard alpha > 0, shown > 0 else { continue }
+                let strip = LiveBannerArt.image(banner)
+                let rect = bannerRect(banner, shown: shown, height: strip.extent.height)
+                image = faded(strip.transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY)), alpha).composited(over: image)
+            }
         }
         if let key = effects.key, key.age < keyLife {
             let pill = keyImage(key.label)

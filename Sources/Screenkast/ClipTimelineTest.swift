@@ -919,6 +919,7 @@ enum ClipTimelineTest {
         branded.logoOn = true
         let withLogo = LiveCompositor.compose(config: branded, source: source, camera: nil)
         guard isGreen(pixel(withLogo, logoSpot.midX, logoSpot.midY)), logoSpot.minX < 100, logoSpot.minY < 100, withLogo.extent == canvas else { throw fail("live logo: \(logoSpot)") }
+        try await overlayTest(dir, logoFile: logoFile, source: source, pixel: pixel, isRed: isRed, isGreen: isGreen, isBlue: isBlue)
         // A shortcut appears at the bottom and is gone later.
         var shortcut = LiveConfig()
         shortcut.keys = true
@@ -933,6 +934,114 @@ enum ClipTimelineTest {
         guard near_.atRight, near_.hidden.minX >= screen.maxX, screen.contains(near_.handle), near_.handle.maxX == screen.maxX,
               !farSide.atRight, farSide.hidden.maxX <= screen.minX, screen.contains(farSide.handle), farSide.handle.minX == screen.minX else { throw fail("drawer: \(near_), \(farSide)") }
         print("✓ live picture: scenes, bubble, mouse marks, memes and recording, always the same size")
+    }
+
+    /// Logos and banners of the live mode: kept in a library, banners at the top or bottom with text and logo,
+    /// sliding in and out, logos fading over when switched.
+    private static func overlayTest(_ dir: URL, logoFile: URL, source: CIImage, pixel: (CIImage, CGFloat, CGFloat) -> (Int, Int, Int),
+                                    isRed: ((Int, Int, Int)) -> Bool, isGreen: ((Int, Int, Int)) -> Bool, isBlue: ((Int, Int, Int)) -> Bool) async throws {
+        let canvas = LiveCompositor.canvas
+        let folder = dir.appendingPathComponent("overlays", isDirectory: true)
+        try? FileManager.default.removeItem(at: folder)
+        let blueFile = dir.appendingPathComponent("logo-blau.png")
+        try NSBitmapImageRep(cgImage: CIContext().createCGImage(CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: CGRect(x: 0, y: 0, width: 100, height: 100)),
+                                                                from: CGRect(x: 0, y: 0, width: 100, height: 100))!).representation(using: .png, properties: [:])?.write(to: blueFile)
+        let made: (LiveLogo, LiveLogo, LiveBanner, LiveBanner) = try await MainActor.run {
+            let library = LiveOverlayLibrary(folder: folder)
+            let added = try library.addLogos([logoFile, blueFile])
+            guard added.count == 2, library.logos.count == 2, FileManager.default.fileExists(atPath: library.path(of: added[0])) else { throw fail("overlay logos") }
+            // The single logo of older versions is taken over once.
+            guard library.adopt(file: library.path(of: added[1]), corner: .topLeft, size: 0.2, opacity: 1)?.id == added[1].id,
+                  library.adopt(file: blueFile.path, corner: .topLeft, size: 0.2, opacity: 1) == nil else { throw fail("overlay adopt") }
+            var banner = library.addBanner()
+            banner.title = "Thomas Test"
+            banner.subtitle = "Erklärbär"
+            banner.logoID = added[0].id
+            banner.background = RGBAColor(r: 0, g: 0, b: 1)
+            banner.accent = nil
+            banner.height = 0.1
+            library.update(banner)
+            var second = library.addBanner()
+            second.title = "Zweiter Banner"
+            second.atTop = true
+            second.logoID = nil
+            library.update(second)
+            // Kept on disk.
+            let again = LiveOverlayLibrary(folder: folder)
+            guard again.logos == library.logos, again.banners == library.banners, again.banners.count == 2 else { throw fail("overlay library reload") }
+            // A removed logo leaves its banners without a logo.
+            let extra = try library.addLogos([blueFile])[0]
+            var third = library.addBanner()
+            third.logoID = extra.id
+            library.update(third)
+            library.remove(logo: extra.id)
+            guard library.banner(third.id)?.logoID == nil, !FileManager.default.fileExists(atPath: library.path(of: extra)) else { throw fail("overlay remove logo") }
+            library.remove(banner: third.id)
+            if let tile = library.bannerThumbnail(banner), let rep = tile.representations.first as? NSBitmapImageRep ?? tile.cgImage(forProposedRect: nil, context: nil, hints: nil).map(NSBitmapImageRep.init) {
+                try rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("banner-kachel.png"))
+            }
+            return (added[0], added[1], library.resolved(banner), library.resolved(second))
+        }
+        let (green, blue, banner, topBanner) = made
+        var config = LiveConfig()
+        config.bubble = false
+        config.banner = banner
+        let shot = LiveCompositor.compose(config: config, source: source, camera: nil)
+        let height = canvas.height * CGFloat(banner.height)
+        // The strip lies at the bottom: its color in the empty middle, the source above it, the logo on the right, text on the left.
+        let margin = 0.035 * canvas.height
+        let logoHeight = height * 0.68, logoWidth = logoHeight * 2
+        guard isBlue(pixel(shot, canvas.width * 0.6, 4)), isRed(pixel(shot, canvas.midX, height + 20)),
+              isGreen(pixel(shot, canvas.width - margin - logoWidth / 2, height / 2)) else {
+            throw fail("banner at the bottom: \(pixel(shot, canvas.width * 0.6, 4)), \(pixel(shot, canvas.width - margin - logoWidth / 2, height / 2))")
+        }
+        let textSpots = stride(from: margin, to: margin + 500, by: 4).filter { !isBlue(pixel(shot, $0, height / 2 + height * 0.15)) }
+        guard textSpots.count > 10 else { throw fail("banner text: \(textSpots.count)") }
+        try NSBitmapImageRep(cgImage: CIContext().createCGImage(shot, from: canvas)!).representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("live-banner.png"))
+        config.banner = topBanner
+        let top = LiveCompositor.compose(config: config, source: source, camera: nil)
+        let topHeight = canvas.height * CGFloat(topBanner.height)
+        guard !isRed(pixel(top, canvas.width * 0.6, canvas.height - 4)), isRed(pixel(top, canvas.width * 0.6, 4)),
+              isRed(pixel(top, canvas.midX, canvas.height - topHeight - 20)) else { throw fail("banner at the top") }
+
+        // Banners slide in and out, two banners fade into each other, logos fade over.
+        var animator = LiveOverlayAnimator()
+        func banners(_ draws: [LiveOverlayDraw]) -> [(UUID, Double, Double)] {
+            draws.compactMap { if case .banner(let b, let shown, let alpha) = $0 { return (b.id, shown, alpha) } else { return nil } }
+        }
+        func logos(_ draws: [LiveOverlayDraw]) -> [(String, Double)] {
+            draws.compactMap { if case .logo(let w, let alpha) = $0 { return (w.file, alpha) } else { return nil } }
+        }
+        var animated = LiveConfig()
+        animated.banner = banner
+        let d = LiveOverlayAnimator.duration
+        guard let start = banners(animator.draws(for: animated, now: 10)).first, start.1 == 0, start.2 == 1,
+              let halfway = banners(animator.draws(for: animated, now: 10 + d / 2)).first, halfway.1 > 0.2, halfway.1 < 0.8,
+              banners(animator.draws(for: animated, now: 10 + d)).first?.1 == 1 else { throw fail("banner slides in") }
+        var edited = banner
+        edited.title = "Neu"
+        animated.banner = edited
+        guard let changed = banners(animator.draws(for: animated, now: 11)).first, banners(animator.draws(for: animated, now: 11)).count == 1,
+              changed.1 == 1, changed.2 == 1 else { throw fail("banner edited in place") }
+        animated.banner = topBanner
+        let swap = banners(animator.draws(for: animated, now: 12))
+        let mid = banners(animator.draws(for: animated, now: 12 + d / 2))
+        guard swap.count == 2, mid.count == 2, mid.allSatisfy({ $0.1 == 1 }), mid[0].2 > 0.2, mid[0].2 < 0.8, mid[1].2 > 0.2, mid[1].2 < 0.8 else { throw fail("banners fade: \(mid)") }
+        animated.banner = nil
+        _ = animator.draws(for: animated, now: 13)
+        let leaving = banners(animator.draws(for: animated, now: 13 + d / 2))
+        guard leaving.count == 1, leaving[0].1 > 0.2, leaving[0].1 < 0.8, banners(animator.draws(for: animated, now: 14)).isEmpty else { throw fail("banner slides out: \(leaving)") }
+        let greenMark = await MainActor.run { LiveOverlayLibrary(folder: folder).watermark(green) }
+        let blueMark = await MainActor.run { LiveOverlayLibrary(folder: folder).watermark(blue) }
+        animated.logo = greenMark
+        animated.logoOn = true
+        _ = animator.draws(for: animated, now: 20)
+        animated.logo = blueMark
+        let fading = logos(animator.draws(for: animated, now: 21))
+        let both = logos(animator.draws(for: animated, now: 21 + d / 2))
+        guard fading.count == 2, both.count == 2, both[0].0 == greenMark.file, both[0].1 < 0.8, both[1].1 > 0.2,
+              logos(animator.draws(for: animated, now: 23)).map(\.0) == [blueMark.file] else { throw fail("logos fade over: \(both)") }
+        print("✓ live logos and banners: library on disk, banner at the top or bottom with text and logo, sliding and fading")
     }
 
     /// The board: own files become movies, places are remembered, search answers are read.
@@ -1464,6 +1573,20 @@ enum ClipTimelineTest {
               case .success(.page) = VideoLink.classify("https://example.org/seite"),
               case .failure(.unsupportedScheme("ftp")) = VideoLink.classify("ftp://example.org/a.mp4"),
               case .failure(.empty) = VideoLink.classify("  "), case .failure(.invalid) = VideoLink.classify("kein link") else { throw fail("addresses") }
+        // An Instagram reel with the tracking parameters of the share button.
+        guard case .success(.page(let reel)) = VideoLink.classify("https://www.instagram.com/reel/DeUxSy_NSim/?cnvx=MzRlODBiNWFlZA==&avpt=MzRlODBiNWFlZA=="),
+              VideoLink.isPlatform(reel), VideoLink.siteName(reel) == "Instagram", VideoLink.siteName(yt) == "YouTube",
+              VideoLink.siteName(URL(string: "https://www.example.org/a")!) == "example.org" else { throw fail("Instagram address") }
+        // Picture and sound as a pair that fails as a whole ("+"): Instagram has no H.264 picture
+        // of its own, so yt-dlp must fall back to the single file with both – with "," it loaded
+        // the sound alone.
+        let selector = YTDLP.formatSelector(.p1080)
+        guard selector.hasPrefix("bv[vcodec^=avc1][ext=mp4][height<=1080][protocol!*=m3u8]+ba[ext=m4a]"), !selector.contains(","),
+              selector.contains("/b[ext=mp4][vcodec^=?avc1][height<=?1080]") else { throw fail("format selector: \(selector)") }
+        guard YTDLP.parse("[pp-parts] 137+140") == .parts(2), YTDLP.parse("[pp-parts] 3") == .parts(1),
+              YTDLP.parse("[download] Destination: /tmp/video.f137+140.f137.mp4") == .partStarted,
+              YtDlpAdvice.advice(for: "ERROR: [Instagram] DeUxSy_NSim: Requested content is not available, rate-limit reached or login required. Use --cookies-from-browser or --cookies for the authentication.") == .login,
+              YtDlpAdvice.advice(for: "ERROR: unable to open for writing: [Errno 1] Operation not permitted: '/private/var/x'") == nil else { throw fail("yt-dlp parts and login") }
         guard YTDLP.parse("[pp-progress] 500 1000 NA") == .progress(received: 500, total: 1000),
               YTDLP.parse("[download]  42.5% of 10.00MiB") == .percent(42.5),
               YTDLP.parse("[pp-format] none|mp4a.40.2") == .format(video: false, audio: true),
@@ -1473,7 +1596,10 @@ enum ClipTimelineTest {
         let runtime = JSRuntime(kind: .deno, tool: FoundTool(url: URL(fileURLWithPath: "/opt/homebrew/bin/deno"), version: "2.5.4", origin: .homebrew))
         let args = YTDLP.arguments(for: yt, into: dir, quality: .p720, runtime: runtime)
         guard args.contains("--no-playlist"), args.contains("deno:/opt/homebrew/bin/deno"), args.last == "https://youtu.be/abc",
-              let f = args.firstIndex(of: "-f"), args[f + 1].contains("[height<=720]") else { throw fail("yt-dlp arguments: \(args)") }
+              let f = args.firstIndex(of: "-f"), args[f + 1].contains("[height<=720]"), !args.contains("--cookies-from-browser") else { throw fail("yt-dlp arguments: \(args)") }
+        let withLogin = YTDLP.arguments(for: reel, into: dir, quality: .p720, runtime: nil, browser: .firefox)
+        guard let c = withLogin.firstIndex(of: "--cookies-from-browser"), withLogin[c + 1] == "firefox", withLogin.last == reel.absoluteString,
+              let lastOption = withLogin.firstIndex(of: "--"), c < lastOption else { throw fail("yt-dlp arguments with login: \(withLogin)") }
 
         // Picture only and sound only, from the test export.
         let source = dir.appendingPathComponent("export.mp4")
@@ -1492,7 +1618,9 @@ enum ClipTimelineTest {
         try await pictureExport.export(to: picture, as: .mp4)
         try await soundExport.export(to: sound, as: .m4a)
 
-        // A stand-in for yt-dlp: answers --version, prints like the real one and writes both files.
+        // A stand-in for yt-dlp: answers --version and prints like the real one (2026.10) for a
+        // pair without ffmpeg: one title and format, two downloads, the two files stay apart and
+        // the printed joined file does not exist.
         let tools = work.appendingPathComponent("werkzeuge", isDirectory: true)
         try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
         let script = tools.appendingPathComponent("yt-dlp")
@@ -1503,13 +1631,15 @@ enum ClipTimelineTest {
         for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
         dir=$(dirname "$out")
         echo "[pp-title] Mein Test: Video/1"
-        echo "[pp-format] avc1.640028|none"
+        echo "[pp-format] avc1.640028|mp4a.40.2"
+        echo "[pp-parts] 137+140"
+        echo "WARNING: You have requested merging of multiple formats but ffmpeg is not installed. The formats won't be merged" >&2
+        echo "[download] Destination: $dir/video.f137+140.f137.mp4"
         echo "[download]  50.0% of 1.00MiB"
-        cp '\(picture.path)' "$dir/video.f137.mp4"
-        echo "[pp-file] $dir/video.f137.mp4"
-        echo "[pp-format] none|mp4a.40.2"
-        cp '\(sound.path)' "$dir/video.f140.m4a"
-        echo "[pp-file] $dir/video.f140.m4a"
+        cp '\(picture.path)' "$dir/video.f137+140.f137.mp4"
+        echo "[download] Destination: $dir/video.f137+140.f140.m4a"
+        cp '\(sound.path)' "$dir/video.f137+140.f140.m4a"
+        echo "[pp-file] $dir/video.f137+140.mp4"
         """.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         guard let found = ToolDetector.ytdlp(places: ToolPlaces(managed: tools, search: [])), found.version == "2026.10.01", found.origin == .managed else {
@@ -1522,7 +1652,9 @@ enum ClipTimelineTest {
         let result = try await YTDLPProcess().run(tool: found.url, arguments: YTDLP.arguments(for: yt, into: out, quality: .p1080, runtime: nil), folder: out) { e in
             events.lock.withLock { events.list.append(e) }
         }
-        guard result.files.count == 2, result.title == "Mein Test: Video/1", events.lock.withLock({ events.list.contains(.percent(50)) }) else {
+        guard result.files.count == 2, result.title == "Mein Test: Video/1",
+              events.lock.withLock({ events.list.contains(.percent(50)) && events.list.contains(.parts(2))
+                                     && events.list.filter { $0 == .partStarted }.count == 2 }) else {
             throw fail("yt-dlp run: \(result)")
         }
         let video = try await VideoSaver.finish(result.files, title: result.title!, in: out)
@@ -1530,6 +1662,16 @@ enum ClipTimelineTest {
         let length = try await AVURLAsset(url: video).load(.duration).seconds, original = try await asset.load(.duration).seconds
         guard video.lastPathComponent == "Mein Test- Video-1.mp4", joined.video, joined.audio, abs(length - original) < 0.1 else {
             throw fail("joined video: \(video.lastPathComponent) \(joined) \(length)")
+        }
+
+        // On the start page the loaded video becomes a new project, named after the video, with
+        // the site on its card.
+        let projects = work.appendingPathComponent("projekte", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        let made = try await ProjectFactory.importVideo(video, into: projects, sourceName: VideoLink.siteName(reel))
+        guard made.url.lastPathComponent == "Mein Test- Video-1.\(Project.fileExtension)", made.info.sourceName == "Instagram",
+              made.info.hasMicrophone, abs(made.info.duration - original) < 0.1 else {
+            throw fail("new project from the internet: \(made.url.lastPathComponent) \(made.info.sourceName)")
         }
 
         // A direct link (here to a file on this Mac): loaded as it is.
@@ -1540,7 +1682,7 @@ enum ClipTimelineTest {
         guard MediaDownloader.problem(with: HTTPURLResponse(url: yt, mimeType: "text/html", expectedContentLength: 10, textEncodingName: nil)) == .notMedia,
               MediaDownloader.fileName(for: HTTPURLResponse(url: yt, mimeType: "video/mp4", expectedContentLength: 10, textEncodingName: nil), url: yt).hasSuffix(".mp4")
         else { throw fail("direct download checks") }
-        print("✓ loading from an address: links, yt-dlp output and arguments, picture and sound joined (\(String(format: "%.1f", length)) s), direct link")
+        print("✓ loading from an address: links (Instagram reel), yt-dlp output, pair selector and arguments, picture and sound joined (\(String(format: "%.1f", length)) s) into a new project, direct link")
     }
 
     /// The YouTube thumbnail: a picture of the exported video, 1280 pixels on the long side, under 2 MB.

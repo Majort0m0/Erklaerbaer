@@ -103,7 +103,7 @@ Erklärbär nimmt den Bildschirm und den Ton eines per Kabel verbundenen iPads o
 
 ## Live für Meetings
 
-*Bildschirm, Fenster, iPad und Webcam live in Zoom, Teams oder Meet zeigen.*
+*Bildschirm, Fenster, iPad und Webcam live in Zoom, Teams oder Meet zeigen, auch als Kamera und Mikrofon „Erklärbär“.*
 
 1. Auf der Startseite **Live für Meetings** wählen. Es öffnen sich das **Programm-Fenster** und die **Steuerung**.
 2. Im Meeting-Programm **Bildschirm teilen** wählen und das Fenster **Erklärbär – Programm** auswählen.
@@ -111,11 +111,44 @@ Erklärbär nimmt den Bildschirm und den Ton eines per Kabel verbundenen iPads o
 
 > ℹ️ Die Steuerung ist im geteilten Bild nie zu sehen, auch nicht, wenn du den ganzen Bildschirm teilst. Das Programm-Fenster darf verdeckt sein, aber nicht minimiert werden.
 
+### Als Kamera in Meetings
+
+Statt den Bildschirm zu teilen, kann Erklärbär auch als **Kamera** auftreten: Im Meeting-Programm wählst du dann einfach die Kamera **Erklärbär**, wie eine Webcam.
+
+> ℹ️ Kamera und Mikrofon „Erklärbär“ gibt es nur, wenn Erklärbär mit einem Apple-Entwicklerkonto gebaut wurde. Der Download von GitHub enthält sie noch nicht; dort fehlt in der Steuerung der Abschnitt **In Meetings**.
+
+1. In der Live-Steuerung unter **In Meetings** bei der **Kamera** auf **Einrichten …** klicken.
+2. macOS fragt einmal nach deiner Erlaubnis: **Systemeinstellungen › Allgemein › Anmeldeobjekte & Erweiterungen › Kameraerweiterungen** und dort **Erklärbär** einschalten.
+3. In Zoom, Teams, Meet oder FaceTime als Kamera **Erklärbär** wählen. Solange der Live-Modus läuft, zeigt sie das Live-Bild.
+
+- Ohne Live-Modus zeigt die Kamera einen Hinweis statt eines schwarzen Bildes.
+- Der Schalter neben **Kamera** hält das Senden an, ohne den Live-Modus zu beenden.
+- Viele Meeting-Programme zeigen dir dein eigenes Bild gespiegelt. Die anderen sehen es richtig herum, auch Schrift.
+- Videoeffekte von macOS (Kontrollzentrum › **Videoeffekte**, z. B. **Porträt** oder **Studiolicht**) wirken auch auf die Kamera „Erklärbär“: Porträt zeichnet dann den Bildschirminhalt weich. Sie gelten je Programm. Zeigt das Kontrollzentrum das Meeting-Programm nicht an, dort kurz die echte Webcam wählen, die Effekte ausschalten und wieder „Erklärbär“ wählen.
+- Im macOS-Menü für geteilte Bildschirme (oben rechts) beendet **Nicht mehr teilen** auch die Aufnahme von Erklärbär. Das Live-Bild bleibt dann stehen; **Wieder aufnehmen** in der Steuerung startet sie neu.
+- Nach einem Update von Erklärbär startet macOS die Kamera manchmal erst nach einem Neustart des Macs wieder. Die Steuerung sagt es dann.
+- Entfernen: Menü **⋯ › Kamera „Erklärbär“ entfernen** oder der Schalter in den Systemeinstellungen.
+
+> ℹ️ Die Kamera lässt sich nur einrichten, wenn Erklärbär im Ordner **Programme** liegt.
+
+### Als Mikrofon in Meetings
+
+Das Mikrofon **Erklärbär** schickt dein Mikrofon ins Meeting und auf Wunsch auch den Ton des Macs: Videos, Meme-Töne, den Ton des iPads.
+
+1. In der Live-Steuerung unter **In Meetings** beim **Mikrofon** auf **Einrichten …** klicken. macOS fragt einmal nach dem Administrator-Passwort; der Ton des Macs setzt dabei kurz aus.
+2. Im Meeting-Programm als Mikrofon **Erklärbär** wählen. Dein eigenes Mikrofon wählst du in Erklärbär neben **Aufnehmen**.
+3. **Systemton** einschalten, wenn der Ton des Macs mitgehen soll, und bei **ohne** das Meeting-Programm wählen (z. B. Zoom oder den Browser, in dem das Meeting läuft).
+
+- Der Ton des Meeting-Programms selbst geht nie mit, sonst hören die anderen sich als Echo. Läuft das Meeting im Browser, geht deshalb auch kein Ton aus diesem Browser mit – Videos dann in einem anderen Programm abspielen.
+- Das Mikrofon „Erklärbär“ sendet nur, solange der Live-Modus läuft.
+- Entfernen: **⋯ › Mikrofon „Erklärbär“ entfernen …** (braucht wieder das Passwort).
+
 ### Was du einstellen kannst
 
 - **Quelle:** ein Bildschirm, ein Programmfenster oder ein iPad am Kabel.
-- **Logo:** wie im Editor in einer Ecke, mit Größe. Rahmen, Hintergrund und Logo findest du unter **Rahmen, Hintergrund und Logo** in der Steuerung.
-- **Rahmen:** zeigt die Quelle auf einem Laptop, Tablet, Fernseher, im Theater, Kino oder Bilderrahmen. „Nur Webcam“ bleibt davon unberührt.
+- **Logos und Banner:** Beliebig viele Logos und Banner bleiben in Erklärbär gespeichert. Ein Klick auf eine Kachel blendet ein, noch ein Klick blendet aus. Ein Logo und ein Banner können gleichzeitig zu sehen sein; ein anderes Logo blendet weich über.
+- **Banner:** ein Streifen oben oder unten mit deinem Namen (und einer zweiten Zeile, z. B. Rolle oder Webseite) links und einem Logo rechts. **+ › Banner erstellen …** öffnet ein eigenes Fenster mit Vorschau, Farben, Schrift und Höhe. Rechtsklick auf eine Kachel: bearbeiten, duplizieren, löschen; bei Logos: Ecke, Größe und Deckkraft.
+- **Rahmen:** zeigt die Quelle auf einem Laptop, Tablet, Fernseher, im Theater, Kino oder Bilderrahmen. „Nur Webcam“ bleibt davon unberührt. Rahmen und virtuellen Hintergrund findest du unter **Rahmen und Hintergrund**.
 - **Webcam-Bubble:** in der kleinen Vorschau ziehen, am gelben Punkt die Größe ändern.
 - **Virtueller Hintergrund:** Du stehst vor einem Bild oder einer Grafik, ohne Greenscreen. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Gleichmäßiges Licht macht den Rand sauberer.
 - **Klick-Effekte**, **Mausspur** und **Tastenkürzel** lassen sich zuschalten (nicht beim iPad). Angezeigt werden nur Kombinationen mit ⌘, ⌃ oder ⌥, normales Tippen nie. Für die Tastenkürzel fragt macOS beim ersten Mal nach der Berechtigung **Bedienungshilfen**.
@@ -145,7 +178,7 @@ Erklärbär nimmt den Bildschirm und den Ton eines per Kabel verbundenen iPads o
 
 ## Eigenes Material
 
-*Videos schneiden, die nicht mit Erklärbär aufgenommen wurden.*
+*Videos schneiden, die nicht mit Erklärbär aufgenommen wurden – auch aus dem Internet.*
 
 Über **Neues Projekt** auf der Startseite (oder **Ablage › Neues Projekt …**) nutzt du den Editor auch für eigenes Material.
 
@@ -154,6 +187,16 @@ Erklärbär nimmt den Bildschirm und den Ton eines per Kabel verbundenen iPads o
 1. **Neues Projekt › Aus eigenem Video …** wählen – oder eine Videodatei einfach auf die Projektliste ziehen.
 2. Das Video wird zur Hauptspur. Sein Ton zählt als Mikrofon: Stimme verbessern, Untertitel, Pausen und Füllwörter entfernen funktionieren wie bei einer Aufnahme.
 3. Das Bild füllt das Format ohne Rahmen. Hochkant gefilmte Handyvideos werden richtig gedreht und bekommen das Format 9:16.
+
+### Aus einem Video im Internet
+
+1. Auf der Startseite unter **Aufnahme starten** auf **Video aus dem Internet** klicken (oder **Neues Projekt › Aus Video im Internet …**, **Ablage › Neues Projekt aus Video im Internet …**). Einen Link aus der Adresszeile des Browsers kannst du auch direkt auf die Projektliste ziehen.
+2. Die Adresse einfügen – von YouTube, Instagram (auch Reels), Vimeo, TikTok, einer Mediathek oder einen direkten Link zu einer Videodatei – und **Laden und öffnen** klicken.
+3. Erklärbär lädt das Video und öffnet es als neues Projekt, benannt nach dem Titel des Videos. Wie beim eigenen Video wird es zur Hauptspur, Hochkant-Videos wie Reels bekommen das Format 9:16.
+
+Für Seiten wie YouTube oder Instagram braucht Erklärbär das kostenlose Programm **yt-dlp** (für YouTube zusätzlich **Deno**) – das Fenster zeigt, ob beides da ist, und richtet es sonst mit einem Klick ein. Instagram liefert Reels meist in 720p.
+
+> ℹ️ Manche Videos zeigt Instagram nur angemeldeten Besuchern, oder es bremst Besucher ohne Anmeldung. Dann bietet Erklärbär **Mit Anmeldung aus dem Browser laden** an: yt-dlp benutzt die Anmeldung aus Safari, Chrome, Firefox & Co. – nur auf diesem Mac und nur für diese Seite. Safari braucht dafür den Festplattenvollzugriff, Chrome und andere fragen einmal nach dem Schlüsselbund.
 
 ### Leeres Projekt
 
@@ -360,7 +403,7 @@ Im Medien-Tab sammelt die **Bibliothek** alle Dateien des Projekts. Jede Datei l
 - **Kamera-Symbol (Standbild):** das Bild an der Abspielposition, genau wie es exportiert wird, kommt als PNG in die Bibliothek.
 - **Exportieren:** „…“ neben einer Datei › **Exportieren …** sichert eine Kopie; das „…“-Menü oben › **Alle Dateien exportieren …** kopiert die ganze Bibliothek in einen Ordner.
 - Darunter listet **Im Video verwendet** alle Bilder, Videos und Clips, die schon im Video liegen – ein Klick wählt sie aus.
-- **Adresse …** lädt aus dem Internet: direkte Links zu Video-, Bild- oder Tondateien, aber auch Seiten wie YouTube, Vimeo oder die Mediatheken (in 720p, 1080p oder bester Qualität). Für solche Seiten braucht Erklärbär das kostenlose Programm **yt-dlp**, für YouTube zusätzlich **Deno**: Ist eines davon schon auf dem Mac (Homebrew oder von Podcast Profi eingerichtet), wird es genutzt – sonst richtet **Einrichten** die offizielle Version von GitHub ein und prüft dabei ihre Prüfsumme. Meldet yt-dlp einen Fehler, hilft oft **yt-dlp aktualisieren**. Bitte nur laden, was du verwenden darfst.
+- **Adresse …** lädt aus dem Internet: direkte Links zu Video-, Bild- oder Tondateien, aber auch Seiten wie YouTube, Instagram, Vimeo oder die Mediatheken (in 720p, 1080p oder bester Qualität). Für solche Seiten braucht Erklärbär das kostenlose Programm **yt-dlp**, für YouTube zusätzlich **Deno**: Ist eines davon schon auf dem Mac (Homebrew oder von Podcast Profi eingerichtet), wird es genutzt – sonst richtet **Einrichten** die offizielle Version von GitHub ein und prüft dabei ihre Prüfsumme. Meldet yt-dlp einen Fehler, hilft oft **yt-dlp aktualisieren**; verlangt die Seite eine Anmeldung, hilft **Mit Anmeldung aus dem Browser laden**. Bitte nur laden, was du verwenden darfst.
 - **Entfernen:** das Papierkorb-Symbol neben einer Datei (oder Rechtsklick › **Aus der Bibliothek entfernen**) legt sie in den Papierkorb. Wird sie im Projekt noch verwendet, ist das gesperrt – erst dort entfernen.
 
 ### Mehrere Medienspuren

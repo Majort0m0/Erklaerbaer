@@ -29,6 +29,12 @@ extension AppModel {
         }
     }
 
+    /// Opens "Neues Projekt aus dem Internet"; with an address (a dropped link) it loads at once.
+    func newProjectFromURL(_ address: String? = nil) {
+        urlProjectAddress = address
+        showURLProject = true
+    }
+
     func newEmptyProject(aspect: OutputAspect) {
         Task {
             creatingProject = true

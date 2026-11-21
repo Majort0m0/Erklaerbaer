@@ -41,7 +41,8 @@ enum ProjectFactory {
 
     /// An own video becomes the main track (copied into the project; on APFS a clone, no extra
     /// space). Its sound counts as the microphone: voice enhancement, captions and pause removal work.
-    static func importVideo(_ source: URL, into library: URL = ProjectLocations.current) async throws -> Project {
+    /// `sourceName`: shown on the project card (e.g. "Instagram" for a downloaded video).
+    static func importVideo(_ source: URL, into library: URL = ProjectLocations.current, sourceName: String? = nil) async throws -> Project {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw Failure.noVideo }
         let size = try await track.load(.naturalSize)
@@ -60,7 +61,7 @@ enum ProjectFactory {
             throw error
         }
         var info = RecordingInfo(pixelWidth: Int(abs(shown.width)), pixelHeight: Int(abs(shown.height)), pointPixelScale: 1,
-                                 duration: duration, createdAt: Date(), sourceName: name, hasMicrophone: hasAudio,
+                                 duration: duration, createdAt: Date(), sourceName: sourceName ?? name, hasMicrophone: hasAudio,
                                  cameraFile: nil, audioTracks: hasAudio ? ["mic"] : [])
         info.videoFile = file
         info.rotation = rotation == 0 ? nil : rotation

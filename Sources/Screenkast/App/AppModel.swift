@@ -99,6 +99,10 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     /// A new project from an own video or an empty one is being created.
     @Published var creatingProject = false
+    /// "Neues Projekt aus dem Internet" (start page, Ablage menu, a link dropped onto the list).
+    @Published var showURLProject = false
+    /// A dropped link: filled into that sheet and loaded right away.
+    var urlProjectAddress: String?
     /// Projects being moved to another folder or drive.
     @Published var movingProjects: Set<URL> = []
     /// Bumped when the folder for new projects changes (redraws the folder menu).
@@ -239,7 +243,10 @@ final class AppModel: ObservableObject {
             watchPermission()
         }
         microphones = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone, .external],
-                                                       mediaType: .audio, position: .unspecified).devices.filter { !$0.hasMediaType(.muxed) }
+                                                       mediaType: .audio, position: .unspecified).devices.filter {
+            // The microphone "Erklärbär" carries Erklärbär's own sound: recording it would feed back.
+            !$0.hasMediaType(.muxed) && !VirtualMicrophoneIDs.isOwnMicrophone($0.uniqueID)
+        }
         if !microphoneID.isEmpty && !microphones.contains(where: { $0.uniqueID == microphoneID }) {
             microphoneID = ""
         }

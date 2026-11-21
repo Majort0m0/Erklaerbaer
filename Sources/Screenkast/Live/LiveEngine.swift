@@ -13,6 +13,12 @@ final class LiveEngine: @unchecked Sendable {
 
     var onPresent: ((CVPixelBuffer) -> Void)?
     var onProblem: ((String) -> Void)?
+    /// macOS ended the capture of the screen or window (e.g. "Stop sharing" in its menu); the last picture stays.
+    var onSourceLost: ((Error) -> Void)?
+    /// A meme with this file starts sounding (nil: no meme sounds any more), for the microphone "Erklärbär".
+    var onMemeSound: ((URL?) -> Void)?
+    /// The iPad's sound as it comes in.
+    var onDeviceSound: ((CMSampleBuffer) -> Void)?
     private(set) var framesPerSecond = 0
 
     private let lock = NSLock()
@@ -77,8 +83,11 @@ final class LiveEngine: @unchecked Sendable {
     private var clicks: [(CGPoint, Double)] = []
     private var counted = 0
     private var countStart = 0.0
+    private var overlays = LiveOverlayAnimator()
 
     let camera = CameraRecorder()
+    /// The camera "Erklärbär" for meetings gets every live picture while it is connected.
+    let virtualCamera = VirtualCameraFeed()
     private var screen: LiveScreenSource?
     private var device: LiveDeviceSource?
     private var clickMonitor: Any?
@@ -135,12 +144,14 @@ final class LiveEngine: @unchecked Sendable {
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
         watchKeys(false)
+        virtualCamera.stopNow()
         camera.select(deviceID: nil)
         let running: ActiveMeme? = lock.withLock {
             defer { meme = nil }
             return meme
         }
         running?.stop()
+        onMemeSound?(nil)
         await stopSource()
         lock.withLock {
             sourceFrame = nil
@@ -204,7 +215,10 @@ final class LiveEngine: @unchecked Sendable {
         let generation = nextGeneration(area: area)
         await stopSource()
         let source = LiveScreenSource(filter: filter) { [weak self] frame in self?.receive(frame, generation) }
-        source.onError = { [weak self] error in self?.onProblem?("Die Quelle ist nicht mehr verfügbar: \(error.localizedDescription)") }
+        source.onError = { [weak self] error in
+            guard let self, self.lock.withLock({ generation == self.wantedGeneration }) else { return }
+            self.onSourceLost?(error)
+        }
         screen = source
         do {
             try await source.start()
@@ -218,7 +232,10 @@ final class LiveEngine: @unchecked Sendable {
         let generation = nextGeneration(area: nil)
         await stopSource()
         let source = LiveDeviceSource(onFrame: { [weak self] frame in self?.receive(frame, generation) },
-                                      onAudio: { [weak self] sample, clock in self?.write(sample, clock: clock, role: "system") })
+                                      onAudio: { [weak self] sample, clock in
+                                          self?.onDeviceSound?(sample)
+                                          self?.write(sample, clock: clock, role: "system")
+                                      })
         device = source
         do {
             try await source.start(deviceID: id, hear: hear)
@@ -260,7 +277,8 @@ final class LiveEngine: @unchecked Sendable {
             image = from   // the new source has not delivered yet: the last picture stays
         } else {
             image = LiveCompositor.compose(config: cfg, source: ready ? frame.map { CIImage(cvPixelBuffer: $0) } : nil, camera: webcam,
-                                           effects: effects(now: now, area: where_, fresh: fresh, config: cfg), meme: memeLayer(now: now))
+                                           effects: effects(now: now, area: where_, fresh: fresh, config: cfg), meme: memeLayer(now: now),
+                                           overlays: overlays.draws(for: cfg, now: now))
             if let from = fadeFrom, let start = fadeStart {
                 let p = (now - start) / 0.25
                 if p >= 1 {
@@ -279,6 +297,7 @@ final class LiveEngine: @unchecked Sendable {
         lastOutput = buffer
         count(now)
         present(buffer)
+        virtualCamera.send(buffer)
         let time = CMClockGetTime(CMClockGetHostTimeClock())
         writerQueue.async { self.writer?.append(buffer, at: time) }
     }
@@ -302,11 +321,13 @@ final class LiveEngine: @unchecked Sendable {
         running?.stop()
         guard running?.url != url else {
             lock.withLock { meme = nil }
+            onMemeSound?(nil)
             return
         }
         let new = ActiveMeme(url: url, length: length, transparent: transparent)
         lock.withLock { meme = new }
         new.player.play()
+        onMemeSound?(url)
     }
 
     private func memeLayer(now: Double) -> (image: CIImage, alpha: Double, transparent: Bool)? {
@@ -318,8 +339,13 @@ final class LiveEngine: @unchecked Sendable {
         }
         let shown = now - current.started
         if let length = current.length, shown >= length {
-            lock.withLock { if meme === current { meme = nil } }
+            let ended: Bool = lock.withLock {
+                guard meme === current else { return false }
+                meme = nil
+                return true
+            }
             DispatchQueue.main.async { current.stop() }
+            if ended { onMemeSound?(nil) }
             return nil
         }
         guard let frame = current.frame else { return nil }
