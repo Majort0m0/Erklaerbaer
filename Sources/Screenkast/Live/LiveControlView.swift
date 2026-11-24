@@ -80,7 +80,9 @@ struct LiveControlView: View {
             LiveOverlayStrip(live: live, library: live.overlays)
             memes
             recording
+            LiveSoundStrip(live: live, audio: live.audio)
             meetingSection
+            LiveRemoteSection(remote: live.remote)
             if let message = live.message {
                 Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
@@ -269,12 +271,10 @@ struct LiveControlView: View {
         }
     }
 
+    /// The iPad's sound is in the mixer (Ton): there it gets its volume for the meeting and the ear.
     @ViewBuilder
     private var effects: some View {
-        if live.isDeviceSource {
-            Toggle("iPad-Ton am Mac hören", isOn: $live.hearDevice)
-                .help("Spielt den Ton des iPads am Mac ab. So kann ihn auch das Meeting-Programm mitsenden, wenn dort „Computerton teilen“ an ist.")
-        } else {
+        if !live.isDeviceSource {
             HStack(spacing: 16) {
                 Toggle("Klick-Effekte", isOn: $live.config.clicks)
                 Toggle("Mausspur", isOn: $live.config.trail)
@@ -338,7 +338,6 @@ extension LiveControlView {
                 if micShown {
                     meetingRow(icon: "mic", title: "Mikrofon", running: meetingMic.status == .ready && meetingMic.sending
                                && live.meetingMicState == .running) { meetingMicControl }
-                    if meetingMic.status == .ready, meetingMic.sending { systemSoundRow }
                 }
                 ForEach(meetingDetails, id: \.text) { detail in
                     Text(detail.text)
@@ -400,7 +399,7 @@ extension LiveControlView {
         case .failed:
             Button("Erneut einrichten …") { meetingMic.install() }
         case .ready:
-            switchAndMenu(isOn: $meetingMic.sending, help: "Mikrofon und Systemton an das Mikrofon „\(VirtualCameraIDs.cameraName)“ senden",
+            switchAndMenu(isOn: $meetingMic.sending, help: "Den Ton aus dem Mischpult an das Mikrofon „\(VirtualCameraIDs.cameraName)“ senden",
                           remove: "Mikrofon „\(VirtualCameraIDs.cameraName)“ entfernen …") { meetingMic.remove() }
         case .unavailable:
             EmptyView()
@@ -423,32 +422,6 @@ extension LiveControlView {
             .menuIndicator(.hidden)
             .fixedSize()
         }
-    }
-
-    /// The sound of the Mac goes along, except that of the meeting program (it would come back as an echo).
-    private var systemSoundRow: some View {
-        let apps = VirtualMicrophone.runningApps()
-        return HStack(spacing: 6) {
-            Toggle("Systemton", isOn: $meetingMic.systemAudio)
-                .controlSize(.small)
-                .help("Schickt auch den Ton des Macs mit: Videos, Memes, den Ton des iPads.")
-            if meetingMic.systemAudio {
-                Spacer()
-                Text("ohne").font(.caption).foregroundStyle(.secondary)
-                Picker("ohne", selection: $meetingMic.meetingApp) {
-                    Text("–").tag("")
-                    if !meetingMic.meetingApp.isEmpty, !apps.contains(where: { $0.id == meetingMic.meetingApp }) {
-                        Text(meetingMic.meetingApp).tag(meetingMic.meetingApp)
-                    }
-                    ForEach(apps, id: \.id) { Text($0.name).tag($0.id) }
-                }
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(maxWidth: 170)
-                .help("Das Meeting-Programm: Sein Ton (die Stimmen der anderen) wird nie mitgeschickt, sonst hören sie sich als Echo.")
-            }
-        }
-        .padding(.leading, 24)
     }
 
     /// Notes below the rows; only what needs attention.
@@ -475,12 +448,10 @@ extension LiveControlView {
         case .ready where meetingMic.sending:
             switch live.meetingMicState {
             case .missing: result.append(("Das Mikrofon \(name) meldet sich nicht. Ein Neustart des Macs hilft meist.", true))
-            case .failed(let text): result.append((text, true))
+            case .failed: break   // shown with the sound
             default:
                 if live.microphoneID.isEmpty {
-                    result.append(("Kein Mikrofon gewählt (neben „Aufnehmen“): Ins Meeting geht nur der Systemton.", true))
-                } else if meetingMic.systemAudio && meetingMic.meetingApp.isEmpty {
-                    result.append(("Ohne Meeting-Programm bei „ohne“ hören die anderen sich selbst als Echo.", true))
+                    result.append(("Kein Mikrofon gewählt (neben „Aufnehmen“): Ins Meeting geht nur, was im Mischpult eingeschaltet ist.", true))
                 }
             }
         default:

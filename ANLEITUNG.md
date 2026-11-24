@@ -133,13 +133,14 @@ Statt den Bildschirm zu teilen, kann Erklärbär auch als **Kamera** auftreten: 
 
 ### Als Mikrofon in Meetings
 
-Das Mikrofon **Erklärbär** schickt dein Mikrofon ins Meeting und auf Wunsch auch den Ton des Macs: Videos, Meme-Töne, den Ton des iPads.
+Das Mikrofon **Erklärbär** schickt deine Stimme ins Meeting, dazu Meme-Töne, den Ton des iPads und den Ton von Programmen, die du im **Mischpult** einschaltest.
 
 1. In der Live-Steuerung unter **In Meetings** beim **Mikrofon** auf **Einrichten …** klicken. macOS fragt einmal nach dem Administrator-Passwort; der Ton des Macs setzt dabei kurz aus.
 2. Im Meeting-Programm als Mikrofon **Erklärbär** wählen. Dein eigenes Mikrofon wählst du in Erklärbär neben **Aufnehmen**.
-3. **Systemton** einschalten, wenn der Ton des Macs mitgehen soll, und bei **ohne** das Meeting-Programm wählen (z. B. Zoom oder den Browser, in dem das Meeting läuft).
+3. Im **Mischpult** (Abschnitt **Ton** in der Steuerung) bei **Meeting läuft in** das Meeting-Programm wählen, z. B. Zoom oder den Browser, in dem das Meeting läuft. Meist errät Erklärbär es selbst.
 
 - Der Ton des Meeting-Programms selbst geht nie mit, sonst hören die anderen sich als Echo. Läuft das Meeting im Browser, geht deshalb auch kein Ton aus diesem Browser mit – Videos dann in einem anderen Programm abspielen.
+- Kopfhörer, die du während des Meetings verbindest (z. B. AirPods), ändern nichts am Mikrofon „Erklärbär“: Deine Stimme geht weiter ins Meeting und nicht in dein Ohr.
 - Das Mikrofon „Erklärbär“ sendet nur, solange der Live-Modus läuft.
 - Entfernen: **⋯ › Mikrofon „Erklärbär“ entfernen …** (braucht wieder das Passwort).
 
@@ -155,7 +156,32 @@ Das Mikrofon **Erklärbär** schickt dein Mikrofon ins Meeting und auf Wunsch au
 - **Einklappen** (H, Knopf oben rechts): Die Steuerung fährt wie eine Schublade an den Bildschirmrand, ein kleiner Griff holt sie zurück. Das Live-Bild läuft weiter.
 - **Aufnehmen** (R) speichert das Live-Bild als neues Projekt, auf Wunsch mit dem Mikrofon. Beim iPad kommt auch dessen Ton mit.
 
-> 💡 **Tipp:** Den Ton wählt das Meeting-Programm selbst: Dein Mikrofon stellst du dort ein. Soll der Ton von iPad oder Memes mitgesendet werden, schalte dort **Computerton teilen** ein.
+### Ton und Mischpult
+
+Die Zeile **Ton** in der Steuerung zeigt, wie laut deine Stimme ist und was ins Meeting geht. **Stumm** (M) nimmt nur deine Stimme aus dem Meeting. **Mischpult** öffnet ein eigenes Fenster mit allen Quellen.
+
+- Jede Quelle hat zwei Regler: **Ins Meeting** (was die anderen hören) und **Ins Ohr** (was du hörst). Das Häkchen schaltet den Weg ein oder aus.
+- **Stimme:** Ins Ohr ist sie aus, sonst hörst du dich als Echo. Einschalten lässt sie sich nur mit Kopfhörern; aus Lautsprechern nähme das Mikrofon sie wieder auf. Liegt Erklärbär mit Kopfhörer oder Lautsprecher falsch, stellst du es oben im Mischpult richtig.
+- **iPad** und **Memes:** im Meeting und im Ohr getrennt einstellbar.
+- **Programme:** Alles, was gerade Ton abspielt, erscheint im Mischpult. Ins Meeting geht ein Programm erst, wenn du es einschaltest; Erklärbär merkt sich das. Beim ersten Mal fragt macOS nach der Erlaubnis für **Systemaudioaufnahme**. Du selbst hörst Programme wie gewohnt direkt.
+- Sprichst du über das Mikrofon der AirPods, schalten sie in den Telefon-Modus und klingen dumpf. Besser: mit dem Mikrofon des Macs sprechen und die AirPods nur zum Hören nutzen.
+
+### Mit iPhone oder iPad steuern
+
+Die ganze Live-Steuerung gibt es auch auf iPhone oder iPad im selben WLAN, ohne App: Erklärbär zeigt sie als Webseite.
+
+1. Ganz unten in der Live-Steuerung **Mit iPhone oder iPad steuern** einschalten.
+2. Den **QR-Code** mit der Kamera von iPhone oder iPad scannen. Safari öffnet die Steuerung.
+3. Am Mac einmal **Erlauben** klicken. Erklärbär merkt sich das Gerät; **Trennen** nimmt die Erlaubnis zurück.
+
+- **Bühne:** Memes und wo sie erscheinen, Logos (⚙︎: Ecke, Größe, Deckkraft) und Banner.
+- **Bild:** Quelle (⟳ holt neue Fenster), Webcam und ihre Größe, Rahmen, virtueller Hintergrund mit Kante und Beruhigen, Klick-Effekte, Mausspur und Tastenkürzel. Ein Foto vom iPhone wird mit **Bild wählen …** zum Hintergrund.
+- **Ton:** Mikrofon, Kamera und Mikrofon „Erklärbär“ senden, Meeting-Programm, Kopfhörer und das ganze Mischpult.
+- Oben: Vorschau, **Stumm**, **Aufnehmen** und die drei Szenen. Den gelben Kreis in der Vorschau ziehen verschiebt die Webcam.
+- In Safari **Teilen › Zum Home-Bildschirm** wählen: Dann startet die Steuerung wie eine App.
+- **Neuer Code** macht den alten QR-Code ungültig; erlaubte Geräte bleiben erlaubt.
+
+> 💡 **Tipp:** Ohne Mikrofon „Erklärbär“ wählt das Meeting-Programm den Ton selbst: Dein Mikrofon stellst du dort ein. Soll der Ton von iPad oder Memes mitgesendet werden, schalte dort **Computerton teilen** ein.
 
 > 💡 **Tipp:** Das Programm-Fenster lässt sich größer ziehen. Je größer es ist, desto schärfer kommt es im Meeting an.
 

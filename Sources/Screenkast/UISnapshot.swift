@@ -50,6 +50,22 @@ enum UISnapshot {
             let height = Double(ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_HEIGHT"] ?? "") ?? 860
             return (try? write(LiveControlView(live: live, app: app).background(Theme.panel), width: 400, height: height, to: outputPath)) == nil ? 1 : 0
         }
+        if projectPath == "livemixer" {
+            AppModel.snapshotMode = true
+            let live = LiveModel(app: AppModel())
+            #if DEBUG
+            VirtualMicrophone.shared.pretend(.ready)
+            let headphones = ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_SPEAKERS"] != "1"
+            live.audio.pretend(ear: LiveAudio.Ear(uid: "test", name: headphones ? "AirPods Pro" : "MacBook Air-Lautsprecher", headphones: headphones),
+                               apps: [AudioApps.App(id: "com.brave.Browser", name: "Brave Browser", processes: [], playing: true),
+                                      AudioApps.App(id: "com.apple.Keynote", name: "Keynote", processes: [], playing: false),
+                                      AudioApps.App(id: "com.apple.Music", name: "Musik", processes: [], playing: true)],
+                               meetingApp: "com.brave.Browser", meeting: .running)
+            #endif
+            let mixer = LiveMixerView(live: live, audio: live.audio).background(Theme.panel)
+            return (try? write(mixer, width: 640, height: Double(ProcessInfo.processInfo.environment["SCREENKAST_SNAPSHOT_HEIGHT"] ?? "") ?? 520,
+                               to: outputPath)) == nil ? 1 : 0
+        }
         if projectPath == "livebanner" {
             AppModel.snapshotMode = true
             let live = LiveModel(app: AppModel())

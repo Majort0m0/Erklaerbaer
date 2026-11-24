@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreAudio
 import AppKit
 
 @main
@@ -46,7 +47,37 @@ enum Entry {
             exit(LiveEngine.commandLine(seconds: Int(args[i + 1]) ?? 10, picture: args[i + 2]))
         }
         if args.contains("--meetingmictest") {
-            exit(VirtualMicrophoneTest.commandLine())
+            exit(VirtualMicrophoneTest.commandLine(switchOutput: args.contains("--switch-output"), oldEngine: args.contains("--old-engine")))
+        }
+        if let i = args.firstIndex(of: "--remotesnapshot"), i + 1 < args.count {
+            exit(LiveRemoteSnapshot.commandLine(folder: URL(fileURLWithPath: args[i + 1])))
+        }
+        if args.contains("--remotetest") {
+            exit(LiveRemoteTest.commandLine())
+        }
+        if let i = args.firstIndex(of: "--remoteserve") {
+            exit(LiveRemoteTest.commandLine(serveFor: i + 1 < args.count ? Double(args[i + 1]) ?? 120 : 120))
+        }
+        if args.contains("--taptest") {
+            exit(AppTapTest.commandLine())
+        }
+        if args.contains("--audioapps") {
+            // Programs with sound processes, grouped as in the live mixer (read only).
+            // Also where each one plays (to find out who sends sound into the headphones), Erklärbär included.
+            for app in AudioApps.current() {
+                let devices = Set(app.processes.flatMap { AudioDevices.list($0, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeOutput) })
+                    .compactMap { AudioDevices.name($0) }.sorted()
+                print(app.playing ? "♪" : " ", app.name, "(\(app.id))", "Prozesse:", app.processes.count,
+                      devices.isEmpty ? "" : "→ " + devices.joined(separator: ", "))
+            }
+            for process in AudioDevices.list(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyProcessObjectList) {
+                guard let pid: pid_t = AudioDevices.value(process, kAudioProcessPropertyPID, pid_t(0)),
+                      NSRunningApplication(processIdentifier: AudioApps.responsible(for: pid))?.bundleIdentifier == (Bundle.main.bundleIdentifier ?? VirtualCameraIDs.appSigningID)
+                else { continue }
+                let devices = AudioDevices.list(process, kAudioProcessPropertyDevices, scope: kAudioObjectPropertyScopeOutput).compactMap { AudioDevices.name($0) }
+                print("  Erklärbär (pid \(pid)) →", devices.isEmpty ? "–" : devices.joined(separator: ", "))
+            }
+            exit(0)
         }
         if let i = args.firstIndex(of: "--meetingcamgrab"), i + 1 < args.count {
             exit(VirtualCameraTest.grab(path: args[i + 1]))

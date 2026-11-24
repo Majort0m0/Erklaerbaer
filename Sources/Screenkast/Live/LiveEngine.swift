@@ -19,6 +19,8 @@ final class LiveEngine: @unchecked Sendable {
     var onMemeSound: ((URL?) -> Void)?
     /// The iPad's sound as it comes in.
     var onDeviceSound: ((CMSampleBuffer) -> Void)?
+    /// Memes sound from the Mac themselves (false: the live mixer plays them into the ear).
+    var memeSoundOnMac = true
     private(set) var framesPerSecond = 0
 
     private let lock = NSLock()
@@ -47,13 +49,14 @@ final class LiveEngine: @unchecked Sendable {
         var frame: CVPixelBuffer?
         private var repeating: NSObjectProtocol?
 
-        init(url: URL, length: Double?, transparent: Bool) {
+        init(url: URL, length: Double?, transparent: Bool, muted: Bool) {
             self.url = url
             self.length = length
             self.transparent = transparent
             let item = AVPlayerItem(url: url)
             item.add(output)
             player = AVPlayer(playerItem: item)
+            player.isMuted = muted
             player.actionAtItemEnd = .none
             repeating = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [player] _ in
                 player.seek(to: .zero)
@@ -324,11 +327,14 @@ final class LiveEngine: @unchecked Sendable {
             onMemeSound?(nil)
             return
         }
-        let new = ActiveMeme(url: url, length: length, transparent: transparent)
+        let new = ActiveMeme(url: url, length: length, transparent: transparent, muted: !memeSoundOnMac)
         lock.withLock { meme = new }
         new.player.play()
         onMemeSound?(url)
     }
+
+    /// The file of the meme that is shown right now.
+    var playingMemeURL: URL? { lock.withLock { meme?.url } }
 
     private func memeLayer(now: Double) -> (image: CIImage, alpha: Double, transparent: Bool)? {
         guard let current = lock.withLock({ meme }) else { return nil }

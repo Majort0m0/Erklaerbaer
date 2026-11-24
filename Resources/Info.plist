@@ -19,19 +19,23 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.0.0</string>
+	<string>2.1.0</string>
 	<key>CFBundleVersion</key>
-	<string>24</string>
+	<string>25</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.video</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>15.0</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Erklärbär schickt den Ton von Programmen, die du im Mischpult einschaltest, mit ins Meeting.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Erklärbär nimmt dich mit der Kamera auf, wenn du eine Kamera auswählst.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Lernsachen.blog · CC BY-NC 4.0</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Erklärbär zeigt die Live-Steuerung auf deinem iPhone oder iPad im selben WLAN.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Erklärbär nimmt deine Stimme auf, wenn du ein Mikrofon auswählst.</string>
 	<key>NSPrincipalClass</key>

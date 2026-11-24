@@ -232,10 +232,12 @@ private final class FrameGrabber: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
 /// `--meetingmictest`: sends a 1 kHz tone through the microphone "Erklärbär" and records it the way a
 /// meeting program would; afterwards there must be silence (no old sound going round).
+/// With `--switch-output` the default output of the Mac changes for a moment while the tone runs (as when
+/// AirPods connect): the tone must stay in the microphone and never move to the new output.
 /// Needs the installed driver and the microphone permission (start with `open -n -W -a … --args`).
 enum VirtualMicrophoneTest {
     @MainActor
-    static func commandLine() -> Int32 {
+    static func commandLine(switchOutput: Bool = false, oldEngine: Bool = false) -> Int32 {
         var code: Int32 = 1
         var done = false
         Task { @MainActor in
@@ -257,11 +259,48 @@ enum VirtualMicrophoneTest {
                 let recorder = try ToneRecorder(device: device)
                 recorder.start()
 
-                let feed = VirtualMicFeed()
-                var states: [VirtualMicFeed.State] = []
-                feed.onState = { states.append($0) }
-                // With the sound of the Mac, as in a meeting: what the feed plays must not come back.
-                feed.apply(mic: nil, system: true, exclude: "", on: true)
+                let graph = LiveMixGraph()
+                graph.voice.setGains(meeting: 1, ear: 0)
+                graph.memes.setGains(meeting: 1, ear: 0)
+                guard let feedDevice = AudioDevices.device(uid: VirtualMicrophoneIDs.feedUID) else {
+                    print("Die Zuspielung fehlt.")
+                    return
+                }
+                var output: DeviceOutput?
+                var engine: AVAudioEngine?
+                if oldEngine {
+                    // For comparison: the way up to 2.0.0 (AVAudioEngine pointed at the feed).
+                    let old = AVAudioEngine()
+                    var id = feedDevice
+                    AudioUnitSetProperty(old.outputNode.audioUnit!, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, 4)
+                    let format = AVAudioFormat(standardFormatWithSampleRate: VirtualMicrophoneIDs.sampleRate, channels: 2)!
+                    let node = AVAudioSourceNode(format: format) { _, _, frames, list -> OSStatus in
+                        let buffers = UnsafeMutableAudioBufferListPointer(list)
+                        guard buffers.count >= 2, let l = buffers[0].mData?.assumingMemoryBound(to: Float.self),
+                              let r = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+                        l.update(repeating: 0, count: Int(frames))
+                        r.update(repeating: 0, count: Int(frames))
+                        graph.renderMeeting(l, r, Int(frames))
+                        return noErr
+                    }
+                    old.attach(node)
+                    old.connect(node, to: old.mainMixerNode, format: format)
+                    old.prepare()
+                    try old.start()
+                    engine = old
+                    print("Alter Weg (AVAudioEngine)")
+                } else {
+                    output = try DeviceOutput(device: feedDevice) { graph.renderMeeting($0, $1, $2) }
+                    print("Zuspielung gebunden:", output?.currentDevice == feedDevice)
+                }
+                func bound() -> AudioObjectID? {
+                    if let output { return output.currentDevice }
+                    guard let unit = engine?.outputNode.audioUnit else { return nil }
+                    var id = AudioObjectID(0)
+                    var size = UInt32(4)
+                    AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &id, &size)
+                    return id
+                }
                 // 1 kHz, amplitude 0.5, in 10 ms pieces.
                 var phase = 0.0
                 let tone = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "test.tone"))
@@ -272,12 +311,25 @@ enum VirtualMicrophoneTest {
                         samples[i] = Float(0.5 * sin(phase))
                         phase += 2 * .pi * 1000 / VirtualMicrophoneIDs.sampleRate
                     }
-                    samples.withUnsafeBufferPointer { feed.voice.write([$0.baseAddress!], frames: 480, channels: 1, interleaved: false) }
+                    samples.withUnsafeBufferPointer { graph.voice.write([$0.baseAddress!], frames: 480, channels: 1, interleaved: false) }
                 }
                 tone.resume()
                 try await Task.sleep(for: .seconds(2.5))
                 let heard = recorder.analyze(lastSeconds: 1)
-                print("Zustand:", states, String(format: "| gehört: Pegel %.3f, %.0f Hz, 1-kHz-Anteil %.3f", heard.rms, heard.frequency, heard.tone))
+                print(String(format: "Gehört: Pegel %.3f, %.0f Hz, 1-kHz-Anteil %.3f", heard.rms, heard.frequency, heard.tone))
+                var stayed = true
+                if switchOutput {
+                    stayed = try await switchDefaultOutput(feed: feedDevice, bound: bound, recorder: recorder) {
+                        tone.cancel()
+                        graph.voice.clear()
+                    }
+                    if oldEngine {
+                        engine?.stop()
+                        recorder.stop()
+                        print(stayed ? "Alter Weg: blieb beim Mikrofon" : "Alter Weg: ist mit dem Ausgang mitgewandert")
+                        return
+                    }
+                }
                 tone.cancel()
                 try await Task.sleep(for: .seconds(1.5))
                 let quiet = recorder.analyze(lastSeconds: 1)
@@ -295,20 +347,21 @@ enum VirtualMicrophoneTest {
                     clipBuffer.floatChannelData![1][i] = v
                 }
                 try AVAudioFile(forWriting: clipFile, settings: clipFormat.settings).write(from: clipBuffer)
-                feed.playClip(clipFile)
+                graph.memes.play(clipFile)
                 try await Task.sleep(for: .seconds(2))
                 let meme = recorder.analyze(lastSeconds: 1.5)
-                feed.playClip(nil)
+                graph.memes.play(nil)
                 try await Task.sleep(for: .seconds(1))
                 let memeGone = recorder.analyze(lastSeconds: 0.8)
                 print(String(format: "Meme-Ton aus Datei: 1-kHz-Anteil %.3f, danach %.4f", meme.tone, memeGone.tone))
                 let memeHeard: Double? = meme.tone > 0.1 && memeGone.tone < 0.005 ? meme.tone : 0
-                await feed.stopNow()
+                output?.stop()
+                output = nil
                 try await Task.sleep(for: .seconds(1.5))
                 let after = recorder.analyze(lastSeconds: 1)
                 print(String(format: "Danach: Pegel %.4f, 1-kHz-Anteil %.4f", after.rms, after.tone))
                 recorder.stop()
-                let ok = heard.tone > 0.2 && abs(heard.frequency - 1000) < 30 && quiet.tone < 0.005 && after.tone < 0.005 && (memeHeard ?? 1) > 0.005
+                let ok = heard.tone > 0.2 && abs(heard.frequency - 1000) < 30 && quiet.tone < 0.005 && after.tone < 0.005 && (memeHeard ?? 1) > 0.005 && stayed
                 print(ok ? "✓ Der Prüfton kommt am Mikrofon „Erklärbär“ an, kreist nicht und hört danach auf" : "✗ Prüfton nicht wie erwartet")
                 code = ok ? 0 : 1
             } catch {
@@ -317,6 +370,48 @@ enum VirtualMicrophoneTest {
         }
         while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
         return code
+    }
+}
+
+extension VirtualMicrophoneTest {
+    /// Switches the default output to another device and back while the tone plays; the tone must keep
+    /// arriving at the microphone and the output must stay bound to the feed.
+    @MainActor
+    fileprivate static func switchDefaultOutput(feed: AudioObjectID, bound: () -> AudioObjectID?, recorder: ToneRecorder,
+                                                stopTone: () -> Void) async throws -> Bool {
+        guard let original = AudioDevices.defaultOutput() else { return false }
+        let candidates = AudioDevices.list(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDevices).filter { device in
+            device != original && device != feed && !AudioDevices.list(device, kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeOutput).isEmpty
+                && (AudioDevices.value(device, kAudioDevicePropertyIsHidden, UInt32(0)) ?? 0) == 0
+                && AudioDevices.uid(device).map { !VirtualMicrophoneIDs.isOwnMicrophone($0) } ?? false
+                // Not the helper devices programs make for themselves (AVAudioEngine: "CADefaultDeviceAggregate-…").
+                && AudioDevices.transport(device) != kAudioDeviceTransportTypeAggregate
+        }
+        guard let other = candidates.first else {
+            print("Kein zweites Ausgabegerät zum Umschalten – Schritt übersprungen.")
+            return true
+        }
+        func setDefault(_ device: AudioObjectID) {
+            var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice, mScope: kAudioObjectPropertyScopeGlobal,
+                                                     mElement: kAudioObjectPropertyElementMain)
+            var id = device
+            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, UInt32(MemoryLayout<AudioObjectID>.size), &id)
+        }
+        print("Standard-Ausgang kurz auf „\(AudioDevices.name(other) ?? "?")“ …")
+        setDefault(other)
+        defer { setDefault(original) }
+        try await Task.sleep(for: .seconds(2))
+        let during = recorder.analyze(lastSeconds: 1)
+        let device = bound()
+        let stays = device == feed
+        // Silence first: if the sound did move along, it must not beep out of the loudspeakers afterwards.
+        stopTone()
+        try await Task.sleep(for: .seconds(0.3))
+        setDefault(original)
+        try await Task.sleep(for: .seconds(0.5))
+        print(String(format: "Während des Umschaltens: 1-kHz-Anteil am Mikrofon %.3f, spielt in: %@", during.tone,
+                     device.flatMap { AudioDevices.name($0) } ?? "?"))
+        return during.tone > 0.2 && stays
     }
 }
 
@@ -368,5 +463,68 @@ private final class ToneRecorder: NSObject, AVCaptureAudioDataOutputSampleBuffer
         }
         let power = max(0, s1 * s1 + s2 * s2 - coefficient * s1 * s2)
         return (rms, Double(crossings) / 2 / (Double(n) / VirtualMicrophoneIDs.sampleRate), 2 * sqrt(power) / Double(n))
+    }
+}
+
+/// `--taptest`: plays a quiet tone with afplay and takes it up through a Core Audio tap, as the mixer does with
+/// programs. The first time macOS asks for the permission to record system audio.
+enum AppTapTest {
+    @MainActor
+    static func commandLine() -> Int32 {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("erklaerbaer-tap-test.caf")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 48_000 * 4)!
+        buffer.frameLength = 48_000 * 4
+        for i in 0..<Int(buffer.frameLength) {
+            let v = Float(0.5 * sin(2 * Double.pi * 1000 * Double(i) / 48_000))
+            buffer.floatChannelData![0][i] = v
+            buffer.floatChannelData![1][i] = v
+        }
+        do {
+            try? FileManager.default.removeItem(at: file)
+            try AVAudioFile(forWriting: file, settings: format.settings).write(from: buffer)
+        } catch {
+            print("Fehler:", error.localizedDescription)
+            return 1
+        }
+        let player = Process()
+        player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+        player.arguments = ["-v", "0.04", file.path]
+        do { try player.run() } catch {
+            print("afplay startet nicht")
+            return 1
+        }
+        defer { player.terminate() }
+        Thread.sleep(forTimeInterval: 0.4)
+        var pid = player.processIdentifier
+        var object = AudioObjectID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<pid_t>.size), &pid, &size, &object)
+        guard object != kAudioObjectUnknown else {
+            print("✗ afplay ist für Core Audio nicht da")
+            return 1
+        }
+        do {
+            let tap = try AppTap(appID: "afplay", processes: [object])
+            _ = tap.source.level.take()
+            let until = Date().addingTimeInterval(2)
+            while Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+            let level = tap.source.level.take()
+            // What would go into the meeting: the tap's sound from its meeting buffer.
+            print("Tap-Format:", tap.formatDescription, "| wartend im Meeting-Puffer:", tap.source.meeting.waiting)
+            var left = [Float](repeating: 0, count: 2_400), right = [Float](repeating: 0, count: 2_400)
+            tap.source.meeting.add(to: &left, &right, frames: 2_400)
+            let mixed = left.map(abs).max() ?? 0
+            tap.stop()
+            print(String(format: "Tap: Pegel %.3f, im Meeting-Puffer %.3f, etwas gehört: %@", level, mixed, tap.heardAnything ? "ja" : "nein"))
+            let ok = level > 0.005 && mixed > 0.005
+            print(ok ? "✓ Der Ton eines Programms kommt über den Tap an" : "✗ Kein Ton über den Tap (Erlaubnis für Systemaudio fehlt?)")
+            return ok ? 0 : 1
+        } catch {
+            print("✗ Tap:", error.localizedDescription)
+            return 1
+        }
     }
 }

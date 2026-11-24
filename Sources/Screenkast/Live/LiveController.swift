@@ -100,7 +100,6 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
     @Published var microphoneID: String { didSet { UserDefaults.standard.set(microphoneID, forKey: "liveMicrophoneID") } }
-    @Published var hearDevice: Bool { didSet { if hearDevice != oldValue, isDeviceSource { applySource() } } }
     @Published private(set) var isRecording = false
     @Published private(set) var recordingTime: TimeInterval = 0
     @Published private(set) var framesPerSecond = 0
@@ -111,9 +110,14 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
     @Published private(set) var meetingCameraState: VirtualCameraFeed.State = .off
     private var meetingCameraWatch: AnyCancellable?
     /// How far the sound is from the microphone "Erklärbär".
-    @Published private(set) var meetingMicState: VirtualMicFeed.State = .off
-    private let meetingMic = VirtualMicFeed()
+    @Published private(set) var meetingMicState: LiveAudio.MeetingState = .off
+    /// The sound: mixer for the meeting and the ear.
+    let audio = LiveAudio()
+    /// Control from an iPhone or iPad in the same network.
+    let remote = LiveRemote()
     private var meetingMicWatch: AnyCancellable?
+    private var audioStateWatch: AnyCancellable?
+    private var mixer: NSPanel?
     let overlays = LiveOverlayLibrary.shared
     private var overlayWatch: AnyCancellable?
     private var bannerEditor: NSWindow?
@@ -127,7 +131,6 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         cameraID = app.cameras.contains { $0.uniqueID == savedCamera } ? savedCamera : (app.cameras.first?.uniqueID ?? "")
         let savedMic = UserDefaults.standard.string(forKey: "liveMicrophoneID") ?? app.microphoneID
         microphoneID = app.microphones.contains { $0.uniqueID == savedMic } ? savedMic : ""
-        hearDevice = app.hearDevice
         super.init()
         adoptOldLogo()
         syncOverlays()
@@ -142,7 +145,9 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         engine.setConfig(config)
         previewLayer.contentsGravity = .resizeAspect
         previewLayer.backgroundColor = NSColor.black.cgColor
+        let remoteFrame = remote.frame
         engine.onPresent = { [weak self] buffer in
+            remoteFrame.keep(buffer)
             guard let surface = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue() else { return }
             MainActor.assumeIsolated {
                 CATransaction.begin()
@@ -176,22 +181,23 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
            app.microphones.contains(where: { $0.uniqueID == standard.uniqueID }) {
             microphoneID = standard.uniqueID
         }
-        meetingMic.onState = { [weak self] state in
-            Task { @MainActor in self?.meetingMicState = state }
-        }
-        // Memes and the iPad go into the microphone directly (Erklärbär's own sound is never taken up).
-        engine.onMemeSound = { [weak meetingMic] url in meetingMic?.playClip(url) }
-        engine.onDeviceSound = { [weak meetingMic] sample in meetingMic?.takeDeviceSound(sample) }
-        meetingMicWatch = mic.$status.combineLatest(mic.$sending, mic.$systemAudio, mic.$meetingApp)
+        audio.start()
+        audioStateWatch = audio.$meetingState.sink { [weak self] state in self?.meetingMicState = state }
+        // Memes and the iPad go into the mixer directly (Erklärbär's own sound is never taken up from the Mac).
+        let audio = audio
+        engine.onMemeSound = { url in audio.playClip(url) }
+        engine.onDeviceSound = { sample in audio.takeDeviceSound(sample) }
+        meetingMicWatch = mic.$status.combineLatest(mic.$sending, mic.$meetingApp)
             .combineLatest($microphoneID)
             .sink { [weak self] values, micID in
-                let (status, sending, system, meetingApp) = values
-                self?.meetingMic.apply(mic: micID.isEmpty ? nil : micID, system: system, exclude: meetingApp, on: sending && status == .ready)
+                let (status, sending, meetingApp) = values
+                self?.audio.configure(microphone: micID.isEmpty ? nil : micID, meeting: sending && status == .ready, meetingApp: meetingApp)
             }
         if config.keys == true, KeyShortcuts.isTrusted(prompt: false) { engine.watchKeys(true) }
         program.onClose = { [weak self] in Task { @MainActor in await self?.end() } }
         program.show()
         showPanel()
+        remote.attach(self)
         if !cameraID.isEmpty { engine.camera.select(deviceID: cameraID) }
         // Windows move and change size while they are live.
         areaTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -282,7 +288,11 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         statsTimer?.invalidate()
         meetingCameraWatch = nil
         meetingMicWatch = nil
-        await meetingMic.stopNow()
+        audioStateWatch = nil
+        remote.detach()
+        audio.stop()
+        mixer?.orderOut(nil)
+        mixer = nil
         bannerEditor?.close()
         bannerEditor = nil
         engine.onPresent = nil
@@ -318,15 +328,20 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         panel.allowedContentTypes = [.image]
         panel.message = "Bild für den Hintergrund der Webcam"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Screenkast/Backgrounds", isDirectory: true)
-        let target = folder.appendingPathComponent(UUID().uuidString + "." + url.pathExtension)
         do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: url, to: target)
+            try adoptBackground(Data(contentsOf: url), fileExtension: url.pathExtension)
         } catch {
             message = "Das Bild ließ sich nicht übernehmen: \(error.localizedDescription)"
-            return
         }
+    }
+
+    /// Keeps a picture (from the Mac or sent by the remote control) as the background behind the person and shows it.
+    func adoptBackground(_ data: Data, fileExtension: String) throws {
+        guard NSImage(data: data) != nil else { throw RecorderError.writerFailed("Das ist kein Bild.") }
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Screenkast/Backgrounds", isDirectory: true)
+        let target = folder.appendingPathComponent(UUID().uuidString + "." + (fileExtension.isEmpty ? "jpg" : fileExtension.lowercased()))
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try data.write(to: target)
         if let old = backgroundFile { try? FileManager.default.removeItem(at: old) }
         backgroundFile = target
         UserDefaults.standard.set(target.path, forKey: "liveBackground")
@@ -420,12 +435,39 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// The mixer in a window of its own, next to the control window; never seen in the meeting.
+    func openMixer() {
+        if let mixer {
+            mixer.orderFrontRegardless()
+            return
+        }
+        let controller = NSHostingController(rootView: LiveMixerView(live: self, audio: audio))
+        controller.sizingOptions = [.preferredContentSize]
+        let size = controller.view.fittingSize
+        let anchor = panel?.frame ?? (NSScreen.main?.visibleFrame ?? .zero)
+        let rect = NSRect(x: max(0, anchor.minX - size.width - 12), y: anchor.maxY - size.height, width: size.width, height: size.height)
+        let window = NSPanel(contentRect: rect, styleMask: [.titled, .closable, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
+        window.title = "Erklärbär – Ton"
+        window.level = .floating
+        window.isFloatingPanel = true
+        window.hidesOnDeactivate = false
+        window.isReleasedWhenClosed = false
+        window.sharingType = .none
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        window.contentViewController = controller
+        window.setContentSize(size)
+        window.orderFrontRegardless()
+        mixer = window
+    }
+
     func closeBannerEditor() {
         bannerEditor?.close()
         bannerEditor = nil
     }
 
     func playMeme(_ slot: MemeSlot) {
+        // With the ear mix running, the meme is heard through it (with its own volume).
+        engine.memeSoundOnMac = !audio.earRunning
         engine.playMeme(url: MemeBoard.shared.url(of: slot), length: slot.liveLength, transparent: slot.transparent == true)
     }
 
@@ -450,7 +492,8 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         sourceLost = nil
         let previous = sourceTask
         let selection = source
-        let hear = hearDevice
+        // The iPad is heard through the ear mix (with its own volume), not straight from the capture.
+        let hear = false
         sourceTask = Task { [weak self] in
             await previous?.value
             guard let self else { return }

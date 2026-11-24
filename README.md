@@ -19,7 +19,7 @@ Voraussetzungen: Mac mit Apple-Chip (M1 oder neuer), macOS 15 oder neuer. Untert
 
 ```bash
 ./scripts/build-app.sh                # → Erklärbär.app (Release) in /Applications bzw. ~/Applications
-SCREENKAST_ZIP=~/Desktop/Erklaerbaer-2.0.0-macOS.zip ./scripts/build-app.sh   # nur das ZIP für GitHub, ohne Installation
+SCREENKAST_ZIP=~/Desktop/Erklaerbaer-2.1.0-macOS.zip ./scripts/build-app.sh   # nur das ZIP für GitHub, ohne Installation
 ```
 
 Es genügen die Command Line Tools. Das Skript baut in `~/Library/Caches/Screenkast/build` (änderbar mit `SCREENKAST_BUILD_DIR`) und signiert in einem temporären Ordner. Grund: Der Projektordner liegt in iCloud-„Dokumente“. Dort hängt macOS neuen Bundles Finder-Metadaten an, die `codesign` ablehnt, und SwiftPM linkt manchmal nicht neu („disk I/O error“). Mit `SCREENKAST_APP_DIR=/anderer/ordner` lässt sich ein anderes Ziel wählen.
@@ -63,6 +63,8 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 - Mikrofon, **Systemaudio** (ohne Erklärbär selbst) und **Kamera** mit Live-Vorschau, alles synchron auf der Host-Uhr.
 - **iPad und iPhone per Kabel**: Bildschirm und Ton des Geräts direkt aufnehmen (Quelle „iPad und iPhone am Kabel“), dazu auf Wunsch Mikrofon und Kamera des Macs.
 - **Live für Meetings**: Programm-Fenster zum Teilen in Zoom, Teams oder Meet, Steuerfenster außerhalb des geteilten Bilds, Szenen (Webcam, Bildschirm, Fenster, iPad, mit verschiebbarer Webcam-Bubble), Rahmen wie Laptop oder Fernseher, Klick-Effekte, Mausspur, eingeblendete Tastenkürzel und Aufnahme nebenbei.
+- **Ton-Mischpult im Live-Modus**: Stimme, iPad, Memes und einzelne Programme mit je einem Regler „Ins Meeting“ und „Ins Ohr“; Programme gehen nur ins Meeting, wenn du sie einschaltest (Core-Audio-Taps, Hilfsprozesse von Browsern inklusive), das Meeting-Programm nie. Die eigene Stimme bleibt aus dem Kopfhörer, auch wenn AirPods mitten im Meeting dazukommen. Stumm-Taste M.
+- **Fernsteuerung mit iPhone oder iPad**: Die ganze Live-Steuerung als Webseite im WLAN (Bühne, Bild, Ton mit Vorschau), per QR-Code geöffnet; neue Geräte werden am Mac einmal erlaubt. Ohne App, auch als Symbol auf dem Home-Bildschirm.
 - **Meme-Board**: zehn Plätze für kurze Clips, Suche in frei lizenzierten GIFs oder eigene Dateien, auf Knopfdruck live oder im Editor.
 - **Virtueller Hintergrund** für die Webcam, im Editor und live: Bild oder Grafik hinter der Person, ohne Greenscreen.
 - **Nummerierte Schritte** und **Klicks hervorheben**: aus aufgezeichneten Klicks werden automatisch Rahmen, Pfeile, Finger oder Schritte.
