@@ -60,11 +60,21 @@ enum AudioApps {
 }
 
 /// Takes up the sound of one program (with its helpers) through a Core Audio tap, without changing what
-/// the program plays: the person keeps hearing it as before.
+/// the program plays: the person keeps hearing it as before. Or, for recordings without a known meeting
+/// program, the sound of all programs except Erklärbär.
 final class AppTap: @unchecked Sendable {
+    enum Target {
+        case processes([AudioObjectID])
+        case allExcept([AudioObjectID])
+    }
+
+    /// Id for "everything except Erklärbär".
+    static let everything = "*"
+
     let appID: String
     let source = MixSource()
     private(set) var processes: [AudioObjectID]
+    private let excluding: Bool
     private var tap = AudioObjectID(kAudioObjectUnknown)
     private var aggregate = AudioObjectID(kAudioObjectUnknown)
     private var proc: AudioDeviceIOProcID?
@@ -72,13 +82,30 @@ final class AppTap: @unchecked Sendable {
     private var rate = LiveAudioFormat.sampleRate
     private var channels = 2
     private var interleaved = true
-    var formatDescription: String { "\(Int(rate)) Hz, \(channels) Kanäle, \(interleaved ? "verschränkt" : "getrennt")" }
+    private var resampler: StereoResampler?
+    private let lock = NSLock()
+    private var timed: (@Sendable (UnsafePointer<Float>, Int, Int64) -> Void)?
     /// Something arrived (macOS delivers silence while the permission is missing).
     private(set) var heardAnything = false
 
-    init(appID: String, processes: [AudioObjectID]) throws {
+    var formatDescription: String { "\(Int(rate)) Hz, \(channels) Kanäle, \(interleaved ? "verschränkt" : "getrennt")" }
+
+    /// Also hands out the sound with its time (interleaved stereo at 48 kHz, first frame on the host clock), for recordings.
+    var onTimed: (@Sendable (UnsafePointer<Float>, Int, Int64) -> Void)? {
+        get { lock.withLock { timed } }
+        set { lock.withLock { timed = newValue } }
+    }
+
+    init(appID: String, target: Target) throws {
         self.appID = appID
-        self.processes = processes
+        switch target {
+        case .processes(let list):
+            processes = list
+            excluding = false
+        case .allExcept(let list):
+            processes = list
+            excluding = true
+        }
         queue = DispatchQueue(label: "screenkast.apptap.\(appID)", qos: .userInteractive)
         do {
             try start()
@@ -88,8 +115,23 @@ final class AppTap: @unchecked Sendable {
         }
     }
 
+    convenience init(appID: String, processes: [AudioObjectID]) throws {
+        try self.init(appID: appID, target: .processes(processes))
+    }
+
+    /// The Core Audio objects of Erklärbär's own process.
+    static func ownProcesses() -> [AudioObjectID] {
+        var pid = getpid()
+        var object = AudioObjectID(kAudioObjectUnknown)
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<pid_t>.size), &pid, &size, &object)
+        return object == kAudioObjectUnknown ? [] : [object]
+    }
+
     private func start() throws {
-        let description = CATapDescription(stereoMixdownOfProcesses: processes)
+        let description = excluding ? CATapDescription(stereoGlobalTapButExcludeProcesses: processes) : CATapDescription(stereoMixdownOfProcesses: processes)
         description.uuid = UUID()
         description.name = "Erklärbär \(appID)"
         description.isPrivate = true
@@ -100,6 +142,7 @@ final class AppTap: @unchecked Sendable {
             channels = max(1, Int(format.mChannelsPerFrame))
             interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
         }
+        resampler = abs(rate - LiveAudioFormat.sampleRate) > 1 ? StereoResampler(from: rate) : nil
         let settings: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Erklärbär \(appID)",
             kAudioAggregateDeviceUIDKey: "Erklaerbaer-Tap-\(UUID().uuidString)",
@@ -109,40 +152,48 @@ final class AppTap: @unchecked Sendable {
             kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: description.uuid.uuidString, kAudioSubTapDriftCompensationKey: true]],
         ]
         try check(AudioHardwareCreateAggregateDevice(settings as CFDictionary, &aggregate), "Gerät")
-        let source = source, rate = rate, channels = channels, interleaved = interleaved
-        try check(AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { [weak self] _, input, _, _, _ in
-            let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
-            guard let first = buffers.first, let data = first.mData else { return }
-            let floats = data.assumingMemoryBound(to: Float.self)
-            if interleaved {
-                let count = Int(first.mDataByteSize) / MemoryLayout<Float>.size
-                let frames = count / channels
-                guard frames > 0 else { return }
-                if self?.heardAnything == false, (0..<count).contains(where: { floats[$0] != 0 }) { self?.heardAnything = true }
-                if channels == 2 {
-                    source.writeStereo(floats, frames: frames, rate: rate)
-                } else {
-                    var stereo = [Float](repeating: 0, count: frames * 2)
-                    for i in 0..<frames {
-                        stereo[i * 2] = floats[i * channels]
-                        stereo[i * 2 + 1] = floats[i * channels + min(1, channels - 1)]
-                    }
-                    stereo.withUnsafeBufferPointer { source.writeStereo($0.baseAddress!, frames: frames, rate: rate) }
-                }
-            } else {
-                let frames = Int(first.mDataByteSize) / MemoryLayout<Float>.size
-                guard frames > 0 else { return }
-                let right = buffers.count > 1 ? buffers[1].mData?.assumingMemoryBound(to: Float.self) ?? floats : floats
-                if self?.heardAnything == false, (0..<frames).contains(where: { floats[$0] != 0 }) { self?.heardAnything = true }
-                var stereo = [Float](repeating: 0, count: frames * 2)
-                for i in 0..<frames {
-                    stereo[i * 2] = floats[i]
-                    stereo[i * 2 + 1] = right[i]
-                }
-                stereo.withUnsafeBufferPointer { source.writeStereo($0.baseAddress!, frames: frames, rate: rate) }
-            }
+        try check(AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, queue) { [weak self] _, input, inputTime, _, _ in
+            self?.receive(input, at: inputTime.pointee)
         }, "Rückruf")
         try check(AudioDeviceStart(aggregate, proc), "Start")
+    }
+
+    /// On the tap's queue: the sound as interleaved stereo at 48 kHz, into the mixer and, with its time, to a recording.
+    private func receive(_ input: UnsafePointer<AudioBufferList>, at time: AudioTimeStamp) {
+        let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+        guard let first = buffers.first, let data = first.mData else { return }
+        let floats = data.assumingMemoryBound(to: Float.self)
+        var stereo: [Float]
+        if interleaved {
+            let count = Int(first.mDataByteSize) / MemoryLayout<Float>.size
+            let frames = count / channels
+            guard frames > 0 else { return }
+            stereo = [Float](repeating: 0, count: frames * 2)
+            for i in 0..<frames {
+                stereo[i * 2] = floats[i * channels]
+                stereo[i * 2 + 1] = floats[i * channels + min(1, channels - 1)]
+            }
+        } else {
+            let frames = Int(first.mDataByteSize) / MemoryLayout<Float>.size
+            guard frames > 0 else { return }
+            let right = buffers.count > 1 ? buffers[1].mData?.assumingMemoryBound(to: Float.self) ?? floats : floats
+            stereo = [Float](repeating: 0, count: frames * 2)
+            for i in 0..<frames {
+                stereo[i * 2] = floats[i]
+                stereo[i * 2 + 1] = right[i]
+            }
+        }
+        if !heardAnything, stereo.contains(where: { $0 != 0 }) { heardAnything = true }
+        if let resampler {
+            stereo.withUnsafeBufferPointer { stereo = resampler.convert($0.baseAddress!, frames: stereo.count / 2) }
+        }
+        let frames = stereo.count / 2
+        guard frames > 0 else { return }
+        let start = time.mFlags.contains(.hostTimeValid) ? HostFrames.frame(hostTime: time.mHostTime) : HostFrames.now - Int64(frames)
+        stereo.withUnsafeBufferPointer { pointer in
+            source.write([pointer.baseAddress!], frames: frames, channels: 2, interleaved: true)
+            onTimed?(pointer.baseAddress!, frames, start)
+        }
     }
 
     /// The program started or ended helpers: the tap takes up the new set.

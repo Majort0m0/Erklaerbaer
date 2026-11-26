@@ -207,6 +207,29 @@ extension EditorModel {
         guard let url = chooseFile([.image], message: "Bild für den Hintergrund der Kamera wählen"), let file = importMedia(url) else { return }
         commitUndoStep(); defer { commitUndoStep() }
         settings.cameraBackground = file
+        settings.cameraBackgroundBlur = nil
+    }
+
+    enum CameraBackgroundStyle: String { case real, blur, image }
+
+    /// What is behind the person in the camera: the real room, the room blurred, or a picture.
+    var cameraBackgroundStyle: CameraBackgroundStyle {
+        settings.cameraBackground != nil ? .image : (settings.cameraBackgroundBlur != nil ? .blur : .real)
+    }
+
+    func setCameraBackgroundStyle(_ style: CameraBackgroundStyle) {
+        switch style {
+        case .real:
+            commitUndoStep(); defer { commitUndoStep() }
+            settings.cameraBackground = nil
+            settings.cameraBackgroundBlur = nil
+        case .blur:
+            commitUndoStep(); defer { commitUndoStep() }
+            settings.cameraBackground = nil
+            settings.cameraBackgroundBlur = settings.cameraBackgroundBlur ?? 0.5
+        case .image:
+            chooseCameraBackground()
+        }
     }
 
     func chooseWatermark() {

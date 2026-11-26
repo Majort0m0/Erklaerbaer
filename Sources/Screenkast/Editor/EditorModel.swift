@@ -421,7 +421,7 @@ final class EditorModel: ObservableObject {
     /// Bubble center at the beginning of a drag in the preview.
     var cameraDragOrigin: CGPoint?
 
-    var canRemoveEcho: Bool { project.info.hasMicAudio && project.info.hasSystemAudio }
+    var canRemoveEcho: Bool { project.info.hasMicAudio && (project.info.hasSystemAudio || project.info.hasMeetingAudio) }
 
     /// Computes the echo-free mic track once (in the background) if mic and system audio exist.
     private func prepareEchoRemoval() {
@@ -657,7 +657,8 @@ final class EditorModel: ObservableObject {
             voiceOverGains = s.voiceOvers.map(\.gain)
             master = [s.masterNormalize ? 1 : 0, s.masterTargetLUFS, s.soundEffectVolume, s.voice.strength]
             values = [s.micVolume, s.systemVolume, s.voiceOverVolume, s.clickVolume, s.duckLevel,
-                      s.micMuted ? 1 : 0, s.systemMuted ? 1 : 0, s.voiceOverMuted ? 1 : 0, s.duckUnderVoiceOver ? 1 : 0]
+                      s.micMuted ? 1 : 0, s.systemMuted ? 1 : 0, s.voiceOverMuted ? 1 : 0, s.duckUnderVoiceOver ? 1 : 0,
+                      s.meetingVolume, s.meetingMuted ? 1 : 0]
             mutes = s.audioMutes
         }
     }
@@ -683,6 +684,7 @@ final class EditorModel: ObservableObject {
             }
             var visual = settings
             visual.micVolume = old.micVolume; visual.systemVolume = old.systemVolume
+            visual.meetingVolume = old.meetingVolume; visual.meetingMuted = old.meetingMuted
             visual.voiceOverVolume = old.voiceOverVolume; visual.clickVolume = old.clickVolume
             visual.duckLevel = old.duckLevel; visual.micMuted = old.micMuted; visual.systemMuted = old.systemMuted
             visual.voiceOverMuted = old.voiceOverMuted; visual.duckUnderVoiceOver = old.duckUnderVoiceOver
@@ -1181,6 +1183,7 @@ final class EditorModel: ObservableObject {
     var audioLanes: [AudioLane] {
         var lanes: [AudioLane] = []
         if project.info.hasMicAudio { lanes.append(.mic) }
+        if project.info.hasMeetingAudio { lanes.append(.meeting) }
         if project.info.hasSystemAudio { lanes.append(.system) }
         lanes.append(.voiceOver)
         if settings.music != nil { lanes.append(.music) }
@@ -1191,6 +1194,7 @@ final class EditorModel: ObservableObject {
         switch lane {
         case .mic: return settings.micMuted
         case .system: return settings.systemMuted
+        case .meeting: return settings.meetingMuted
         case .voiceOver: return settings.voiceOverMuted
         case .music: return settings.music?.muted ?? true
         }
@@ -1201,6 +1205,7 @@ final class EditorModel: ObservableObject {
         switch lane {
         case .mic: return settings.micVolume
         case .system: return settings.systemVolume
+        case .meeting: return settings.meetingVolume
         case .voiceOver: return settings.voiceOverVolume
         case .music: return settings.music?.volume ?? 0
         }
@@ -1210,6 +1215,7 @@ final class EditorModel: ObservableObject {
         switch lane {
         case .mic: settings.micVolume = v
         case .system: settings.systemVolume = v
+        case .meeting: settings.meetingVolume = v
         case .voiceOver: settings.voiceOverVolume = v
         case .music: settings.music?.volume = v
         }
@@ -1219,6 +1225,7 @@ final class EditorModel: ObservableObject {
         switch lane {
         case .mic: settings.micMuted = m
         case .system: settings.systemMuted = m
+        case .meeting: settings.meetingMuted = m
         case .voiceOver: settings.voiceOverMuted = m
         case .music: settings.music?.muted = m
         }
@@ -1229,6 +1236,7 @@ final class EditorModel: ObservableObject {
         switch lane {
         case .mic: settings.micMuted.toggle()
         case .system: settings.systemMuted.toggle()
+        case .meeting: settings.meetingMuted.toggle()
         case .voiceOver: settings.voiceOverMuted.toggle()
         case .music: settings.music?.muted.toggle()
         }
@@ -1316,10 +1324,10 @@ final class EditorModel: ObservableObject {
     private func loadWaveforms() {
         loadMicWaveform()
         let project = self.project
-        if project.info.hasSystemAudio {
+        for role in ["system", "meeting"] where project.info.audioRoles.contains(role) {
             Task.detached(priority: .utility) {
-                let peaks = try? await Self.recordingPeaks(project: project, role: "system")
-                await MainActor.run { [weak self] in self?.waveforms["system"] = peaks }
+                let peaks = try? await Self.recordingPeaks(project: project, role: role)
+                await MainActor.run { [weak self] in self?.waveforms[role] = peaks }
             }
         }
         for file in Set(settings.voiceOvers.map(\.file)) { loadVoiceOverWaveform(file) }
@@ -1590,6 +1598,17 @@ final class EditorModel: ObservableObject {
         do {
             let media = try await MediaBuilder.make(project: project, renderer: renderer, fps: settings.exportFPS,
                                                     segments: settings.keptSegments(duration: duration), speech: speechRanges)
+            // Only the sound: the finished mix as M4A or WAV.
+            if let format = AudioExporter.Format(rawValue: url.pathExtension.lowercased()) {
+                masterResult = try await AudioExporter.export(media: media, audioMix: media.audioMix(settings: settings), to: url, format: format,
+                                                              normalizeTo: settings.masterNormalize ? settings.masterTargetLUFS : nil) { [weak self] p in
+                    Task { @MainActor in self?.exportProgress = p }
+                }
+                exportProgress = 1
+                exportResult = url
+                exportSession = nil
+                return
+            }
             if url.pathExtension.lowercased() == "gif" {
                 try await GIFExporter.export(media: media, renderSize: renderer.outputSize, to: url) { [weak self] p in
                     Task { @MainActor in self?.exportProgress = p }

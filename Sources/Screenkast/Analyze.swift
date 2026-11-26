@@ -98,7 +98,34 @@ extension Analyze {
             do {
                 let project = try Project.load(from: URL(fileURLWithPath: projectPath))
                 let start = Date()
+                // Where does the reference turn up in the microphone (both directions, up to 1.5 s)?
+                let asset = AVURLAsset(url: project.videoURL)
+                let tracks = try await asset.loadTracks(withMediaType: .audio)
+                let roles = await AudioRole.roles(of: tracks, fallback: project.info.audioRoles)
+                let duration = try await asset.load(.duration).seconds
+                if let m = roles.firstIndex(of: "mic"), let r = roles.firstIndex(of: "system") {
+                    let mic = try await EchoCanceller.readMono(track: tracks[m], asset: asset, duration: duration)
+                    let ref = try await EchoCanceller.readMono(track: tracks[r], asset: asset, duration: duration)
+                    let peak = EchoCanceller.correlationPeak(mic: mic, reference: ref, maxSeconds: 1.5)
+                    print(String(format: "Gleicher Ton in Mikrofon und Systemton: %+.0f ms (Stärke %.1f × Durchschnitt)",
+                                 Double(peak.lag) / 48, peak.strength))
+                }
                 let stats = try await EchoCanceller.process(project: project, outputURL: URL(fileURLWithPath: outputPath))
+                // How much of the reference is left in the cleaned microphone?
+                if let m = roles.firstIndex(of: "mic"), let r = roles.firstIndex(of: "system") {
+                    let mic = try await EchoCanceller.readMono(track: tracks[m], asset: asset, duration: duration)
+                    let ref = try await EchoCanceller.readMono(track: tracks[r], asset: asset, duration: duration)
+                    let clean = try await VoiceProcessor.readFile(URL(fileURLWithPath: outputPath))
+                    func leak(_ signal: [Float]) -> Double {
+                        // Part of the signal that the reference explains (least squares over the echo path).
+                        let n = min(signal.count, ref.count)
+                        let (rest, _) = EchoCanceller.cancel(mic: Array(signal.prefix(n)), reference: Array(ref.prefix(n)))
+                        let before = signal.prefix(n).reduce(0) { $0 + Double($1 * $1) }, after = rest.reduce(0) { $0 + Double($1 * $1) }
+                        return 10 * log10(max(1e-12, before / max(1e-12, after)))
+                    }
+                    print(String(format: "Erklärbarer Anteil des Systemtons im Mikrofon: vorher %.1f dB, nachher %.1f dB",
+                                 leak(mic), leak(clean)))
+                }
                 print(String(format: "Echo: Verzögerung %.1f ms, linear −%.1f dB, gesamt −%.1f dB (%.1f s)",
                              stats.delayMs, stats.linearReductionDB, stats.totalReductionDB, Date().timeIntervalSince(start)))
             } catch {
@@ -135,6 +162,16 @@ extension Analyze {
                     let role = entry.map { $0.role + ($0.isDissolveB ? " B" : "") + ($0.layer.map { " Ebene \($0 + 1)" } ?? "") }
                         ?? [MediaBuilder.cameraTrackID: "camera", MediaBuilder.screenBTrackID: "screen B", MediaBuilder.cameraBTrackID: "camera B"][track.trackID] ?? "screen"
                     print("Spur \(track.trackID) \(track.mediaType.rawValue) [\(role)]: \(filled) Segment(e)")
+                }
+                // Only the sound (.m4a / .wav), as "Nur Ton" in the export window.
+                if let format = AudioExporter.Format(rawValue: URL(fileURLWithPath: outputPath).pathExtension.lowercased()) {
+                    let start = Date()
+                    let master = try await AudioExporter.export(media: media, audioMix: media.audioMix(settings: s), to: URL(fileURLWithPath: outputPath),
+                                                                format: format, normalizeTo: s.masterNormalize ? s.masterTargetLUFS : nil) { _ in }
+                    print(String(format: "Ton exportiert in %.1f s%@", Date().timeIntervalSince(start),
+                                 master.map { String(format: " (Lautheit %.1f → %.1f LUFS)", $0.before, $0.after) } ?? ""))
+                    sem.signal()
+                    return
                 }
                 guard let session = AVAssetExportSession(asset: media.asset, presetName: s.exportHEVC ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality) else {
                     throw RecorderError.writerFailed("Export")

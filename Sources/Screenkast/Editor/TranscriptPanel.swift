@@ -163,7 +163,20 @@ struct TranscriptPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("Transkript").font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
+                HStack {
+                    Text("Transkript").font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
+                    Spacer()
+                    Menu {
+                        ForEach(TranscriptFormat.allCases) { format in
+                            Button(format.label + " …") { editor.exportTranscript(format) }
+                        }
+                    } label: {
+                        Label("Exportieren", systemImage: "square.and.arrow.up")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Das Transkript als Text oder als Untertitel speichern – so, wie es im fertigen Video gesprochen wird")
+                }
             }
         }
     }

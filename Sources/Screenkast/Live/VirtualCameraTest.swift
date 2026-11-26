@@ -528,3 +528,181 @@ enum AppTapTest {
         }
     }
 }
+
+/// `--liverecordtest <folder>`: the "system" track of a live recording. A tone that the test plays into the
+/// hidden feed device (nothing to hear) stands in for the meeting program and is taken up by a tap; an iPad
+/// tone with time stamps arrives late on purpose; a meme starts at a known time. Afterwards the movie must
+/// have each of them at the right time.
+enum LiveRecordingTest {
+    @MainActor
+    static func commandLine(folder: URL) -> Int32 {
+        var code: Int32 = 1
+        var done = false
+        Task { @MainActor in
+            defer { done = true }
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                let url = folder.appendingPathComponent("live-record-test.mov")
+                // Where the stand-in meeting program plays: SCREENKAST_TEST_OUTPUT (a device UID nobody listens to),
+                // otherwise the hidden feed device (only when Erklärbär is not in a meeting!).
+                let target = ProcessInfo.processInfo.environment["SCREENKAST_TEST_OUTPUT"] ?? VirtualMicrophoneIDs.feedUID
+                guard let feed = AudioDevices.device(uid: target) else {
+                    print("✗ Ausgabegerät \(target) fehlt.")
+                    return
+                }
+                print("Prüfton geht in:", AudioDevices.name(feed) ?? target)
+                // 1 kHz into a device nobody hears: our own process "plays" it, like a meeting program would.
+                var phase: Float = 0
+                let output = try DeviceOutput(device: feed) { left, right, frames in
+                    for i in 0..<frames {
+                        let v = 0.3 * sinf(phase)
+                        left[i] = v
+                        right[i] = v
+                        phase += 2 * .pi * 1_000 / Float(LiveAudioFormat.sampleRate)
+                        if phase > 2 * .pi { phase -= 2 * .pi }
+                    }
+                }
+                let writer = try DeviceMovieWriter(url: url, width: 320, height: 180, deviceAudio: true, microphone: false, meeting: true, fps: 30)
+                let start = CMClockGetTime(CMClockGetHostTimeClock())
+                try writer.start(at: start)
+                let writerQueue = DispatchQueue(label: "test.writer")
+                let mix = RecordingMix(start: start) { sample in writerQueue.async { writer.appendAudio(sample, role: "system") } }
+                let meetingMix = RecordingMix(start: start) { sample in writerQueue.async { writer.appendAudio(sample, role: "meeting") } }
+                let tap = try AppTap(appID: "test", target: .processes(AppTap.ownProcesses()))
+                // The stand-in meeting program goes onto its own track.
+                let feedMix: @Sendable (UnsafePointer<Float>, Int, Int64) -> Void = { data, frames, at in meetingMix.write(data, frames: frames, at: at, gain: 1) }
+                tap.onTimed = feedMix
+                var frame: CVPixelBuffer?
+                CVPixelBufferCreate(nil, 320, 180, kCVPixelFormatType_32BGRA, nil, &frame)
+                let t0 = HostFrames.frame(start)
+                var ipadSent = 0, memeStarted = false, memeStopped = false
+                let memeSamples = (0..<48_000).flatMap { i -> [Float] in
+                    let v = Float(0.3 * sin(2 * Double.pi * 300 * Double(i) / LiveAudioFormat.sampleRate))
+                    return [v, v]
+                }
+                while HostFrames.now < t0 + 48_000 * 32 / 10 {
+                    let now = HostFrames.now
+                    if let frame { writerQueue.async { writer.append(frame, at: HostFrames.time(now)) } }
+                    // The iPad: 500 Hz from 1.0 to 1.5 s in 20 ms pieces, each 150 ms after its time (like a device on a cable).
+                    while ipadSent < 25, now > t0 + 48_000 + Int64((ipadSent + 1) * 960) + 7_200 {
+                        let first = t0 + 48_000 + Int64(ipadSent * 960)
+                        if let sample = pcm(frequency: 500, firstFrame: first, frames: 960) { mix.write(sample, gain: 1) }
+                        ipadSent += 1
+                    }
+                    if !memeStarted, now > t0 + 48_000 * 2 {
+                        memeStarted = true
+                        mix.clip(memeSamples, startedAt: t0 + 48_000 * 2, gain: 1)
+                    }
+                    if !memeStopped, now > t0 + 48_000 * 25 / 10 {
+                        memeStopped = true
+                        mix.clip(nil, startedAt: t0 + 48_000 * 25 / 10, gain: 1)
+                    }
+                    try await Task.sleep(for: .milliseconds(33))
+                }
+                let end = CMClockGetTime(CMClockGetHostTimeClock())
+                try await Task.sleep(for: .milliseconds(420))
+                mix.finish(at: end)
+                meetingMix.finish(at: end)
+                tap.stop()
+                output.stop()
+                await withCheckedContinuation { (go: CheckedContinuation<Void, Never>) in writerQueue.async { go.resume() } }
+                _ = try await writer.finish(end: end)
+                print("Tap-Format:", tap.formatDescription, "| zu spät angekommene Frames:", mix.lateFrames)
+                // Read the tracks back: the meeting on its own, iPad and meme in "system", nothing of one in the other.
+                let sound = try await readMono(url, role: "system")
+                let meetingTrack = try await readMono(url, role: "meeting")
+                func part(_ frequency: Double, _ from: Double, _ to: Double, in sound: [Float]) -> Double {
+                    let a = max(0, Int(from * 48_000)), b = min(sound.count, Int(to * 48_000))
+                    guard b > a + 100 else { return 0 }
+                    return goertzel(Array(sound[a..<b]), frequency)
+                }
+                func part(_ frequency: Double, _ from: Double, _ to: Double) -> Double { part(frequency, from, to, in: sound) }
+                let meeting = part(1_000, 0.5, 2.8, in: meetingTrack)
+                let meetingInSystem = part(1_000, 0.5, 2.8)
+                let systemInMeeting = max(part(500, 1.05, 1.45, in: meetingTrack), part(300, 2.05, 2.45, in: meetingTrack))
+                let ipad = part(500, 1.05, 1.45), ipadBefore = part(500, 0.6, 0.95), ipadAfter = part(500, 1.55, 1.9)
+                let meme = part(300, 2.05, 2.45), memeAfter = part(300, 2.6, 2.95)
+                // Where does the iPad tone begin? 30 ms windows: half the full level means the window's middle is the start.
+                var onset = -1.0
+                for w in stride(from: 0.8, to: 1.3, by: 0.002) where part(500, w, w + 0.03) > ipad / 2 {
+                    onset = w + 0.015
+                    break
+                }
+                print(String(format: "Spur Meeting: 1 kHz %.3f (iPad/Meme darin %.3f) · Spur Systemton: iPad (500 Hz) %.3f, davor %.3f, danach %.3f, Beginn bei %.3f s · Meme (300 Hz) %.3f, danach %.3f · Meeting darin %.3f",
+                             meeting, systemInMeeting, ipad, ipadBefore, ipadAfter, onset, meme, memeAfter, meetingInSystem))
+                let ok = meeting > 0.1 && meetingInSystem < 0.01 && systemInMeeting < 0.01 && ipad > 0.1 && ipadBefore < 0.01 && ipadAfter < 0.01
+                    && abs(onset - 1.0) < 0.03 && meme > 0.1 && memeAfter < 0.01
+                // A project of it, to look at the lanes in the editor.
+                let projectURL = folder.appendingPathComponent("Live-Test.screenkast")
+                try? FileManager.default.removeItem(at: projectURL)
+                try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: url, to: projectURL.appendingPathComponent("screen.mov"))
+                let info = RecordingInfo(pixelWidth: 320, pixelHeight: 180, pointPixelScale: 1, duration: 3.2, createdAt: Date(), sourceName: "Live-Aufnahme",
+                                         hasMicrophone: false, cameraFile: nil, audioTracks: writer.audioRoles)
+                try Project(url: projectURL, info: info, cursor: CursorTrack(), settings: ProjectFactory.plainSettings(aspect: .wide)).saveAll()
+                print("Spuren:", writer.audioRoles, "· Projekt:", projectURL.path)
+                print(ok ? "✓ Systemton der Live-Aufnahme: Meeting, iPad und Meme zur richtigen Zeit" : "✗ Systemton der Live-Aufnahme nicht wie erwartet")
+                code = ok ? 0 : 1
+            } catch {
+                print("✗ Fehler:", error.localizedDescription)
+            }
+        }
+        while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        return code
+    }
+
+    private static func pcm(frequency: Double, firstFrame: Int64, frames: Int) -> CMSampleBuffer? {
+        var asbd = AudioStreamBasicDescription(mSampleRate: LiveAudioFormat.sampleRate, mFormatID: kAudioFormatLinearPCM,
+                                               mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 8, mFramesPerPacket: 1,
+                                               mBytesPerFrame: 8, mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0)
+        var format: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+        let bytes = frames * 8
+        var block: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: bytes, blockAllocator: nil, customBlockSource: nil,
+                                           offsetToData: 0, dataLength: bytes, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block)
+        guard let format, let block else { return nil }
+        let samples = (0..<frames).flatMap { i -> [Float] in
+            let v = Float(0.3 * sin(2 * Double.pi * frequency * Double(firstFrame + Int64(i)) / LiveAudioFormat.sampleRate))
+            return [v, v]
+        }
+        samples.withUnsafeBytes { raw in _ = CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) }
+        var sample: CMSampleBuffer?
+        CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: nil, dataBuffer: block, formatDescription: format, sampleCount: frames,
+                                                             presentationTimeStamp: HostFrames.time(firstFrame), packetDescriptions: nil, sampleBufferOut: &sample)
+        return sample
+    }
+
+    /// The audio track of a role as mono floats at 48 kHz, from the start of the movie.
+    private static func readMono(_ url: URL, role: String) async throws -> [Float] {
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        let roles = await AudioRole.roles(of: tracks, fallback: [])
+        guard let index = roles.firstIndex(of: role) else { throw RecorderError.writerFailed("keine Tonspur \(role)") }
+        let track = tracks[index]
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 48_000, AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false, AVLinearPCMIsBigEndianKey: false,
+        ])
+        reader.add(output)
+        reader.startReading()
+        var result: [Float] = []
+        while let buffer = output.copyNextSampleBuffer() {
+            guard let data = buffer.dataBuffer, let bytes = try? data.dataBytes() else { continue }
+            bytes.withUnsafeBytes { result += $0.bindMemory(to: Float.self) }
+        }
+        return result
+    }
+
+    private static func goertzel(_ part: [Float], _ frequency: Double) -> Double {
+        let coefficient = 2 * cos(2 * Double.pi * frequency / 48_000)
+        var s1 = 0.0, s2 = 0.0
+        for x in part {
+            let s0 = Double(x) + coefficient * s1 - s2
+            s2 = s1
+            s1 = s0
+        }
+        return 2 * sqrt(max(0, s1 * s1 + s2 * s2 - coefficient * s1 * s2)) / Double(part.count)
+    }
+}

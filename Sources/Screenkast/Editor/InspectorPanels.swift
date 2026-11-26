@@ -311,6 +311,10 @@ struct MixerSection: View {
             if editor.project.info.hasMicAudio {
                 VolumeRow(title: "Mikrofon", icon: "mic.fill", volume: $editor.settings.micVolume, muted: $editor.settings.micMuted)
             }
+            if editor.project.info.hasMeetingAudio {
+                VolumeRow(title: "Meeting", icon: "person.2.fill", volume: $editor.settings.meetingVolume, muted: $editor.settings.meetingMuted)
+                    .help("Die anderen im Meeting (Live-Aufnahme)")
+            }
             if editor.project.info.hasSystemAudio {
                 VolumeRow(title: "Systemton", icon: "speaker.wave.2.fill", volume: $editor.settings.systemVolume, muted: $editor.settings.systemMuted)
             }

@@ -168,6 +168,7 @@ struct MediaComposition {
             switch lane {
             case .mic: base = settings.micMuted ? 0 : settings.micVolume
             case .system: base = settings.systemMuted ? 0 : settings.systemVolume
+            case .meeting: base = settings.meetingMuted ? 0 : settings.meetingVolume
             case .voiceOver: base = settings.voiceOverMuted ? 0 : settings.voiceOverVolume
             case .music: base = (settings.music?.muted ?? true) ? 0 : settings.music?.volume ?? 0
             case nil: base = entry.role == "insert" || entry.role == "overlay" ? 1
@@ -276,7 +277,7 @@ struct MediaComposition {
                     if cursor < totalDuration { add(cursor, totalDuration, g) }
                 }
             }
-            if lane == .mic || lane == .system {
+            if lane == .mic || lane == .system || lane == .meeting {
                 if settings.duckUnderVoiceOver, !settings.voiceOverMuted, settings.voiceOverVolume > 0.01 {
                     for clip in voiceOverClips where !clip.isMusic {
                         for r in compRanges(ofTimeline: clip.start...clip.end) {
@@ -486,7 +487,7 @@ enum MediaBuilder {
         let roles = await AudioRole.roles(of: srcAudio, fallback: project.info.audioRoles)
         var cleanMic: AVAssetTrack?
         let cleanURL = EchoCanceller.cleanURL(for: project)
-        if settings.removeEcho, roles.contains("system"), FileManager.default.fileExists(atPath: cleanURL.path) {
+        if settings.removeEcho, roles.contains("system") || roles.contains("meeting"), FileManager.default.fileExists(atPath: cleanURL.path) {
             let cleanAsset = AVURLAsset(url: cleanURL)
             keepAlive.append(cleanAsset)
             cleanMic = try? await cleanAsset.loadTracks(withMediaType: .audio).first

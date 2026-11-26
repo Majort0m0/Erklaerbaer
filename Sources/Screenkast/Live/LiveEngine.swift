@@ -17,7 +17,7 @@ final class LiveEngine: @unchecked Sendable {
     var onSourceLost: ((Error) -> Void)?
     /// A meme with this file starts sounding (nil: no meme sounds any more), for the microphone "Erklärbär".
     var onMemeSound: ((URL?) -> Void)?
-    /// The iPad's sound as it comes in.
+    /// The iPad's sound as it comes in, its time stamp on the host clock.
     var onDeviceSound: ((CMSampleBuffer) -> Void)?
     /// Memes sound from the Mac themselves (false: the live mixer plays them into the ear).
     var memeSoundOnMac = true
@@ -100,6 +100,7 @@ final class LiveEngine: @unchecked Sendable {
     // Recording (all of it on writerQueue)
     private let writerQueue = DispatchQueue(label: "screenkast.live.writer", qos: .userInitiated)
     private var writer: DeviceMovieWriter?
+    private var pictureEnd: CMTime?
     private var microphone: LiveMicrophone?
 
     init() {
@@ -109,7 +110,7 @@ final class LiveEngine: @unchecked Sendable {
             guard let self else { return }
             let separate: Bool = self.lock.withLock {
                 self.cameraFrame = frame
-                return self.config.background == true && self.backgroundImage != nil
+                return self.config.background == true && (self.config.backgroundBlur != nil || self.backgroundImage != nil)
             }
             if separate { self.segmenter.submit(frame) }
         }
@@ -236,8 +237,9 @@ final class LiveEngine: @unchecked Sendable {
         await stopSource()
         let source = LiveDeviceSource(onFrame: { [weak self] frame in self?.receive(frame, generation) },
                                       onAudio: { [weak self] sample, clock in
-                                          self?.onDeviceSound?(sample)
-                                          self?.write(sample, clock: clock, role: "system")
+                                          // Into the meeting and, with its time, into a recording (there with the meeting's sound).
+                                          guard let self, let timed = self.write(sample, clock: clock) else { return }
+                                          self.onDeviceSound?(timed)
                                       })
         device = source
         do {
@@ -271,8 +273,12 @@ final class LiveEngine: @unchecked Sendable {
         if fadeFrom != nil, fadeStart == nil, cfg.scene == .webcam || ready { fadeStart = now }
 
         var webcam = cam.map { CIImage(cvPixelBuffer: $0) }
-        if cfg.background == true, let picture = lock.withLock({ backgroundImage }), let pair = segmenter.latest {
-            webcam = LiveCompositor.person(CIImage(cvPixelBuffer: pair.frame), mask: LiveCompositor.maskImage(pair.mask), background: picture, edge: cfg.backgroundEdge ?? 0.5)
+        if cfg.background == true, let pair = segmenter.latest {
+            let person = CIImage(cvPixelBuffer: pair.frame)
+            let behind = cfg.backgroundBlur.map { LiveCompositor.blurred(person, amount: $0) } ?? lock.withLock({ backgroundImage })
+            if let behind {
+                webcam = LiveCompositor.person(person, mask: LiveCompositor.maskImage(pair.mask), background: behind, edge: cfg.backgroundEdge ?? 0.5)
+            }
         }
 
         var image: CIImage
@@ -302,7 +308,11 @@ final class LiveEngine: @unchecked Sendable {
         present(buffer)
         virtualCamera.send(buffer)
         let time = CMClockGetTime(CMClockGetHostTimeClock())
-        writerQueue.async { self.writer?.append(buffer, at: time) }
+        writerQueue.async {
+            // After "stop" no more pictures: the recording ends where it was stopped.
+            if let end = self.pictureEnd, time > end { return }
+            self.writer?.append(buffer, at: time)
+        }
     }
 
     /// The picture behind the person (nil: none). Large pictures are reduced, photos turned upright.
@@ -399,21 +409,29 @@ final class LiveEngine: @unchecked Sendable {
 
     var isDeviceSource: Bool { device != nil }
 
-    func startRecording(to url: URL, microphoneID: String?) throws -> [String] {
-        let wantsDevice = device != nil
+    /// Starts the movie: the picture, the microphone ("mic") and the sound of the meeting ("system", delivered
+    /// with `appendMeetingSound`). Returns the roles of the sound tracks and the start on the host clock.
+    func startRecording(to url: URL, microphoneID: String?, meeting: Bool = false) throws -> (roles: [String], start: CMTime) {
         var mic: LiveMicrophone?
         if let microphoneID {
             mic = LiveMicrophone(deviceID: microphoneID) { [weak self] sample, clock in self?.write(sample, clock: clock, role: "mic") }
         }
         let new = try DeviceMovieWriter(url: url, width: Int(LiveCompositor.canvas.width), height: Int(LiveCompositor.canvas.height),
-                                        deviceAudio: wantsDevice, microphone: mic != nil, fps: 30)
-        try new.start(at: CMClockGetTime(CMClockGetHostTimeClock()))
+                                        deviceAudio: true, microphone: mic != nil, meeting: meeting, fps: 30)
+        let start = CMClockGetTime(CMClockGetHostTimeClock())
+        try new.start(at: start)
         writerQueue.sync {
             writer = new
             microphone = mic
+            pictureEnd = nil
         }
         mic?.start()
-        return new.audioRoles
+        return (new.audioRoles, start)
+    }
+
+    /// Sound for the "system" or "meeting" track (time stamps on the host clock).
+    func appendRecordedSound(_ sample: CMSampleBuffer, role: String) {
+        writerQueue.async { self.writer?.appendAudio(sample, role: role) }
     }
 
     private func write(_ sample: CMSampleBuffer, clock: CMClock?) -> CMSampleBuffer? {
@@ -427,17 +445,26 @@ final class LiveEngine: @unchecked Sendable {
         writerQueue.async { self.writer?.appendAudio(moved, role: role) }
     }
 
-    /// Finishes the file and returns its length in seconds.
-    func stopRecording() async throws -> Double {
-        let (current, mic): (DeviceMovieWriter?, LiveMicrophone?) = writerQueue.sync {
-            let result = (writer, microphone)
-            writer = nil
+    /// Finishes the file and returns its length in seconds. `flush` writes the sound that is still on its
+    /// way up to the end before the file closes.
+    func stopRecording(flush: @escaping @MainActor (CMTime) async -> Void = { _ in }) async throws -> Double {
+        let end = CMClockGetTime(CMClockGetHostTimeClock())
+        let mic: LiveMicrophone? = writerQueue.sync {
+            pictureEnd = end
+            let result = microphone
             microphone = nil
             return result
         }
         mic?.stop()
+        await flush(end)
+        let current: DeviceMovieWriter? = writerQueue.sync {
+            let result = writer
+            writer = nil
+            pictureEnd = nil
+            return result
+        }
         guard let current else { throw RecorderError.noFrames }
-        return try await current.finish(end: CMClockGetTime(CMClockGetHostTimeClock()))
+        return try await current.finish(end: end)
     }
 
     // MARK: Tests
@@ -519,7 +546,7 @@ extension LiveEngine {
                 if let problem { print("Quelle:", problem) }
                 var recording = false
                 if let i = arguments.firstIndex(of: "--record"), i + 1 < arguments.count {
-                    print("Spuren:", try engine.startRecording(to: URL(fileURLWithPath: arguments[i + 1]), microphoneID: nil))
+                    print("Spuren:", try engine.startRecording(to: URL(fileURLWithPath: arguments[i + 1]), microphoneID: nil, meeting: false))
                     recording = true
                 }
                 var peak = 0

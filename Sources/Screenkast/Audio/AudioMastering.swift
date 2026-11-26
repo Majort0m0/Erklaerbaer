@@ -53,6 +53,8 @@ enum AudioMastering {
         var system: Double?
         var voiceOver: Double?
         var music: Double?
+        /// The others in a meeting (live recordings): speech like the own voice.
+        var meeting: Double?
     }
 
     /// Loudness of what each lane plays (the enhanced/echo-free microphone when that is used).
@@ -87,6 +89,9 @@ enum AudioMastering {
         if project.info.hasSystemAudio, let system = await read("system") {
             levels.system = loudness(channels: [system])
         }
+        if project.info.hasMeetingAudio, let meeting = await read("meeting") {
+            levels.meeting = loudness(channels: [meeting])
+        }
         var narration: [Float] = []
         for clip in settings.voiceOvers where !clip.isMusic {
             let enhanced = VoiceProcessor.voiceOverURL(for: project, file: clip.file, settings: settings)
@@ -105,8 +110,9 @@ enum AudioMastering {
 
     /// Volumes that put speech in front (−16 LUFS), system sound 7 LU and music 14 LU below it.
     /// Nothing is amplified beyond 100 %: the loudest lane gets 100 %, the others follow.
-    static func suggestedVolumes(_ l: LaneLevels) -> (mic: Double?, system: Double?, voiceOver: Double?, music: Double?, quietBy: Double) {
-        let speech = (l.micHasSpeech && l.mic != nil) || l.voiceOver != nil
+    static func suggestedVolumes(_ l: LaneLevels) -> (mic: Double?, system: Double?, voiceOver: Double?, music: Double?, quietBy: Double,
+                                                      meeting: Double?) {
+        let speech = (l.micHasSpeech && l.mic != nil) || l.voiceOver != nil || l.meeting != nil
         func gain(_ lufs: Double?, target: Double) -> Double? {
             guard let lufs, lufs.isFinite else { return nil }
             return pow(10, (target - lufs) / 20)
@@ -115,11 +121,13 @@ enum AudioMastering {
         let voice = gain(l.voiceOver, target: -16)
         let system = gain(l.system, target: speech ? -23 : -16)
         let music = gain(l.music, target: speech ? -30 : -20)
-        let all = [mic, voice, system, music].compactMap { $0 }
-        guard let top = all.max(), top > 0 else { return (nil, nil, nil, nil, 0) }
+        // The others in a meeting as loud as the own voice.
+        let meeting = gain(l.meeting, target: -16)
+        let all = [mic, voice, system, music, meeting].compactMap { $0 }
+        guard let top = all.max(), top > 0 else { return (nil, nil, nil, nil, 0, nil) }
         let k = top > 1 ? 1 / top : 1
         func v(_ g: Double?) -> Double? { g.map { min(1, max(0.02, $0 * k)) } }
-        return (v(mic), v(system), v(voice), v(music), top > 1 ? 20 * log10(top) : 0)
+        return (v(mic), v(system), v(voice), v(music), top > 1 ? 20 * log10(top) : 0, v(meeting))
     }
 
     // MARK: Finished video

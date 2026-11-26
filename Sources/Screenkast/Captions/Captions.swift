@@ -84,7 +84,7 @@ enum CaptionGenerator {
     private static func generateFromMix(project: Project, localeID: String, source: CaptionSource,
                                         progress: @escaping @Sendable (String) -> Void) async throws -> (captions: [Caption], words: [CaptionWord]) {
         let media = try await MediaBuilder.make(project: project, renderer: FrameRenderer(project: project), fps: 30)
-        let roles: Set<String> = source == .narration ? ["voiceover"] : ["mic", "system", "voiceover", "insert", "overlay"]
+        let roles: Set<String> = source == .narration ? ["voiceover"] : ["mic", "system", "meeting", "voiceover", "insert", "overlay"]
         let tracks = media.audioTracks.filter { roles.contains($0.role) && !$0.isDissolveB }.map(\.track)
         guard !tracks.isEmpty else { throw CaptionError.noAudio }
         let reader = try AVAssetReader(asset: media.asset)

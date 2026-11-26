@@ -30,6 +30,8 @@ struct RecordingInfo: Codable {
 
     var audioRoles: [String] { audioTracks ?? (hasMicrophone ? ["mic"] : []) }
     var hasSystemAudio: Bool { audioRoles.contains("system") }
+    /// The others in a meeting on their own track (live recordings).
+    var hasMeetingAudio: Bool { audioRoles.contains("meeting") }
     var hasMicAudio: Bool { audioRoles.contains("mic") }
 }
 
@@ -277,6 +279,8 @@ struct EditSettings: Codable, Equatable {
     var micMuted: Bool = false
     var systemVolume: Double = 0.8
     var systemMuted: Bool = false
+    var meetingVolume: Double = 1
+    var meetingMuted: Bool = false
     /// Remove the speaker echo (system audio picked up by the mic).
     var removeEcho: Bool = true
     /// 0 = off … 1 = strong (cursor and camera).
@@ -320,6 +324,8 @@ struct EditSettings: Codable, Equatable {
     /// Outline of the person (0…1) and how much it is calmed over time (nil: 0.5).
     var cameraBackgroundEdge: Double? = nil
     var cameraBackgroundCalm: Double? = nil
+    /// Behind the person the real room blurred, this strongly (0…1); nil: no blur (a picture or the room as it is).
+    var cameraBackgroundBlur: Double? = nil
     var inserts: [InsertClip] = []
     var chapters: [Chapter] = []
     /// Recognized words (for cutting via the transcript).
@@ -598,6 +604,8 @@ extension EditSettings {
         micMuted = try v(.micMuted, micMuted)
         systemVolume = try v(.systemVolume, systemVolume)
         systemMuted = try v(.systemMuted, systemMuted)
+        meetingVolume = try v(.meetingVolume, meetingVolume)
+        meetingMuted = try v(.meetingMuted, meetingMuted)
         removeEcho = try v(.removeEcho, removeEcho)
         motionBlur = try v(.motionBlur, motionBlur)
         clickSound = try v(.clickSound, clickSound)
@@ -625,6 +633,7 @@ extension EditSettings {
         script = try c.decodeIfPresent(String.self, forKey: .script)
         cameraBackgroundEdge = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundEdge)
         cameraBackgroundCalm = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundCalm)
+        cameraBackgroundBlur = try c.decodeIfPresent(Double.self, forKey: .cameraBackgroundBlur)
         inserts = try v(.inserts, inserts)
         chapters = try v(.chapters, chapters)
         words = try v(.words, words)

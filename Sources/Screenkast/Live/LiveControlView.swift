@@ -86,8 +86,14 @@ struct LiveControlView: View {
             if let message = live.message {
                 Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
-            if meetingCamera.status != .ready {
-                Text("Oder im Meeting den Bildschirm teilen mit dem Fenster „\(LiveProgramWindow.title)“. Dieses Steuerfenster ist nie zu sehen.")
+            VStack(alignment: .leading, spacing: 3) {
+                Toggle("Großes Programm-Fenster zeigen", isOn: $live.showProgram)
+                    .help("Das Fenster „\(LiveProgramWindow.title)“ zum Teilen im Meeting. Ausschalten, wenn du nur die Kamera „\(VirtualCameraIDs.cameraName)“ benutzt – das Live-Bild läuft weiter.")
+                Text(live.showProgram
+                     ? (meetingCamera.status == .ready
+                        ? "Im Meeting die Kamera „\(VirtualCameraIDs.cameraName)“ wählen – oder den Bildschirm teilen mit dem Fenster „\(LiveProgramWindow.title)“. Dieses Steuerfenster ist nie zu sehen."
+                        : "Im Meeting den Bildschirm teilen mit dem Fenster „\(LiveProgramWindow.title)“. Dieses Steuerfenster ist nie zu sehen.")
+                     : "Das Live-Bild läuft weiter, etwa für die Kamera „\(VirtualCameraIDs.cameraName)“ und die Vorschau oben.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -246,13 +252,23 @@ struct LiveControlView: View {
                     }
                     .help("Zeigt die Quelle auf einem Laptop, Tablet, Fernseher, im Theater, Kino oder Bilderrahmen")
                 }
-                HStack {
-                    Toggle("Virtueller Hintergrund", isOn: Binding(get: { live.config.background == true }, set: { on in
-                        if on && live.backgroundFile == nil { live.chooseBackground() } else { live.config.background = on }
-                    }))
-                    .help("Stellt dich ohne Greenscreen frei und zeigt ein Bild hinter dir")
-                    Spacer()
-                    Button(live.backgroundFile == nil ? "Bild wählen …" : "Anderes Bild …") { live.chooseBackground() }
+                Picker("Hintergrund", selection: Binding(get: { live.backgroundStyle }, set: { live.setBackgroundStyle($0) })) {
+                    Text("Echt").tag(LiveModel.BackgroundStyle.real)
+                    Text("Unscharf").tag(LiveModel.BackgroundStyle.blur)
+                    Text("Bild").tag(LiveModel.BackgroundStyle.image)
+                }
+                .pickerStyle(.segmented)
+                .help("Was hinter dir zu sehen ist: dein Zimmer, dein Zimmer verschwommen oder ein Bild – ohne Greenscreen")
+                if live.backgroundStyle == .blur {
+                    LabeledSlider(title: "Unschärfe", value: Binding(get: { live.config.backgroundBlur ?? 0.5 }, set: { live.config.backgroundBlur = $0 }),
+                                  range: 0...1, format: { "\(Int($0 * 100)) %" })
+                        .help("Wie stark das Zimmer hinter dir verschwimmt")
+                }
+                if live.backgroundStyle == .image {
+                    HStack {
+                        Spacer()
+                        Button("Anderes Bild …") { live.chooseBackground() }
+                    }
                 }
                 if live.config.background == true {
                     HStack(spacing: 14) {
@@ -317,7 +333,7 @@ struct LiveControlView: View {
             .buttonStyle(.borderedProminent)
             .tint(live.isRecording ? Theme.record : Theme.brand)
             .keyboardShortcut("r", modifiers: [])
-            .help("Das Live-Bild als neues Projekt aufnehmen (Taste R)")
+            .help("Das Live-Bild als neues Projekt aufnehmen, mit deiner Stimme und dem Ton des Meetings (Taste R)")
         }
     }
 }

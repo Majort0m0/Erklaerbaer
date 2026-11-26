@@ -939,7 +939,7 @@ struct TextOverlayHandle: View {
 
 /// Ready-made export settings.
 enum ExportPreset: String, CaseIterable, Identifiable {
-    case youtube, youtube4K, vertical, square, small, gif, custom
+    case youtube, youtube4K, vertical, square, small, gif, audio, transcript, custom
     var id: String { rawValue }
 
     var label: String {
@@ -950,6 +950,8 @@ enum ExportPreset: String, CaseIterable, Identifiable {
         case .square: return "Quadratisch – Instagram, LinkedIn"
         case .small: return "Klein (720p, HEVC) – zum Verschicken"
         case .gif: return "Animiertes GIF – kurze Clips"
+        case .audio: return "Nur Ton – M4A oder WAV"
+        case .transcript: return "Transkript – Text oder Untertitel"
         case .custom: return "Eigene Einstellungen"
         }
     }
@@ -964,7 +966,7 @@ enum ExportPreset: String, CaseIterable, Identifiable {
         case .square: s.switchAspect(to: .square); s.exportShortSide = 1080; s.exportFPS = 30; s.exportHEVC = false
         case .small: s.exportShortSide = 720; s.exportFPS = 30; s.exportHEVC = true
         case .gif: s.exportShortSide = 720; s.exportFPS = 30
-        case .custom: break
+        case .audio, .transcript, .custom: break
         }
     }
 }
@@ -974,6 +976,11 @@ struct ExportSheet: View {
     @ObservedObject var editor: EditorModel
     @Binding var isPresented: Bool
     @AppStorage("exportPreset") private var presetRaw = ExportPreset.youtube.rawValue
+    @AppStorage("exportAudioFormat") private var audioFormatRaw = AudioExporter.Format.m4a.rawValue
+
+    private var audioFormat: AudioExporter.Format { AudioExporter.Format(rawValue: audioFormatRaw) ?? .m4a }
+    @AppStorage("exportTranscriptFormat") private var transcriptFormatRaw = TranscriptFormat.text.rawValue
+    private var transcriptFormat: TranscriptFormat { TranscriptFormat(rawValue: transcriptFormatRaw) ?? .text }
 
     private var preset: ExportPreset { ExportPreset(rawValue: presetRaw) ?? .youtube }
 
@@ -994,7 +1001,7 @@ struct ExportSheet: View {
                 Text(url.lastPathComponent).foregroundStyle(.secondary)
                 HStack {
                     Button("Im Finder zeigen") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-                    Button("Abspielen") { NSWorkspace.shared.open(url) }
+                    Button(["txt", "srt", "vtt"].contains(url.pathExtension.lowercased()) ? "Öffnen" : "Abspielen") { NSWorkspace.shared.open(url) }
                     Spacer()
                     let mp4 = url.pathExtension.lowercased() == "mp4"
                     if mp4 {
@@ -1026,7 +1033,7 @@ struct ExportSheet: View {
 
     private var settings: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Video exportieren").font(.title3.bold())
+            Text(preset == .audio ? "Ton exportieren" : preset == .transcript ? "Transkript exportieren" : "Video exportieren").font(.title3.bold())
             Form {
                 Picker("Vorlage", selection: Binding(get: { preset }, set: { p in
                     presetRaw = p.rawValue
@@ -1046,25 +1053,62 @@ struct ExportSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Picker("Auflösung", selection: $editor.settings.exportShortSide) {
-                    Text("720p").tag(720)
-                    Text("1080p").tag(1080)
-                    Text("1440p").tag(1440)
-                    Text("4K").tag(2160)
+                if preset == .transcript {
+                    Picker("Dateiart", selection: $transcriptFormatRaw) {
+                        ForEach(TranscriptFormat.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.radioGroup)
+                    if editor.hasTranscript {
+                        Text("So, wie es im fertigen Video gesprochen wird: Herausgeschnittenes fehlt, Kapitel werden zu Überschriften, die Zeiten passen zum Export.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Noch kein Transkript. Erklärbär erkennt die gesprochenen Wörter auf dem Mac, nichts wird hochgeladen.")
+                                .font(.caption)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                Button("Transkript erstellen") { editor.generateCaptions() }
+                                    .disabled(editor.isGeneratingCaptions)
+                                if editor.isGeneratingCaptions {
+                                    ProgressView().controlSize(.small)
+                                    Text(editor.captionStatus ?? "").font(.caption)
+                                }
+                            }
+                            if let error = editor.captionError { Text(error).font(.caption).foregroundStyle(.red) }
+                        }
+                    }
+                } else if preset == .audio {
+                    Picker("Dateiart", selection: $audioFormatRaw) {
+                        ForEach(AudioExporter.Format.allCases) { Text($0.label).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.radioGroup)
+                    Text("Der fertige Ton des Projekts: alle Spuren mit ihren Lautstärken, Schnitten und Tempo, ohne Bild. \(editor.settings.masterNormalize ? "Die Gesamtlautstärke (Audio › Export) wird angewendet." : "")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Picker("Auflösung", selection: $editor.settings.exportShortSide) {
+                        Text("720p").tag(720)
+                        Text("1080p").tag(1080)
+                        Text("1440p").tag(1440)
+                        Text("4K").tag(2160)
+                    }
+                    .pickerStyle(.segmented)
+                    Picker("Bildrate", selection: $editor.settings.exportFPS) {
+                        Text("30 fps").tag(30)
+                        Text("60 fps").tag(60)
+                    }
+                    .pickerStyle(.segmented)
+                    Toggle("HEVC (kleinere Dateien)", isOn: $editor.settings.exportHEVC)
+                        .disabled(preset == .gif)
+                    LabeledContent("Format") {
+                        let size = editor.renderer.outputSize
+                        Text("\(editor.settings.aspect.rawValue) · \(Int(size.width)) × \(Int(size.height)) · \(preset == .gif ? "GIF" : "MP4")")
+                    }
                 }
-                .pickerStyle(.segmented)
-                Picker("Bildrate", selection: $editor.settings.exportFPS) {
-                    Text("30 fps").tag(30)
-                    Text("60 fps").tag(60)
-                }
-                .pickerStyle(.segmented)
-                Toggle("HEVC (kleinere Dateien)", isOn: $editor.settings.exportHEVC)
-                    .disabled(preset == .gif)
-                LabeledContent("Format") {
-                    let size = editor.renderer.outputSize
-                    Text("\(editor.settings.aspect.rawValue) · \(Int(size.width)) × \(Int(size.height)) · \(preset == .gif ? "GIF" : "MP4")")
-                }
-                if !editor.settings.chapters.isEmpty && preset != .gif {
+                if !editor.settings.chapters.isEmpty && preset != .gif && preset != .audio && preset != .transcript {
                     LabeledContent("Kapitel", value: "\(editor.outputChapters.count) – als Textdatei daneben")
                 }
                 LabeledContent("Länge", value: formatTime(editor.outputDuration))
@@ -1077,15 +1121,22 @@ struct ExportSheet: View {
                 Button("Exportieren …") { chooseFileAndExport() }
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
+                    .disabled(preset == .transcript && !editor.hasTranscript)
             }
         }
     }
 
     private func chooseFileAndExport() {
+        if preset == .transcript { return editor.exportTranscript(transcriptFormat) }
         let panel = NSSavePanel()
         let gif = preset == .gif
-        panel.allowedContentTypes = [gif ? .gif : .mpeg4Movie]
-        panel.nameFieldStringValue = gif ? editor.project.name + ".gif" : editor.suggestedExportName
+        if preset == .audio {
+            panel.allowedContentTypes = [audioFormat == .m4a ? .mpeg4Audio : .wav]
+            panel.nameFieldStringValue = editor.project.name + "." + audioFormat.rawValue
+        } else {
+            panel.allowedContentTypes = [gif ? .gif : .mpeg4Movie]
+            panel.nameFieldStringValue = gif ? editor.project.name + ".gif" : editor.suggestedExportName
+        }
         panel.directoryURL = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await editor.export(to: url) }

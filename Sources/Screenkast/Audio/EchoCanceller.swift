@@ -40,12 +40,18 @@ enum EchoCanceller {
         let asset = AVURLAsset(url: project.videoURL)
         let tracks = try await asset.loadTracks(withMediaType: .audio)
         let roles = await AudioRole.roles(of: tracks, fallback: project.info.audioRoles)
-        guard let micIndex = roles.firstIndex(of: "mic"), let sysIndex = roles.firstIndex(of: "system") else {
+        let references = roles.indices.filter { roles[$0] == "system" || roles[$0] == "meeting" }
+        guard let micIndex = roles.firstIndex(of: "mic"), !references.isEmpty else {
             throw RecorderError.writerFailed("Mikrofon- und Systemspur werden benötigt")
         }
         let duration = try await asset.load(.duration).seconds
         let mic = try await readMono(track: tracks[micIndex], asset: asset, duration: duration)
-        let sys = try await readMono(track: tracks[sysIndex], asset: asset, duration: duration)
+        // Everything that was played (the others in a meeting and the other sound) can come back in the microphone.
+        var sys = try await readMono(track: tracks[references[0]], asset: asset, duration: duration)
+        for index in references.dropFirst() {
+            let more = try await readMono(track: tracks[index], asset: asset, duration: duration)
+            for i in 0..<min(sys.count, more.count) { sys[i] += more[i] }
+        }
         let (clean, stats) = cancel(mic: mic, reference: sys)
         let url = outputURL ?? cleanURL(for: project)
         // Write next to the target and move into place, so a half-written file is never used.
@@ -69,13 +75,17 @@ enum EchoCanceller {
         let L = filterLength
         guard n > L * 4 else { return (y, Stats(delayMs: 0, linearReductionDB: 0, totalReductionDB: 0)) }
         let y = Array(y.prefix(n))
-        // Reference advanced by `preDelay` (x[i] = ref[i + D]): the causal filter then covers
-        // echo lags from −D to L − D, tolerating mic timestamps slightly ahead of the system track.
+        // Headphones over Bluetooth (AirPods) play 150–300 ms after the system track: first find
+        // the bulk delay, then the filter only has to cover what is around it.
+        let bulk = bulkDelay(mic: y, reference: Array(xRaw.prefix(n)))
+        let shift = max(0, bulk - 960)   // keep 20 ms of the filter before the found delay
+        // Reference delayed by `shift` and advanced by `preDelay` (x[i] = ref[i − shift + D]): the
+        // causal filter then covers echo lags from shift − D to shift + L − D.
         var x = [Float](repeating: 0, count: n)
-        x.withUnsafeMutableBufferPointer { dst in
-            xRaw.withUnsafeBufferPointer { src in
-                dst.baseAddress!.update(from: src.baseAddress! + preDelay, count: n - preDelay)
-            }
+        let offset = preDelay - shift
+        for i in 0..<n {
+            let j = i + offset
+            if j >= 0 && j < n { x[i] = xRaw[j] }
         }
 
         // 1. Correlations for lags 0..<L, Wiener–Hopf solution.
@@ -99,10 +109,55 @@ enum EchoCanceller {
 
         // Stats over the parts where the system is playing.
         let active = activeMask(x, frame: 2400, thresholdDB: -45)
-        let stats = Stats(delayMs: Double(peak - preDelay) / sampleRate * 1000,
+        let stats = Stats(delayMs: Double(shift + peak - preDelay) / sampleRate * 1000,
                           linearReductionDB: reduction(y, linear, mask: active, frame: 2400),
                           totalReductionDB: reduction(y, output, mask: active, frame: 2400))
         return (output, stats)
+    }
+
+    /// How many samples later the reference turns up in the microphone (0 when no clear echo is found),
+    /// searched up to `maxSeconds` on a coarse 8 kHz copy.
+    static func bulkDelay(mic y: [Float], reference x: [Float], maxSeconds: Double = 0.8) -> Int {
+        let factor = 6
+        func coarse(_ s: [Float]) -> [Float] {
+            let count = s.count / factor
+            var out = [Float](repeating: 0, count: count)
+            for i in 0..<count {
+                var sum: Float = 0
+                for k in 0..<factor { sum += s[i * factor + k] }
+                out[i] = sum / Float(factor)
+            }
+            return out
+        }
+        let found = correlationPeak(mic: y, reference: x, maxSeconds: maxSeconds)
+        // Only a clear, long delay (Bluetooth) moves the filter; shorter ones are covered as they are.
+        return found.strength > 8 && found.lag > 3_000 ? found.lag : 0
+    }
+
+    /// The strongest match between microphone and reference in both directions: `lag` > 0 means the
+    /// reference turns up later in the microphone (an echo), < 0 that the microphone hears it first
+    /// (the same sound reaches the room directly). `strength`: peak over the average.
+    static func correlationPeak(mic y: [Float], reference x: [Float], maxSeconds: Double) -> (lag: Int, strength: Double) {
+        let factor = 6
+        func coarse(_ s: [Float]) -> [Float] {
+            let count = s.count / factor
+            var out = [Float](repeating: 0, count: count)
+            for i in 0..<count {
+                var sum: Float = 0
+                for k in 0..<factor { sum += s[i * factor + k] }
+                out[i] = sum / Float(factor)
+            }
+            return out
+        }
+        let xs = coarse(x), ys = coarse(y)
+        let lags = Int(maxSeconds * sampleRate) / factor
+        guard xs.count > lags * 4 else { return (0, 0) }
+        let later = crossCorrelation(xs, ys, lags: lags).map(abs)
+        let earlier = crossCorrelation(ys, xs, lags: lags).map(abs)
+        let mean = (later.reduce(0, +) + earlier.reduce(0, +)) / Double(later.count + earlier.count)
+        guard mean > 0, let a = later.indices.max(by: { later[$0] < later[$1] }),
+              let b = earlier.indices.max(by: { earlier[$0] < earlier[$1] }) else { return (0, 0) }
+        return later[a] >= earlier[b] ? (a * factor, later[a] / mean) : (-b * factor, earlier[b] / mean)
     }
 
     /// R[j] = Σ a[i]·b[i+j] for j in 0..<lags (block FFT).

@@ -88,6 +88,27 @@ final class LiveMixGraph: @unchecked Sendable {
     }
 }
 
+/// The recording that runs (if any) and its volumes, reachable from the sound threads.
+final class RecordingTarget: @unchecked Sendable {
+    private let lock = NSLock()
+    private var mix: RecordingMix?
+    private var device: Float = 1
+    private var memes: Float = 1
+
+    func set(_ new: RecordingMix?) { lock.withLock { mix = new } }
+    func gains(device: Float, memes: Float) { lock.withLock { self.device = device; self.memes = memes } }
+
+    func deviceSound(_ sample: CMSampleBuffer) {
+        guard let (mix, gain) = lock.withLock({ mix.map { ($0, device) } }) else { return }
+        mix.write(sample, gain: gain)
+    }
+
+    func clip(_ samples: [Float]?, at frame: Int64) {
+        guard let (mix, gain) = lock.withLock({ mix.map { ($0, memes) } }) else { return }
+        mix.clip(samples, startedAt: frame, gain: gain)
+    }
+}
+
 /// The chosen microphone as a source (mono, 48 kHz).
 final class LiveVoiceCapture: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     private let session = AVCaptureSession()
@@ -187,8 +208,18 @@ final class LiveAudio: ObservableObject {
     private var meterTimer: Timer?
     private var watchTimer: Timer?
     private var defaultListener: AudioObjectPropertyListenerBlock?
+    /// The tracks of a live recording apart from the own voice: "meeting" (the others, from the meeting
+    /// program) and "system" (programs, iPad, memes). Without a known meeting program everything is "system".
+    private var recording: RecordingMix?
+    private var meetingRecording: RecordingMix?
+    private let recordingTarget = RecordingTarget()
 
     var earRunning: Bool { earOut != nil }
+
+    init() {
+        let target = recordingTarget
+        graph.memes.onStart = { samples, frame in target.clip(samples, at: frame) }
+    }
 
     func start() {
         guard !running else { return }
@@ -254,12 +285,75 @@ final class LiveAudio: ObservableObject {
         graph.memes.play(nil)
         graph.voice.clear()
         graph.device.clear()
+        recording = nil
+        meetingRecording = nil
+        recordingTarget.set(nil)
+    }
+
+    // MARK: Recording
+
+    /// From now on the sound of the meeting goes into the recording: the others from the meeting program
+    /// (without it: everything except Erklärbär), switched-on programs, iPad and memes as in the meeting.
+    func startRecording(at start: CMTime, separateMeeting: Bool, deliver: @escaping @Sendable (CMSampleBuffer, String) -> Void) {
+        let mix = RecordingMix(start: start) { deliver($0, "system") }
+        recording = mix
+        meetingRecording = separateMeeting ? RecordingMix(start: start) { deliver($0, "meeting") } : nil
+        recordingTarget.set(mix)
+        syncTaps()
+    }
+
+    /// Whether a recording started now gets its own track for the others in the meeting.
+    var recordsMeetingSeparately: Bool { !meetingApp.isEmpty }
+
+    /// Waits for sound that is still on its way, writes everything up to `end` and stops taking it up.
+    func finishRecording(at end: CMTime) async {
+        guard let mix = recording else { return }
+        try? await Task.sleep(for: .milliseconds(Int(RecordingMix.delay * 1_000 / Int64(LiveAudioFormat.sampleRate)) + 60))
+        mix.finish(at: end)
+        meetingRecording?.finish(at: end)
+        recording = nil
+        meetingRecording = nil
+        recordingTarget.set(nil)
+        syncTaps()
+    }
+
+    /// Which taps feed the recording, at which volume.
+    private func wireRecording() {
+        let global = taps[AppTap.everything] != nil
+        for (id, tap) in taps {
+            guard let mix = recording else {
+                tap.onTimed = nil
+                continue
+            }
+            let gain: Float
+            if id == AppTap.everything || id == meetingApp {
+                gain = 1
+            } else {
+                // With the tap of everything the programs are in it already.
+                gain = global ? 0 : settings.app(id).meetingGain
+            }
+            guard gain > 0 else {
+                tap.onTimed = nil
+                continue
+            }
+            // The others in the meeting on their own track, if there is one.
+            let target = id == meetingApp ? meetingRecording ?? mix : mix
+            // Runs on the tap's queue, not on the main thread.
+            let feed: @Sendable (UnsafePointer<Float>, Int, Int64) -> Void = { data, frames, start in
+                target.write(data, frames: frames, at: start, gain: gain)
+            }
+            tap.onTimed = feed
+        }
     }
 
     // MARK: Sources from the live engine
 
     nonisolated func playClip(_ url: URL?) { graph.memes.play(url) }
-    nonisolated func takeDeviceSound(_ sample: CMSampleBuffer) { graph.device.write(sample) }
+    /// The iPad's sound with its time on the host clock.
+    nonisolated func takeDeviceSound(_ sample: CMSampleBuffer) {
+        graph.device.write(sample)
+        recordingTarget.deviceSound(sample)
+    }
 
     func toggleMute() { settings.muted.toggle() }
 
@@ -336,8 +430,10 @@ final class LiveAudio: ObservableObject {
         graph.device.setGains(meeting: settings.device.meetingGain, ear: settings.device.earGain)
         graph.memes.setGains(meeting: settings.memes.meetingGain, ear: settings.memes.earGain)
         for (id, tap) in taps {
-            tap.source.setGains(meeting: id == meetingApp ? 0 : settings.app(id).meetingGain, ear: 0)
+            tap.source.setGains(meeting: id == meetingApp || id == AppTap.everything ? 0 : settings.app(id).meetingGain, ear: 0)
         }
+        recordingTarget.gains(device: settings.device.meetingGain, memes: settings.memes.meetingGain)
+        wireRecording()
     }
 
     // MARK: Programs
@@ -347,9 +443,17 @@ final class LiveAudio: ObservableObject {
         guard running else { return }
         let current = AudioApps.current()
         var wanted: [String: [AudioObjectID]] = [:]
-        if meetingOut != nil {
+        if meetingOut != nil || recording != nil {
             for app in current where app.id != meetingApp && settings.app(app.id).meetingOn {
                 wanted[app.id] = app.processes
+            }
+        }
+        if recording != nil {
+            // The others in the meeting; without a known meeting program everything except Erklärbär.
+            if !meetingApp.isEmpty, let meeting = current.first(where: { $0.id == meetingApp }) {
+                wanted[meetingApp] = meeting.processes
+            } else if meetingApp.isEmpty {
+                wanted[AppTap.everything] = AppTap.ownProcesses()
             }
         }
         for (id, tap) in taps where wanted[id] == nil {
@@ -361,15 +465,15 @@ final class LiveAudio: ObservableObject {
         for (id, processes) in wanted {
             do {
                 if let tap = taps[id] {
-                    try tap.update(processes: processes)
+                    if id != AppTap.everything { try tap.update(processes: processes) }
                 } else {
-                    taps[id] = try AppTap(appID: id, processes: processes)
+                    taps[id] = try AppTap(appID: id, target: id == AppTap.everything ? .allExcept(processes) : .processes(processes))
                     tapStarted[id] = Date()
                 }
             } catch {
                 taps[id]?.stop()
                 taps[id] = nil
-                failed.append(current.first { $0.id == id }?.name ?? id)
+                failed.append(current.first { $0.id == id }?.name ?? (id == AppTap.everything ? "anderen Programmen" : id))
             }
         }
         graph.setApps(taps.values.map(\.source))

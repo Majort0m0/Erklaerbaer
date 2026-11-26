@@ -12,6 +12,20 @@ enum UISnapshot {
         InspectorFolds.shared.keepInMemory(open: ProcessInfo.processInfo.environment["SCREENKAST_FOLDS"] == "all"
             ? Set(InspectorFold.allCases) : Set(InspectorFold.allCases.filter(\.defaultOpen)))
         if projectPath == "home" { return home(outputPath: outputPath) }
+        if let sheet = ["home-record", "home-screenshot", "home-newproject", "settings"].first(where: { $0 == projectPath }) {
+            AppModel.snapshotMode = true
+            let model = AppModel()
+            let view: AnyView
+            switch sheet {
+            case "home-record": view = AnyView(RecordSetupView(close: {}).environmentObject(model))
+            case "home-screenshot": view = AnyView(ScreenshotSetupView(close: {}).environmentObject(model))
+            case "home-newproject": view = AnyView(NewProjectSetupView(close: {}).environmentObject(model))
+            default: view = AnyView(AppSettingsView().environmentObject(model))
+            }
+            let size = NSHostingView(rootView: view).fittingSize
+            return (try? write(view.background(Theme.panel).tint(Theme.brand), width: size.width, height: size.height, to: outputPath,
+                               settle: Date().addingTimeInterval(1.5))) ?? 1
+        }
         // "Neues Projekt aus dem Internet"; urlproject-login shows the advice after a login error.
         if projectPath == "urlproject" || projectPath == "urlproject-login" {
             AppModel.snapshotMode = true

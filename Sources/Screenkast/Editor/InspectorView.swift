@@ -1201,18 +1201,25 @@ struct InspectorView: View {
                 }
                 .pickerStyle(.segmented)
                 if editor.settings.cameraShape != .cutout {
-                    HStack {
-                        Text("Virtueller Hintergrund")
-                        Spacer()
-                        Button(editor.settings.cameraBackground == nil ? "Bild wählen …" : "Anderes Bild …") { editor.chooseCameraBackground() }
-                        if editor.settings.cameraBackground != nil {
-                            Button { editor.settings.cameraBackground = nil } label: { Image(systemName: "xmark.circle") }
-                                .buttonStyle(.borderless)
-                                .help("Hintergrund entfernen")
+                    Picker("Hintergrund", selection: Binding(get: { editor.cameraBackgroundStyle }, set: { editor.setCameraBackgroundStyle($0) })) {
+                        Text("Echt").tag(EditorModel.CameraBackgroundStyle.real)
+                        Text("Unscharf").tag(EditorModel.CameraBackgroundStyle.blur)
+                        Text("Bild").tag(EditorModel.CameraBackgroundStyle.image)
+                    }
+                    .pickerStyle(.segmented)
+                    .help("Was hinter dir zu sehen ist: dein Zimmer, dein Zimmer verschwommen oder ein Bild – ohne Greenscreen")
+                    if editor.cameraBackgroundStyle == .blur {
+                        LabeledSlider(title: "Unschärfe", value: Binding(get: { editor.settings.cameraBackgroundBlur ?? 0.5 }, set: { editor.settings.cameraBackgroundBlur = $0 }),
+                                      range: 0...1, format: { "\(Int($0 * 100)) %" })
+                            .help("Wie stark das Zimmer hinter dir verschwimmt")
+                    }
+                    if editor.cameraBackgroundStyle == .image {
+                        HStack {
+                            Spacer()
+                            Button("Anderes Bild …") { editor.chooseCameraBackground() }
                         }
                     }
-                    .help("Stellt dich ohne Greenscreen frei und zeigt das Bild hinter dir")
-                    if editor.settings.cameraBackground != nil {
+                    if editor.cameraBackgroundStyle != .real {
                         LabeledSlider(title: "Kante", value: Binding(get: { editor.settings.cameraBackgroundEdge ?? 0.5 }, set: { editor.settings.cameraBackgroundEdge = $0 }),
                                       range: 0.1...0.9, format: { "\(Int($0 * 100)) %" })
                             .help("Höher: Der Rand liegt enger an dir, weniger vom Zimmer bleibt stehen. Niedriger: Mehr von Haaren und Rand bleibt erhalten.")
@@ -1248,6 +1255,9 @@ struct InspectorView: View {
         Section("Lautstärke") {
             if editor.project.info.hasMicAudio {
                 VolumeRow(title: "Mikrofon", icon: "mic.fill", volume: $editor.settings.micVolume, muted: $editor.settings.micMuted)
+            }
+            if editor.project.info.hasMeetingAudio {
+                VolumeRow(title: "Meeting", icon: "person.2.fill", volume: $editor.settings.meetingVolume, muted: $editor.settings.meetingMuted)
             }
             if editor.project.info.hasSystemAudio {
                 VolumeRow(title: "Systemaudio", icon: "speaker.wave.2.fill", volume: $editor.settings.systemVolume, muted: $editor.settings.systemMuted)

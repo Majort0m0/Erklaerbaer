@@ -58,6 +58,21 @@ enum Entry {
         if let i = args.firstIndex(of: "--remoteserve") {
             exit(LiveRemoteTest.commandLine(serveFor: i + 1 < args.count ? Double(args[i + 1]) ?? 120 : 120))
         }
+        if let i = args.firstIndex(of: "--liverecordtest"), i + 1 < args.count {
+            exit(LiveRecordingTest.commandLine(folder: URL(fileURLWithPath: args[i + 1])))
+        }
+        if let i = args.firstIndex(of: "--transcript"), i + 2 < args.count {
+            // The transcript of a project as it would be exported (txt, timed, srt, vtt).
+            let format: TranscriptFormat = ["timed": .timedText, "srt": .srt, "vtt": .vtt][args[i + 2]] ?? .text
+            exit(MainActor.assumeIsolated {
+                guard let project = try? Project.load(from: URL(fileURLWithPath: args[i + 1])) else { return 1 }
+                print(EditorModel(project: project).transcriptText(format), terminator: "")
+                return 0
+            })
+        }
+        if let i = args.firstIndex(of: "--blurtest"), i + 2 < args.count {
+            exit(BlurBackgroundTest.commandLine(movie: URL(fileURLWithPath: args[i + 1]), output: URL(fileURLWithPath: args[i + 2])))
+        }
         if args.contains("--taptest") {
             exit(AppTapTest.commandLine())
         }
@@ -299,16 +314,31 @@ struct AppSettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("In der Menüleiste anzeigen", isOn: $model.showInMenuBar)
-            Text("Ein Symbol oben rechts startet Aufnahmen und Screenshots, auch wenn das Fenster geschlossen ist.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Beim Anmelden starten", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
-            Text("Mit Menüleisten-Symbol startet Erklärbär dann ohne Fenster.")
-                .font(.caption).foregroundStyle(.secondary)
-            Toggle("Steuerleiste auf dem Bildschirm", isOn: $model.showControlBar)
+            Section("Bedienung") {
+                Toggle("Steuerleiste auf dem Bildschirm", isOn: $model.showControlBar)
+                Text("Schwebende Leiste mit Quelle, Mikrofon, Kamera, Start, Pause und Stopp – sie wird nie mit aufgenommen.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("In der Menüleiste anzeigen", isOn: $model.showInMenuBar)
+                Text("Ein Symbol oben rechts startet Aufnahmen und Screenshots, auch wenn das Fenster geschlossen ist.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Beim Anmelden starten", isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
+                Text("Mit Menüleisten-Symbol startet Erklärbär dann ohne Fenster.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Projekte") {
+                LabeledContent("Speicherort") { ProjectFolderMenu(model: model) }
+                Text("Hier legt Erklärbär neue Aufnahmen und Projekte ab.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Kurzbefehle") {
+                LabeledContent("Aufnahme starten und stoppen") { Text(GlobalHotKey.defaultDisplay).monospaced() }
+                LabeledContent("Screenshot eines Bereichs") { Text(GlobalHotKey.screenshotDisplay).monospaced() }
+                Text("Funktionieren von überall, auch wenn Erklärbär im Hintergrund ist.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 420)
+        .frame(width: 460)
         .padding(.vertical, 8)
     }
 }

@@ -283,12 +283,21 @@ final class MixSource: @unchecked Sendable {
 
     /// The sound of a sample buffer (Float32 or Int16, as delivered by AVFoundation).
     func write(_ sample: CMSampleBuffer) {
-        guard let format = sample.formatDescription?.audioStreamBasicDescription, format.mFormatID == kAudioFormatLinearPCM else { return }
+        guard let sound = AudioSamples.interleavedStereo(sample) else { return }
+        sound.data.withUnsafeBufferPointer { writeStereo($0.baseAddress!, frames: sound.data.count / 2, rate: sound.rate) }
+    }
+}
+
+/// Sound of sample buffers as plain numbers.
+enum AudioSamples {
+    /// Interleaved stereo floats (mono copied to both sides) and the sample rate; nil for other formats.
+    static func interleavedStereo(_ sample: CMSampleBuffer) -> (data: [Float], rate: Double)? {
+        guard let format = sample.formatDescription?.audioStreamBasicDescription, format.mFormatID == kAudioFormatLinearPCM else { return nil }
         let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0 && format.mBitsPerChannel == 32
         let isShort = format.mFormatFlags & kAudioFormatFlagIsFloat == 0 && format.mBitsPerChannel == 16
-        guard isFloat || isShort else { return }
+        guard isFloat || isShort else { return nil }
         let frames = CMSampleBufferGetNumSamples(sample)
-        guard frames > 0 else { return }
+        guard frames > 0 else { return nil }
         var block: CMBlockBuffer?
         var size = 0
         CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sample, bufferListSizeNeededOut: &size, bufferListOut: nil, bufferListSize: 0,
@@ -298,38 +307,26 @@ final class MixSource: @unchecked Sendable {
         guard CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sample, bufferListSizeNeededOut: nil, bufferListOut: list.unsafeMutablePointer,
                                                                       bufferListSize: size, blockBufferAllocator: nil, blockBufferMemoryAllocator: nil,
                                                                       flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
-                                                                      blockBufferOut: &block) == noErr else { return }
-        let channels = Int(format.mChannelsPerFrame)
+                                                                      blockBufferOut: &block) == noErr else { return nil }
+        let channels = max(1, Int(format.mChannelsPerFrame))
         let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
-        let rate = format.mSampleRate
-        // Everything else as interleaved stereo floats, so that the rate can be changed if needed.
-        if isShort || abs(rate - LiveAudioFormat.sampleRate) > 1 {
-            var stereo = [Float](repeating: 0, count: frames * 2)
-            for i in 0..<frames {
-                for side in 0..<2 {
-                    let channel = min(side, channels - 1)
-                    let value: Float
-                    if interleaved {
-                        guard let data = list.first?.mData else { return }
-                        value = isShort ? Float(data.assumingMemoryBound(to: Int16.self)[i * channels + channel]) / 32_768
-                                        : data.assumingMemoryBound(to: Float.self)[i * channels + channel]
-                    } else {
-                        guard channel < list.count, let data = list[channel].mData else { return }
-                        value = isShort ? Float(data.assumingMemoryBound(to: Int16.self)[i]) / 32_768 : data.assumingMemoryBound(to: Float.self)[i]
-                    }
-                    stereo[i * 2 + side] = value
+        var stereo = [Float](repeating: 0, count: frames * 2)
+        for side in 0..<2 {
+            let channel = min(side, channels - 1)
+            if interleaved {
+                guard let data = list.first?.mData else { return nil }
+                for i in 0..<frames {
+                    stereo[i * 2 + side] = isShort ? Float(data.assumingMemoryBound(to: Int16.self)[i * channels + channel]) / 32_768
+                                                   : data.assumingMemoryBound(to: Float.self)[i * channels + channel]
+                }
+            } else {
+                guard channel < list.count, let data = list[channel].mData else { return nil }
+                for i in 0..<frames {
+                    stereo[i * 2 + side] = isShort ? Float(data.assumingMemoryBound(to: Int16.self)[i]) / 32_768 : data.assumingMemoryBound(to: Float.self)[i]
                 }
             }
-            stereo.withUnsafeBufferPointer { writeStereo($0.baseAddress!, frames: frames, rate: rate) }
-            return
         }
-        let pointers = list.compactMap { $0.mData.map { UnsafePointer($0.assumingMemoryBound(to: Float.self)) } }
-        guard !pointers.isEmpty else { return }
-        if interleaved {
-            write([pointers[0]], frames: frames, channels: channels, interleaved: true)
-        } else {
-            write(pointers.count >= 2 ? [pointers[0], pointers[1]] : [pointers[0]], frames: frames, channels: min(2, pointers.count), interleaved: false)
-        }
+        return (stereo, format.mSampleRate)
     }
 }
 
@@ -345,6 +342,8 @@ final class ClipSource: @unchecked Sendable {
     private var generation = 0
     private var meetingGain: Float = 1
     private var earGain: Float = 1
+    /// Tells a recording which sound starts when (nil: none any more), at the time the meme was pressed.
+    var onStart: (@Sendable ([Float]?, Int64) -> Void)?
 
     func setGains(meeting: Float, ear: Float) {
         lock.withLock {
@@ -355,22 +354,26 @@ final class ClipSource: @unchecked Sendable {
 
     /// Starts the sound of a file (nil: stops). Files without sound change nothing.
     func play(_ url: URL?) {
-        let id: Int = lock.withLock {
+        let pressed = HostFrames.now
+        let (id, report): (Int, (@Sendable ([Float]?, Int64) -> Void)?) = lock.withLock {
             generation += 1
             playing = false
             samples = []
-            return generation
+            return (generation, onStart)
         }
+        report?(nil, pressed)
         guard let url else { return }
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let decoded = await Self.decode(url), let self else { return }
-            self.lock.withLock {
-                guard self.generation == id else { return }
+            let current: Bool = self.lock.withLock {
+                guard self.generation == id else { return false }
                 self.samples = decoded
                 self.meetingPosition = 0
                 self.earPosition = 0
                 self.playing = true
+                return true
             }
+            if current { report?(decoded, pressed) }
         }
     }
 

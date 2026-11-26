@@ -21,6 +21,8 @@ struct LiveConfig: Codable, Equatable {
     /// How far the outline lies inside the person, and how much it is calmed over time (0…1, nil: 0.5).
     var backgroundEdge: Double? = nil
     var backgroundCalm: Double? = nil
+    /// Behind the person: the own room blurred instead of a picture (nil: the picture), and how strongly (0…1).
+    var backgroundBlur: Double? = nil
     /// Show keyboard shortcuts pressed on the Mac.
     var keys: Bool? = nil
     /// Scene around the source (laptop, television …), nil: none.
@@ -107,6 +109,15 @@ enum LiveCompositor {
     }
 
     /// The person of a camera picture in front of a picture. `mask` is white where the person is.
+    /// The camera picture itself, blurred (computed small, so that it stays quick at 30 pictures per second).
+    static func blurred(_ camera: CIImage, amount: Double) -> CIImage {
+        let e = camera.extent
+        let small = camera.transformed(by: CGAffineTransform(scaleX: 0.25, y: 0.25))
+        let sigma = 2 + 14 * min(1, max(0, amount))
+        return small.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: small.extent)
+            .transformed(by: CGAffineTransform(scaleX: 4, y: 4)).cropped(to: e)
+    }
+
     static func person(_ camera: CIImage, mask: CIImage, background: CIImage, edge: Double = 0.5) -> CIImage {
         let e = camera.extent, m = mask.extent
         let fittedMask = mask.transformed(by: CGAffineTransform(translationX: -m.minX, y: -m.minY)

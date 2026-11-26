@@ -4,13 +4,14 @@ import Foundation
 
 /// The audio lanes of the editor timeline.
 enum AudioLane: String, Codable, CaseIterable, Identifiable {
-    case mic, system, voiceOver, music
+    case mic, system, meeting, voiceOver, music
     var id: String { rawValue }
 
     var label: String {
         switch self {
         case .mic: return "Mikrofon"
         case .system: return "Systemton"
+        case .meeting: return "Meeting"
         case .voiceOver: return "Voice-over"
         case .music: return "Musik"
         }
@@ -20,6 +21,7 @@ enum AudioLane: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .mic: return "mic.fill"
         case .system: return "speaker.wave.2.fill"
+        case .meeting: return "person.2.fill"
         case .voiceOver: return "waveform.badge.mic"
         case .music: return "music.note"
         }
@@ -30,6 +32,7 @@ enum AudioLane: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .mic: return "mic"
         case .system: return "system"
+        case .meeting: return "meeting"
         case .voiceOver: return "voiceover"
         case .music: return "music"
         }

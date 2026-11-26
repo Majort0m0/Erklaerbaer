@@ -1263,16 +1263,24 @@ final class FrameRenderer: @unchecked Sendable {
 
     /// The camera with the picture behind the person (no green screen: the person is found by macOS).
     private func backgrounded(_ cam: CIImage, settings s: EditSettings, time: Double) -> CIImage {
-        guard s.cameraShape != .cutout, let file = s.cameraBackground, let back = picture(file),
+        guard s.cameraShape != .cutout else { return cam }
+        let picture = s.cameraBackground.flatMap { picture($0) }
+        // Without a picture: the own room, blurred (if wanted).
+        guard picture != nil || s.cameraBackgroundBlur != nil,
               let found = personMask(cam, calm: s.cameraBackgroundCalm ?? 0.5, time: time) else { return cam }
         let mask = LiveCompositor.sharpened(found, edge: s.cameraBackgroundEdge ?? 0.5)
         let e = cam.extent
-        let scale = max(e.width / max(1, back.extent.width), e.height / max(1, back.extent.height))
-        var filled = back.transformed(by: CGAffineTransform(translationX: -back.extent.midX, y: -back.extent.midY)
-            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
-            .concatenating(CGAffineTransform(translationX: e.midX, y: e.midY)))
-        // A mirrored camera must not mirror the writing on the picture.
-        if s.cameraMirror { filled = filled.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 2 * e.midX, ty: 0)) }
+        var filled: CIImage
+        if let back = picture {
+            let scale = max(e.width / max(1, back.extent.width), e.height / max(1, back.extent.height))
+            filled = back.transformed(by: CGAffineTransform(translationX: -back.extent.midX, y: -back.extent.midY)
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                .concatenating(CGAffineTransform(translationX: e.midX, y: e.midY)))
+            // A mirrored camera must not mirror the writing on the picture.
+            if s.cameraMirror { filled = filled.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 2 * e.midX, ty: 0)) }
+        } else {
+            filled = LiveCompositor.blurred(cam, amount: s.cameraBackgroundBlur ?? 0.5)
+        }
         return cam.applyingFilter("CIBlendWithMask", parameters: [
             kCIInputBackgroundImageKey: filled.cropped(to: e),
             kCIInputMaskImageKey: mask.clampedToExtent().applyingGaussianBlur(sigma: 1.2).cropped(to: e),

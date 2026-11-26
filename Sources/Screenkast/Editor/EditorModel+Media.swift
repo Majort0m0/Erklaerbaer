@@ -366,11 +366,13 @@ extension EditorModel {
         commitUndoStep(); defer { commitUndoStep() }
         if let m = v.mic { settings.micVolume = m; settings.micMuted = false }
         if let s = v.system { settings.systemVolume = s }
+        if let m = v.meeting { settings.meetingVolume = m; settings.meetingMuted = false }
         if let o = v.voiceOver { settings.voiceOverVolume = o; settings.voiceOverMuted = false }
         if let m = v.music { settings.music?.volume = m }
         func lufs(_ x: Double?) -> String? { x.flatMap { $0.isFinite ? String(format: "%.0f", $0) : nil } }
         var parts: [String] = []
         if let m = lufs(levels.mic) { parts.append("Mikrofon \(m)" + (levels.micHasSpeech ? "" : " (keine Sprache, unverändert)")) }
+        if let m = lufs(levels.meeting) { parts.append("Meeting \(m)") }
         if let s = lufs(levels.system) { parts.append("Systemton \(s)") }
         if let o = lufs(levels.voiceOver) { parts.append("Voice-over \(o)") }
         if let m = lufs(levels.music) { parts.append("Musik \(m)") }

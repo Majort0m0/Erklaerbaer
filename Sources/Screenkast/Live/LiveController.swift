@@ -100,6 +100,15 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         }
     }
     @Published var microphoneID: String { didSet { UserDefaults.standard.set(microphoneID, forKey: "liveMicrophoneID") } }
+    /// The big window with the live picture (for screen sharing). Off when only the camera "Erklärbär" is used.
+    @Published var showProgram: Bool = UserDefaults.standard.object(forKey: "liveShowProgram") as? Bool ?? true {
+        didSet {
+            guard showProgram != oldValue else { return }
+            UserDefaults.standard.set(showProgram, forKey: "liveShowProgram")
+            guard panel != nil else { return }
+            if showProgram { program.show() } else { program.close() }
+        }
+    }
     @Published private(set) var isRecording = false
     @Published private(set) var recordingTime: TimeInterval = 0
     @Published private(set) var framesPerSecond = 0
@@ -195,7 +204,7 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
             }
         if config.keys == true, KeyShortcuts.isTrusted(prompt: false) { engine.watchKeys(true) }
         program.onClose = { [weak self] in Task { @MainActor in await self?.end() } }
-        program.show()
+        if showProgram { program.show() }
         showPanel()
         remote.attach(self)
         if !cameraID.isEmpty { engine.camera.select(deviceID: cameraID) }
@@ -346,7 +355,34 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         backgroundFile = target
         UserDefaults.standard.set(target.path, forKey: "liveBackground")
         engine.setBackground(url: target)
-        config.background = true
+        var new = config
+        new.background = true
+        new.backgroundBlur = nil   // a picture was chosen: the picture, not the blur
+        config = new
+    }
+
+    enum BackgroundStyle: String { case real, blur, image }
+
+    /// What is behind the person: the real room, the room blurred, or a picture.
+    var backgroundStyle: BackgroundStyle {
+        config.background != true ? .real : (config.backgroundBlur != nil ? .blur : .image)
+    }
+
+    /// Switches the background; a picture is asked for when there is none yet.
+    func setBackgroundStyle(_ style: BackgroundStyle) {
+        var new = config
+        switch style {
+        case .real:
+            new.background = false
+        case .blur:
+            new.background = true
+            new.backgroundBlur = new.backgroundBlur ?? 0.5
+        case .image:
+            guard backgroundFile != nil else { return chooseBackground() }
+            new.background = true
+            new.backgroundBlur = nil
+        }
+        config = new
     }
 
     // MARK: Logos and banners
@@ -546,7 +582,12 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         let url = Project.makeNewProjectURL(in: ProjectLocations.recordingFolder)
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            let roles = try engine.startRecording(to: url.appendingPathComponent("screen.mov"), microphoneID: microphoneID.isEmpty ? nil : microphoneID)
+            let separate = audio.recordsMeetingSeparately
+            let (roles, start) = try engine.startRecording(to: url.appendingPathComponent("screen.mov"),
+                                                           microphoneID: microphoneID.isEmpty ? nil : microphoneID, meeting: separate)
+            // The others in the meeting ("Meeting") and programs, iPad and memes ("Systemton") on their own tracks.
+            let engine = engine
+            audio.startRecording(at: start, separateMeeting: separate) { sample, role in engine.appendRecordedSound(sample, role: role) }
             let info = Self.info(duration: 0, roles: roles)
             progress = try? RecordingProgressWriter(folder: url, info: info)
             recordingRoles = roles
@@ -574,8 +615,12 @@ final class LiveModel: NSObject, ObservableObject, NSWindowDelegate {
         recordingURL = nil
         progress?.flush()
         do {
-            let duration = try await engine.stopRecording()
-            let project = Project(url: url, info: Self.info(duration: duration, roles: recordingRoles), cursor: CursorTrack(), settings: ProjectFactory.plainSettings(aspect: .wide))
+            let duration = try await engine.stopRecording { [audio] end in await audio.finishRecording(at: end) }
+            var settings = ProjectFactory.plainSettings(aspect: .wide)
+            // The meeting comes out of headphones or loudspeakers and the microphone picks a little of it up:
+            // the voice track is cleaned against what was played.
+            settings.removeEcho = recordingRoles.contains("mic") && (recordingRoles.contains("system") || recordingRoles.contains("meeting"))
+            let project = Project(url: url, info: Self.info(duration: duration, roles: recordingRoles), cursor: CursorTrack(), settings: settings)
             try project.saveAll()
             progress?.finish()
             progress = nil

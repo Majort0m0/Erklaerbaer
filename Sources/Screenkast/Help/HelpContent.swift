@@ -52,13 +52,15 @@ enum HelpContent {
             .text("Erklärbär nimmt deinen Bildschirm auf und macht daraus ein fertiges Erklärvideo: Er zoomt automatisch dorthin, wo du klickst, zeichnet einen ruhigen Mauszeiger, legt einen schönen Hintergrund unter die Aufnahme und blendet auf Wunsch deine Kamera ein. Danach schneidest du im Editor, fügst Texte, Untertitel und Musik hinzu und exportierst das Video."),
             .heading("In drei Schritten zum Video"),
             .steps([
-                "**Aufnehmen:** Links auf der Startseite die Quelle wählen (Bildschirm, Fenster oder Bereich), Mikrofon und Kamera einstellen und auf **Aufnahme starten** klicken – oder überall **⌘⇧2** drücken. Nochmal **⌘⇧2** (oder das ●-Symbol in der Menüleiste) beendet die Aufnahme.",
+                "**Aufnehmen:** Auf der Startseite die Kachel **Bildschirm aufnehmen** wählen, im kleinen Fenster Quelle (Bildschirm, Fenster, Bereich oder iPad), Mikrofon und Kamera einstellen und auf **Aufnahme starten** klicken – oder überall **⌘⇧2** drücken. Nochmal **⌘⇧2** (oder das ●-Symbol in der Menüleiste) beendet die Aufnahme.",
                 "**Verbessern:** Nach der Aufnahme fragt Erklärbär „Was möchtest du erstellen?“ und poliert das Video auf Wunsch automatisch auf: Stimme verbessern, Untertitel, Füllwörter und Pausen entfernen, Zooms, Pegel. Alles lässt sich danach im Editor ändern oder zurücknehmen.",
                 "**Exportieren:** Oben rechts auf **Exportieren** (⌘E) klicken, eine Vorlage wählen (z. B. YouTube oder Hochformat) – fertig ist das MP4.",
             ]),
+            .heading("Die Startseite"),
+            .text("Oben stehen sechs Kacheln für alles, was du mit Erklärbär machen kannst: **Bildschirm aufnehmen**, **Screenshot**, **Live für Meetings**, **Neues Projekt**, **Video importieren** und **Video aus dem Internet**. Darunter liegen deine Projekte. Allgemeine Einstellungen (Steuerleiste, Menüleiste, Start beim Anmelden, Speicherort, Kurzbefehle) findest du über das Zahnrad oben rechts oder **Erklärbär › Einstellungen …** (⌘,)."),
             .heading("Beim ersten Start"),
             .bullets([
-                "macOS fragt nach der Berechtigung **Bildschirm- und Systemaudioaufnahme**. Erlauben und Erklärbär danach einmal neu starten – die Startseite bietet dafür einen Knopf an.",
+                "macOS fragt nach der Berechtigung **Bildschirm- und Systemaudioaufnahme**. Erlauben und Erklärbär danach einmal neu starten – die Startseite bietet dafür oben einen Knopf an.",
                 "Kamera und Mikrofon werden beim ersten Benutzen erfragt.",
                 "Für das Einblenden von Tastenkürzeln braucht Erklärbär die Berechtigung **Bedienungshilfen**.",
             ]),
@@ -77,7 +79,7 @@ enum HelpContent {
                 "**Quelle:** ein ganzer Bildschirm, ein einzelnes Fenster oder über **Bereich des Bildschirms wählen …** ein frei aufgezogenes Rechteck. Fenster aus dem Stage Manager und von anderen Schreibtischen stehen unter „Weitere Fenster“; ein gewähltes Fenster wird beim Start nach vorne geholt.",
                 "**Mikrofon:** deine Stimme. „Aus“ nimmt ohne Mikrofon auf.",
                 "**Systemaudio:** der Ton von Apps und Browser (ohne Erklärbär selbst).",
-                "**Kamera:** dein Kamerabild, später als Kamerablase im Video. Die runde Vorschau auf der Startseite zeigt, wie du zu sehen bist.",
+                "**Kamera:** dein Kamerabild, später als Kamerablase im Video. Die runde Vorschau im Fenster „Bildschirm aufnehmen“ zeigt, wie du zu sehen bist.",
                 "**Zweites Fenster:** ein weiteres Fenster wird gleichzeitig aufgenommen und erscheint im Editor als Bild im Bild – verschiebbar und nur zeitweise einblendbar.",
             ]),
             .note("Der Mauszeiger wird nicht mitgefilmt, sondern später neu gezeichnet – deshalb kann Erklärbär ihn glätten, vergrößern, hervorheben oder ausblenden."),
@@ -94,7 +96,7 @@ enum HelpContent {
             .text("Der Griff zum Stopp-Knopf am Ende wird automatisch weggeschnitten."),
             .heading("Steuerleiste und Menüleiste"),
             .bullets([
-                "Die **Steuerleiste** (Schalter auf der Startseite oder Menü „Fenster“) schwebt über allen Fenstern: Quelle, Mikrofon, Kamera, Systemton, Screenshot und Aufnehmen; während der Aufnahme Zeit, Pause, Stopp und Verwerfen. Sie wird nie mit aufgenommen.",
+                "Die **Steuerleiste** (Schalter in den Einstellungen oder Menü „Fenster“) schwebt über allen Fenstern: Quelle, Mikrofon, Kamera, Systemton, Screenshot und Aufnehmen; während der Aufnahme Zeit, Pause, Stopp und Verwerfen. Sie wird nie mit aufgenommen.",
                 "**In der Menüleiste anzeigen** legt ein Symbol oben rechts an – damit startest du Aufnahmen und Screenshots auch bei geschlossenem Fenster.",
                 "**Beim Anmelden starten** öffnet Erklärbär mit dem Mac, dann nur mit dem Menüleisten-Symbol.",
             ]),
@@ -118,16 +120,16 @@ enum HelpContent {
         id: "newproject", title: "Eigenes Material", icon: "plus.rectangle.on.rectangle", color: .indigo,
         summary: "Videos schneiden, die nicht mit Erklärbär aufgenommen wurden – auch aus dem Internet.",
         blocks: [
-            .text("Über **Neues Projekt** auf der Startseite (oder **Ablage › Neues Projekt …**) nutzt du den Editor auch für eigenes Material."),
+            .text("Über die Kacheln **Neues Projekt**, **Video importieren** und **Video aus dem Internet** auf der Startseite (oder **Ablage › Neues Projekt …**) nutzt du den Editor auch für eigenes Material. **Neues Projekt** fragt nach dem Format: Querformat 16:9, Hochformat 9:16, quadratisch oder 4:3."),
             .heading("Aus eigenem Video"),
             .steps([
-                "**Neues Projekt › Aus eigenem Video …** wählen – oder eine Videodatei einfach auf die Projektliste ziehen.",
+                "Die Kachel **Video importieren** wählen – oder eine Videodatei einfach auf die Projektliste ziehen.",
                 "Das Video wird zur Hauptspur. Sein Ton zählt als Mikrofon: Stimme verbessern, Untertitel, Pausen und Füllwörter entfernen funktionieren wie bei einer Aufnahme.",
                 "Das Bild füllt das Format ohne Rahmen. Hochkant gefilmte Handyvideos werden richtig gedreht und bekommen das Format 9:16.",
             ]),
             .heading("Aus einem Video im Internet"),
             .steps([
-                "Auf der Startseite unter **Aufnahme starten** auf **Video aus dem Internet** klicken (oder **Neues Projekt › Aus Video im Internet …**, **Ablage › Neues Projekt aus Video im Internet …**). Einen Link aus der Adresszeile des Browsers kannst du auch direkt auf die Projektliste ziehen.",
+                "Auf der Startseite die Kachel **Video aus dem Internet** wählen (oder **Ablage › Neues Projekt aus Video im Internet …**). Einen Link aus der Adresszeile des Browsers kannst du auch direkt auf die Projektliste ziehen.",
                 "Die Adresse einfügen – von YouTube, Instagram (auch Reels), Vimeo, TikTok, einer Mediathek oder einen direkten Link zu einer Videodatei – und **Laden und öffnen** klicken.",
                 "Erklärbär lädt das Video und öffnet es als neues Projekt, benannt nach dem Titel des Videos. Wie beim eigenen Video wird es zur Hauptspur, Hochkant-Videos wie Reels bekommen das Format 9:16.",
             ]),
@@ -286,7 +288,7 @@ enum HelpContent {
             .text("In der Kamera-Spur legst du fest, wie die Kamera in einem Abschnitt erscheint: **Normal**, **Groß**, **Nur Kamera**, **Nebeneinander** (Aufnahme links bzw. oben, Kamera daneben) oder **Aus**. Ein Klick in die Kamera-Spur legt einen Abschnitt an, die Übergänge sind weich."),
             .note("Im Hochformat (9:16) steht die Aufnahme oben und die Kamera groß darunter – das passt Erklärbär beim Formatwechsel automatisch an."),
             .heading("Virtueller Hintergrund"),
-            .text("Im Inspektor unter **Kamera** ein Bild wählen: Du stehst dann vor diesem Bild oder dieser Grafik, ohne Greenscreen. macOS stellt dich dafür automatisch frei. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Bei der Form **Freigestellt** gibt es keinen Hintergrund, dort liegst du direkt über dem Bild."),
+            .text("Im Inspektor unter **Kamera** bei **Hintergrund** wählen: **Echt** (dein Zimmer), **Unscharf** (dein Zimmer verschwommen, Stärke mit **Unschärfe**) oder **Bild** (du stehst vor einem Bild oder einer Grafik) – ohne Greenscreen, macOS stellt dich dafür automatisch frei. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Bei der Form **Freigestellt** gibt es keinen Hintergrund, dort liegst du direkt über dem Bild."),
         ])
 
     // MARK: Texte, Bilder, Videos
@@ -502,15 +504,17 @@ enum HelpContent {
 
     static let export = HelpTopic(
         id: "export", title: "Exportieren", icon: "square.and.arrow.up", color: .blue,
-        summary: "Das fertige Video als MP4 oder GIF sichern und auf YouTube veröffentlichen.",
+        summary: "Das fertige Video als MP4 oder GIF sichern, nur den Ton oder das Transkript – und auf YouTube veröffentlichen.",
         blocks: [
             .steps([
                 "**Exportieren** oben rechts klicken oder **⌘E** drücken.",
-                "Eine Vorlage wählen: YouTube (1080p, 60 fps), YouTube 4K, Hochformat (Shorts, Reels, TikTok), Quadratisch (Instagram, LinkedIn), Klein (720p, zum Verschicken), animiertes GIF – oder eigene Einstellungen (H.264/HEVC, 720p bis 4K, 30/60 fps).",
+                "Eine Vorlage wählen: YouTube (1080p, 60 fps), YouTube 4K, Hochformat (Shorts, Reels, TikTok), Quadratisch (Instagram, LinkedIn), Klein (720p, zum Verschicken), animiertes GIF, **Nur Ton**, **Transkript** – oder eigene Einstellungen (H.264/HEVC, 720p bis 4K, 30/60 fps).",
                 "**Exportieren …** klicken und den Speicherort wählen. Ist das Video fertig, zeigt **Im Finder zeigen** die Datei.",
             ]),
             .bullets([
                 "Kapitelmarken landen zusätzlich als `….kapitel.txt` neben dem Video.",
+                "**Nur Ton:** der fertige Ton des Projekts – alle Spuren mit ihren Lautstärken, Schnitten und Tempo – als **M4A** (klein) oder **WAV** (unkomprimiert, 24 Bit). Die Gesamtlautstärke aus dem Audio-Tab gilt auch hier.",
+                "**Transkript:** als **Text** (Kapitel als Überschriften, Absätze nach Sprechpausen), **Text mit Zeitmarken** oder als Untertitel **SRT** bzw. **WebVTT** – so, wie es im fertigen Video gesprochen wird: Herausgeschnittenes fehlt, die Zeiten passen zum Export. Gibt es noch kein Transkript, erstellt der Export-Dialog es auf Knopfdruck. Auch im Transkript-Bereich unter **Exportieren**.",
                 "Nach einem MP4-Export führt **Auf YouTube …** direkt ins YouTube-Fenster (siehe unten).",
                 "Mit **Gesamtlautstärke beim Export** (Audio-Tab) bekommt das Video die richtige Lautheit für YouTube & Co.",
                 "Vorschau und Export nutzen denselben Renderer – was du siehst, ist was du bekommst.",
@@ -535,7 +539,7 @@ enum HelpContent {
             .heading("Aufnehmen"),
             .bullets([
                 "**⌘⇧1** – einen Bereich aufziehen, von überall.",
-                "**Fenster** oder **ganzer Bildschirm** über das Screenshot-Menü: auf der Startseite, im Menü **Ablage › Screenshot**, im Menüleisten-Symbol oder am Pfeil des Screenshot-Knopfs der Steuerleiste.",
+                "**Fenster** oder **ganzer Bildschirm**: Kachel **Screenshot** auf der Startseite, Menü **Ablage › Screenshot**, im Menüleisten-Symbol oder am Pfeil des Screenshot-Knopfs der Steuerleiste.",
                 "**Bild bearbeiten …** öffnet ein vorhandenes Bild im Screenshot-Editor.",
             ]),
             .heading("Bearbeiten"),
@@ -553,7 +557,7 @@ enum HelpContent {
         blocks: [
             .text("Projekte liegen standardmäßig in **~/Filme/Erklärbär**. **Im Finder** auf der Startseite öffnet den Ordner."),
             .heading("Speicherort wählen"),
-            .text("Oben auf der Startseite und bei den Aufnahme-Einstellungen wählst du, wo neue Aufnahmen und Projekte landen – auch auf einem externen Laufwerk oder einer Netzwerkfreigabe (**Anderer Ort …**)."),
+            .text("Rechts über der Projektliste und in den Einstellungen (⌘,) wählst du, wo neue Aufnahmen und Projekte landen – auch auf einem externen Laufwerk oder einer Netzwerkfreigabe (**Anderer Ort …**)."),
             .bullets([
                 "**Freigaben im Netzwerk:** Aufnahmen werden zuerst auf dem Mac gespeichert und nach dem Stoppen dorthin verschoben, damit nichts verloren geht.",
                 "**Projekt umbenennen:** Rechtsklick auf ein Projekt › **Umbenennen …** – oder im geöffneten Projekt **Ablage › Projekt umbenennen …** bzw. ⌘K › „umbenennen“. Der Name ist auch der Name des Projektordners.",
@@ -604,7 +608,7 @@ enum HelpContent {
         summary: "Bildschirm, Fenster, iPad und Webcam live in Zoom, Teams oder Meet zeigen, auch als Kamera und Mikrofon „Erklärbär“.",
         blocks: [
             .steps([
-                "Auf der Startseite **Live für Meetings** wählen. Es öffnen sich das **Programm-Fenster** und die **Steuerung**.",
+                "Auf der Startseite die Kachel **Live für Meetings** wählen. Es öffnen sich das **Programm-Fenster** und die **Steuerung**.",
                 "Im Meeting-Programm **Bildschirm teilen** wählen und das Fenster **Erklärbär – Programm** auswählen.",
                 "In der Steuerung die Szene wählen: **Nur Webcam** (Q), **Quelle** (W) oder **Quelle + Webcam** (E). Das Bild blendet weich um.",
             ]),
@@ -647,11 +651,13 @@ enum HelpContent {
                 "**Banner:** ein Streifen oben oder unten mit deinem Namen (und einer zweiten Zeile, z. B. Rolle oder Webseite) links und einem Logo rechts. **+ › Banner erstellen …** öffnet ein eigenes Fenster mit Vorschau, Farben, Schrift und Höhe. Rechtsklick auf eine Kachel: bearbeiten, duplizieren, löschen; bei Logos: Ecke, Größe und Deckkraft.",
                 "**Rahmen:** zeigt die Quelle auf einem Laptop, Tablet, Fernseher, im Theater, Kino oder Bilderrahmen. „Nur Webcam“ bleibt davon unberührt. Rahmen und virtuellen Hintergrund findest du unter **Rahmen und Hintergrund**.",
                 "**Webcam-Bubble:** in der kleinen Vorschau ziehen, am gelben Punkt die Größe ändern.",
-                "**Virtueller Hintergrund:** Du stehst vor einem Bild oder einer Grafik, ohne Greenscreen. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Gleichmäßiges Licht macht den Rand sauberer.",
+                "**Hintergrund** (unter **Rahmen und Hintergrund**): **Echt**, **Unscharf** (dein Zimmer verschwommen, mit Regler für die Unschärfe) oder **Bild** – du stehst vor einem Bild oder einer Grafik, ohne Greenscreen. Mit **Kante** legst du fest, wie eng der Rand an dir liegt, **Beruhigen** nimmt das Flackern. Gleichmäßiges Licht macht den Rand sauberer.",
                 "**Klick-Effekte**, **Mausspur** und **Tastenkürzel** lassen sich zuschalten (nicht beim iPad). Angezeigt werden nur Kombinationen mit ⌘, ⌃ oder ⌥, normales Tippen nie. Für die Tastenkürzel fragt macOS beim ersten Mal nach der Berechtigung **Bedienungshilfen**.",
                 "**Einklappen** (H, Knopf oben rechts): Die Steuerung fährt wie eine Schublade an den Bildschirmrand, ein kleiner Griff holt sie zurück. Das Live-Bild läuft weiter.",
-                "**Aufnehmen** (R) speichert das Live-Bild als neues Projekt, auf Wunsch mit dem Mikrofon. Beim iPad kommt auch dessen Ton mit.",
+                "**Aufnehmen** (R) speichert das Live-Bild als neues Projekt mit getrennten Tonspuren: **Mikrofon** (deine Stimme), **Meeting** (die anderen aus dem Meeting-Programm) und **Systemton** (Memes, das iPad und eingeschaltete Programme, in ihrer Meeting-Lautstärke). Im Editor regelst du jede Spur einzeln. Ist kein Meeting-Programm gewählt, landet aller Ton des Macs außer Erklärbär im Systemton.",
+                "Was aus Kopfhörern oder Lautsprechern leise ins Mikrofon dringt, rechnet **Lautsprecher-Echo entfernen** (Audio-Tab) heraus; bei Live-Aufnahmen ist es von Anfang an eingeschaltet.",
             ]),
+            .note("Bevor du ein Meeting mit anderen aufnimmst, frag sie, ob sie einverstanden sind."),
             .heading("Ton und Mischpult"),
             .text("Die Zeile **Ton** in der Steuerung zeigt, wie laut deine Stimme ist und was ins Meeting geht. **Stumm** (M) nimmt nur deine Stimme aus dem Meeting. **Mischpult** öffnet ein eigenes Fenster mit allen Quellen."),
             .bullets([
@@ -670,14 +676,14 @@ enum HelpContent {
             ]),
             .bullets([
                 "**Bühne:** Memes und wo sie erscheinen, Logos (⚙︎: Ecke, Größe, Deckkraft) und Banner.",
-                "**Bild:** Quelle (⟳ holt neue Fenster), Webcam und ihre Größe, Rahmen, virtueller Hintergrund mit Kante und Beruhigen, Klick-Effekte, Mausspur und Tastenkürzel. Ein Foto vom iPhone wird mit **Bild wählen …** zum Hintergrund.",
-                "**Ton:** Mikrofon, Kamera und Mikrofon „Erklärbär“ senden, Meeting-Programm, Kopfhörer und das ganze Mischpult.",
+                "**Bild:** Quelle (⟳ holt neue Fenster), Webcam und ihre Größe, Rahmen, Hintergrund (echt, unscharf oder Bild) mit Kante und Beruhigen, Klick-Effekte, Mausspur und Tastenkürzel. Ein Foto vom iPhone wird mit **Bild wählen …** zum Hintergrund.",
+                "**Ton:** Mikrofon, Kamera und Mikrofon „Erklärbär“ senden, Meeting-Programm, Kopfhörer, das ganze Mischpult und das große Programm-Fenster am Mac.",
                 "Oben: Vorschau, **Stumm**, **Aufnehmen** und die drei Szenen. Den gelben Kreis in der Vorschau ziehen verschiebt die Webcam.",
                 "In Safari **Teilen › Zum Home-Bildschirm** wählen: Dann startet die Steuerung wie eine App.",
                 "**Neuer Code** macht den alten QR-Code ungültig; erlaubte Geräte bleiben erlaubt.",
             ]),
             .tip("Ohne Mikrofon „Erklärbär“ wählt das Meeting-Programm den Ton selbst: Dein Mikrofon stellst du dort ein. Soll der Ton von iPad oder Memes mitgesendet werden, schalte dort **Computerton teilen** ein."),
-            .tip("Das Programm-Fenster lässt sich größer ziehen. Je größer es ist, desto schärfer kommt es im Meeting an."),
+            .tip("Das Programm-Fenster lässt sich größer ziehen. Je größer es ist, desto schärfer kommt es im Meeting an. Benutzt du nur die Kamera „Erklärbär“, schalte unten in der Steuerung **Großes Programm-Fenster zeigen** aus – das Live-Bild läuft weiter."),
         ])
 
     static let memes = HelpTopic(
@@ -711,7 +717,7 @@ enum HelpContent {
             .bullets([
                 "In **Systemeinstellungen › Datenschutz & Sicherheit › Bildschirm- und Systemaudioaufnahme** muss Erklärbär eingeschaltet sein.",
                 "Nach dem Erteilen der Berechtigung Erklärbär **neu starten** – macOS übernimmt sie erst dann.",
-                "**Quellen aktualisieren** (Pfeil unten auf der Startseite) liest Bildschirme, Fenster, Mikrofone und Kameras neu ein.",
+                "**Quellen aktualisieren** (Pfeil neben „Quelle“ im Fenster „Bildschirm aufnehmen“) liest Bildschirme, Fenster, Mikrofone und Kameras neu ein.",
             ]),
             .heading("Kein Ton oder keine Kamera"),
             .text("Unter **Datenschutz & Sicherheit › Mikrofon** bzw. **› Kamera** prüfen, ob Erklärbär erlaubt ist. Für Tastenkürzel braucht es **› Bedienungshilfen**."),

@@ -95,6 +95,9 @@ enum LiveRemotePage {
     .switch.on{background:var(--ok)}
     .switch.on i{left:22px}
     .switch:disabled{opacity:.35}
+    .seg{display:inline-grid;grid-auto-flow:column;gap:2px;background:rgba(255,255,255,.08);border-radius:9px;padding:2px}
+    .seg button{min-height:34px;padding:0 12px;border-radius:7px;font-size:14px;font-weight:600;color:var(--dim)}
+    .seg button.on{background:var(--panel2);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.35)}
     .pick{display:inline-flex;align-items:center;min-height:38px;padding:0 14px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);font-weight:600;font-size:15px;cursor:pointer}
     .group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:4px 12px}
     /* Memes, logos, banners */
@@ -185,7 +188,8 @@ enum LiveRemotePage {
             <div class="note hidden" id="mockupNote">Rahmen gibt es bei den Szenen „Quelle“ und „Quelle + Webcam“.</div>
             <h2>Virtueller Hintergrund</h2>
             <div class="group">
-              <div class="line"><span>Hintergrund hinter dir</span><button class="switch" id="background" data-set="background"><i></i></button></div>
+              <div class="line"><span>Hinter dir</span><div class="seg" id="bgStyle"><button data-bg="real">Echt</button><button data-bg="blur">Unscharf</button><button data-bg="image">Bild</button></div></div>
+              <div class="slider" id="bgBlurRow"><span>Unschärfe</span><input type="range" id="backgroundBlur" data-set="backgroundBlur" min="0" max="1" step="0.01"><span class="val"></span></div>
               <div class="line"><span class="note" style="margin:0" id="bgText">Ohne Greenscreen: Du stehst vor einem Bild.</span><label class="pick">Bild wählen …<input type="file" accept="image/*" id="bgFile" hidden></label></div>
               <div id="bgSliders">
                 <div class="slider"><span>Kante</span><input type="range" id="backgroundEdge" data-set="backgroundEdge" min="0.1" max="0.9" step="0.01"><span class="val"></span></div>
@@ -211,6 +215,10 @@ enum LiveRemotePage {
                 <div class="line" id="meetingMicrophoneLine"><span>Mikrofon senden</span><button class="switch" id="meetingMicrophone" data-set="meetingMicrophone"><i></i></button></div>
                 <div class="line"><span>Meeting läuft in</span><select id="meetingApp" data-set="meetingApp" aria-label="Meeting-Programm"></select></div>
               </div>
+            </div>
+            <h2>Am Mac</h2>
+            <div class="group">
+              <div class="line"><span>Großes Programm-Fenster</span><button class="switch" id="showProgram" data-set="showProgram"><i></i></button></div>
             </div>
             <h2>Hören</h2>
             <div class="group">
@@ -510,7 +518,9 @@ enum LiveRemotePage {
       options($("#mockup"), [{ items: [{ id: "", name: "Ohne" }].concat(s.mockups) }], s.mockup);
       $("#mockup").disabled = !framed;
       $("#mockupNote").classList.toggle("hidden", framed);
-      toggle($("#background"), s.background);
+      document.querySelectorAll("[data-bg]").forEach(b => b.classList.toggle("on", b.dataset.bg === s.backgroundStyle));
+      $("#bgBlurRow").classList.toggle("hidden", s.backgroundStyle !== "blur");
+      slider($("#backgroundBlur"), s.backgroundBlur, pct);
       text($("#bgText"), s.backgroundImage ? "Anderes Bild vom iPhone oder iPad:" : "Erst ein Bild wählen, z. B. ein Foto:");
       $("#bgSliders").classList.toggle("hidden", !s.background);
       slider($("#backgroundEdge"), s.backgroundEdge, pct);
@@ -533,6 +543,7 @@ enum LiveRemotePage {
       options($("#meetingApp"), [{ items: [{ id: "", name: "–" }].concat(apps) }], s.meetingApp);
       text($("#earName"), s.ear ? s.ear.name : "Keine Tonausgabe");
       toggle($("#headphones"), s.ear && s.ear.headphones, !s.ear);
+      toggle($("#showProgram"), s.showProgram);
       renderMixer(s);
     }
 
@@ -601,6 +612,11 @@ enum LiveRemotePage {
       else if (t.dataset.logoToggle) send({ action: "logo", id: t.dataset.logoToggle });
       else if (t.dataset.logoEdit) { editLogo = editLogo === t.dataset.logoEdit ? null : t.dataset.logoEdit; render(state); }
       else if (t.dataset.banner) send({ action: "banner", id: t.dataset.banner });
+      else if (t.dataset.bg) {
+        if (t.dataset.bg === "image" && !state.backgroundImage) { $("#bgFile").click(); return; }
+        document.querySelectorAll("[data-bg]").forEach(b => b.classList.toggle("on", b === t));
+        send({ action: "set", key: "backgroundStyle", value: t.dataset.bg });
+      }
       else if (t.dataset.tab) showTab(t.dataset.tab);
       else if (t.classList.contains("switch") && t.dataset.set) {
         const on = !t.classList.contains("on");

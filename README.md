@@ -19,7 +19,7 @@ Voraussetzungen: Mac mit Apple-Chip (M1 oder neuer), macOS 15 oder neuer. Untert
 
 ```bash
 ./scripts/build-app.sh                # → Erklärbär.app (Release) in /Applications bzw. ~/Applications
-SCREENKAST_ZIP=~/Desktop/Erklaerbaer-2.1.0-macOS.zip ./scripts/build-app.sh   # nur das ZIP für GitHub, ohne Installation
+SCREENKAST_ZIP=~/Desktop/Erklaerbaer-2.2.0-macOS.zip ./scripts/build-app.sh   # nur das ZIP für GitHub, ohne Installation
 ```
 
 Es genügen die Command Line Tools. Das Skript baut in `~/Library/Caches/Screenkast/build` (änderbar mit `SCREENKAST_BUILD_DIR`) und signiert in einem temporären Ordner. Grund: Der Projektordner liegt in iCloud-„Dokumente“. Dort hängt macOS neuen Bundles Finder-Metadaten an, die `codesign` ablehnt, und SwiftPM linkt manchmal nicht neu („disk I/O error“). Mit `SCREENKAST_APP_DIR=/anderer/ordner` lässt sich ein anderes Ziel wählen.
@@ -58,15 +58,17 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 
 ## Funktionen
 
+**Startbildschirm**: sechs Kacheln für die häufigsten Aufgaben – Bildschirmaufnahme, Bildschirmfoto, Neues Projekt, Video importieren, Video aus dem Internet und Live-Meeting. Die Einstellungen dazu öffnen sich erst nach der Wahl; Speicherort und Kurzbefehle stehen im Einstellungsfenster (⌘,).
+
 **Aufnahme**
 - Bildschirm oder Fenster über ScreenCaptureKit (HEVC, 60 fps). Der Mauszeiger wird *nicht* mitgefilmt, er wird später gerendert.
 - Mikrofon, **Systemaudio** (ohne Erklärbär selbst) und **Kamera** mit Live-Vorschau, alles synchron auf der Host-Uhr.
 - **iPad und iPhone per Kabel**: Bildschirm und Ton des Geräts direkt aufnehmen (Quelle „iPad und iPhone am Kabel“), dazu auf Wunsch Mikrofon und Kamera des Macs.
-- **Live für Meetings**: Programm-Fenster zum Teilen in Zoom, Teams oder Meet, Steuerfenster außerhalb des geteilten Bilds, Szenen (Webcam, Bildschirm, Fenster, iPad, mit verschiebbarer Webcam-Bubble), Rahmen wie Laptop oder Fernseher, Klick-Effekte, Mausspur, eingeblendete Tastenkürzel und Aufnahme nebenbei.
+- **Live für Meetings**: Programm-Fenster zum Teilen in Zoom, Teams oder Meet, Steuerfenster außerhalb des geteilten Bilds, Szenen (Webcam, Bildschirm, Fenster, iPad, mit verschiebbarer Webcam-Bubble), Rahmen wie Laptop oder Fernseher, Klick-Effekte, Mausspur, eingeblendete Tastenkürzel und Aufnahme nebenbei. Die Aufnahme legt drei getrennte Tonspuren an: **Mikrofon** (die eigene Stimme), **Meeting** (die anderen Teilnehmer aus dem Meeting-Programm) und **Systemton** (iPad, Memes, freigegebene Programme). Das große Programm-Fenster lässt sich ausblenden, wenn nur die Kamera „Erklärbär“ gebraucht wird.
 - **Ton-Mischpult im Live-Modus**: Stimme, iPad, Memes und einzelne Programme mit je einem Regler „Ins Meeting“ und „Ins Ohr“; Programme gehen nur ins Meeting, wenn du sie einschaltest (Core-Audio-Taps, Hilfsprozesse von Browsern inklusive), das Meeting-Programm nie. Die eigene Stimme bleibt aus dem Kopfhörer, auch wenn AirPods mitten im Meeting dazukommen. Stumm-Taste M.
 - **Fernsteuerung mit iPhone oder iPad**: Die ganze Live-Steuerung als Webseite im WLAN (Bühne, Bild, Ton mit Vorschau), per QR-Code geöffnet; neue Geräte werden am Mac einmal erlaubt. Ohne App, auch als Symbol auf dem Home-Bildschirm.
 - **Meme-Board**: zehn Plätze für kurze Clips, Suche in frei lizenzierten GIFs oder eigene Dateien, auf Knopfdruck live oder im Editor.
-- **Virtueller Hintergrund** für die Webcam, im Editor und live: Bild oder Grafik hinter der Person, ohne Greenscreen.
+- **Virtueller Hintergrund** für die Webcam, im Editor und live: Bild oder Grafik hinter der Person oder der eigene Raum **unscharf**, ohne Greenscreen.
 - **Nummerierte Schritte** und **Klicks hervorheben**: aus aufgezeichneten Klicks werden automatisch Rahmen, Pfeile, Finger oder Schritte.
 - **Maske folgt dem Inhalt**, **Teleprompter** beim Einsprechen, **Vorlagen-Pakete** mit Vorspann, Abspann und Bauchbinden-Design.
 - **Schnitt**: bis zu vier Medienspuren, Keyframes für Position, Größe, Deckkraft und Lautstärke, Rollen und Slip, Bibliothek im Projekt, Auswahl per Rahmen und alles rechts vom Abspielkopf.
@@ -143,23 +145,23 @@ Ruhige Karten auf einer leicht abgesetzten Arbeitsfläche (Vorschau-Bühne, Time
 - **Kamerablase**: Kreis, abgerundet oder Rechteck; Größe einstellbar, frei verschiebbar (im Vorschaubild ziehen) oder in einer Ecke; Spiegeln und Schatten.
 - **Trimmen** und **entfernte Bereiche**: Rote Blöcke in der Timeline, die beim Abspielen übersprungen werden; anklicken und ⌫ stellt sie wieder her. **Überblendung** an einem Schnitt: Schnitt auswählen und die runden Griffe oben vom Schnitt wegziehen (oder Regler im Inspektor, Rechtsklick-Menü). Die Teile davor und danach werden übereinandergeschoben, Bild und Ton blenden weich über; Kurven auf beiden Seiten zeigen den Verlauf.
 - **Masken**: Bereiche verpixeln oder weichzeichnen, im Vorschaubild verschieben und skalieren. Sie zoomen mit.
-- **Audiospuren** in der Timeline: Mikrofon, Systemton und Voice-over mit Wellenform, einzeln stumm oder in der Lautstärke regelbar. Spurname anklicken wählt die **Spur** (Lautstärke, Stimme verbessern pro Spur, schneiden); **S** schneidet sie am Abspielkopf in **Bereiche mit eigener Lautstärke** (0 % = stumm). Jeder Voice-over-Clip hat eine eigene Lautstärke. **Mischpult** im Audio-Tab mit „Pegel angleichen“ (misst die Lautheit jeder Spur: Sprache vorne, Systemton und Musik darunter) und **Gesamtlautstärke beim Export** (−14/−16/−19 LUFS, ohne zu übersteuern; das Video wird dabei nicht neu kodiert). **Lautsprecher-Echo entfernen** (siehe unten); optionale **Klickgeräusche** (eigener, synthetischer Sound).
+- **Audiospuren** in der Timeline: Mikrofon, Meeting (bei Live-Aufnahmen), Systemton und Voice-over mit Wellenform, einzeln stumm oder in der Lautstärke regelbar. Spurname anklicken wählt die **Spur** (Lautstärke, Stimme verbessern pro Spur, schneiden); **S** schneidet sie am Abspielkopf in **Bereiche mit eigener Lautstärke** (0 % = stumm). Jeder Voice-over-Clip hat eine eigene Lautstärke. **Mischpult** im Audio-Tab mit „Pegel angleichen“ (misst die Lautheit jeder Spur: Sprache vorne, Systemton und Musik darunter) und **Gesamtlautstärke beim Export** (−14/−16/−19 LUFS, ohne zu übersteuern; das Video wird dabei nicht neu kodiert). **Lautsprecher-Echo entfernen** (siehe unten); optionale **Klickgeräusche** (eigener, synthetischer Sound).
 - **Voice-over**: „Einsprechen“ zählt 3-2-1 herunter, spielt das Video ab dem Abspielkopf ab und nimmt das Mikrofon auf. Übersprungene Schnitte teilen die Aufnahme in passende Clips. Clips lassen sich verschieben und kürzen; der Originalton wird darunter automatisch abgesenkt (einstellbar). Werden zwei Clips übereinandergeschoben, blenden sie über die Überlappung ineinander über (Equal-Power-Crossfade); die Clips stehen dann in zwei Reihen, jeder mit seiner Blendkurve.
 - **Texte**: Bauchbinden/Textfelder (Titel + Unterzeile, vier Stile; Position über ein 3×3-Raster oder im Vorschaubild ziehen, rastet in der Mitte ein; die Textausrichtung ändert nur die Zeilen, die Box bleibt stehen) und Vollbild-**Titelkarten** – über dem Video, als **Vorspann** vor oder als **Abspann** nach der Aufnahme (verlängern das Video, Übergänge werden eingeblendet). Vorspann/Abspann in der Timeline über die Aufnahme ziehen → Überblendung mit der Aufnahme.
 - **Timeline**: Klick oder Ziehen in der Zeitskala setzt den Abspielkopf, der rote Abspielkopf lässt sich auch an der Linie ziehen; Leertaste spielt, ←/→ ein Bild, ⇧←/→ eine Sekunde, Pos1/Ende. **Zoom**: Regler und Lupen unten links, ⌘+ / ⌘−, ⇧Z (alles zeigen), ⌥/⌘ + Scrollrad oder Zwei-Finger-Zoom auf dem Trackpad (um den Mauszeiger). Gezoomt: seitlich wischen, ⇧ + Scrollrad oder die Übersichtsleiste unten ziehen; beim Abspielen blättert die Timeline mit. Wellenformen sind auf die lauteste Stelle der Spur skaliert.
 - **Timeline-Höhe** über den Griff oberhalb der Transportleiste ziehbar; Audiospuren wachsen mit, bei wenig Platz wird gescrollt.
-- **Untertitel**: Spracherkennung direkt auf dem Mac (Deutsch, Englisch, Französisch, Spanisch, Italienisch), ausgewogene Zeilen, Texte bearbeitbar, **SRT-Export**.
+- **Untertitel**: Spracherkennung direkt auf dem Mac (Deutsch, Englisch, Französisch, Spanisch, Italienisch), ausgewogene Zeilen, Texte bearbeitbar, **SRT-Export**. Das **Transkript** lässt sich als Text (mit Kapiteln und Absätzen, auf Wunsch mit Zeitmarken), SRT oder WebVTT exportieren – in der Fassung des geschnittenen Videos.
 - **Tastenkürzel-Einblendung** als Badge über den Untertiteln.
-- **Export** als MP4 (H.264/HEVC, 720p–4K, 30/60 fps) über den Export-Dialog (⌘E). Vorschau und Export nutzen denselben Renderer.
+- **Export** als MP4 (H.264/HEVC, 720p–4K, 30/60 fps) über den Export-Dialog (⌘E). Vorschau und Export nutzen denselben Renderer. **Nur Ton** exportiert die fertige Mischung als M4A (AAC) oder WAV (24 Bit), auf Wunsch auf −14/−16/−19 LUFS gebracht.
 
 ### Lautsprecher-Echo
 
-Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton etwa 40 ms verzögert im Mikrofon. Zusammen mit dem direkt mitgeschnittenen Systemton klingt das wie ein Chorus. Erklärbär rechnet das Echo mit dem Systemton als Referenz heraus: ein lineares Echo-Filter (Least Squares, 85 ms), danach eine spektrale Unterdrückung des Rest-Echos. Bei einer echten Aufnahme ergab das 22 dB weniger Echo, die eigene Sprache blieb unverändert. Das Original bleibt erhalten (`mic-clean.caf` daneben), die Funktion ist abschaltbar. Mit Kopfhörern entsteht das Echo gar nicht erst.
+Mit eingebautem Mikrofon und Systemaudio landet der Lautsprecherton etwa 40 ms verzögert im Mikrofon. Zusammen mit dem direkt mitgeschnittenen Systemton klingt das wie ein Chorus. Erklärbär rechnet das Echo mit dem Systemton als Referenz heraus: ein lineares Echo-Filter (Least Squares, 85 ms), danach eine spektrale Unterdrückung des Rest-Echos. Bei einer echten Aufnahme ergab das 22 dB weniger Echo, die eigene Sprache blieb unverändert. Bei Live-Aufnahmen dienen Meeting- und Systemton gemeinsam als Referenz, die Verzögerung wird selbst gesucht; die Funktion ist dort von Anfang an eingeschaltet. Das Original bleibt erhalten (`mic-clean.caf` daneben), die Funktion ist abschaltbar. Mit Kopfhörern entsteht das Echo gar nicht erst.
 
 ### Projektordner
 
 `~/Filme/Erklärbär/*.screenkast` (der Speicherort ist wählbar, auch Laufwerke und Freigaben; Projekte lassen sich per Rechtsklick verschieben) enthält (ein vorhandener Ordner `~/Filme/Screenkast` wird beim ersten Start umbenannt):
-- `screen.mov`: Video mit getaggten Audiospuren „system“ und „mic“
+- `screen.mov`: Video mit getaggten Audiospuren „system“ und „mic“ (Live-Aufnahmen zusätzlich „meeting“)
 - `camera.mov`: Kameravideo (optional)
 - `recording.json`, `cursor.json`, `edit.json`, `cursors/*.png`
 - `voiceover/*.m4a`: eingesprochene Voice-overs

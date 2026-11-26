@@ -1387,6 +1387,7 @@ private struct TimelineContent: View {
         switch lane {
         case .mic: return .green
         case .system: return .blue
+        case .meeting: return .orange
         case .voiceOver: return .pink
         case .music: return .mint
         }

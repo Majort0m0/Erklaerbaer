@@ -402,6 +402,8 @@ final class LiveRemote: ObservableObject {
             "mockup": config.mockup?.rawValue ?? "",
             "mockups": MockupKind.allCases.map { ["id": $0.rawValue, "name": $0.label] },
             "background": config.background == true,
+            "backgroundStyle": live.backgroundStyle.rawValue,
+            "backgroundBlur": config.backgroundBlur ?? 0.5,
             "backgroundImage": live.backgroundFile != nil,
             "backgroundEdge": config.backgroundEdge ?? 0.5,
             "backgroundCalm": config.backgroundCalm ?? 0.5,
@@ -416,6 +418,7 @@ final class LiveRemote: ObservableObject {
             "meetingCamera": meeting(camera.status == .ready, cameraShown, camera.sending),
             "meetingMicrophone": meeting(mic.status == .ready, micShown, mic.sending),
             "meetingApp": mic.meetingApp,
+            "showProgram": live.showProgram,
             "runningApps": VirtualMicrophone.runningApps().map { ["id": $0.id, "name": $0.name] },
             "recording": live.isRecording,
             "scene": scene,
@@ -541,6 +544,15 @@ final class LiveRemote: ObservableObject {
             guard let flag else { return false }
             // Without a picture the switch stays off: the remote asks for one first.
             live.config.background = flag && live.backgroundFile != nil
+        case "backgroundStyle":
+            guard let style = text.flatMap(LiveModel.BackgroundStyle.init(rawValue:)), style != .image || live.backgroundFile != nil else { return false }
+            live.setBackgroundStyle(style)
+        case "backgroundBlur":
+            guard let amount = clamp(0...1) else { return false }
+            var new = live.config
+            new.background = true
+            new.backgroundBlur = amount
+            live.config = new
         case "backgroundEdge":
             guard let edge = clamp(0.1...0.9) else { return false }
             live.config.backgroundEdge = edge
@@ -571,6 +583,9 @@ final class LiveRemote: ObservableObject {
         case "meetingApp":
             guard let text else { return false }
             VirtualMicrophone.shared.meetingApp = text
+        case "showProgram":
+            guard let flag else { return false }
+            live.showProgram = flag
         case "headphones":
             guard let flag else { return false }
             live.audio.setHeadphones(flag)

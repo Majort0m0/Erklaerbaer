@@ -13,6 +13,8 @@ final class DeviceMovieWriter {
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor
     private let deviceAudio: AVAssetWriterInput?
     private let microphone: AVAssetWriterInput?
+    /// The others in a meeting (live recordings), apart from the other sound of the Mac.
+    private let meeting: AVAssetWriterInput?
     private let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
     private var lastPTS: CMTime = .invalid
     private var lastBuffer: CVPixelBuffer?
@@ -28,7 +30,8 @@ final class DeviceMovieWriter {
          AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false]
     }
 
-    init(url: URL, width: Int, height: Int, deviceAudio wantsDeviceAudio: Bool, microphone wantsMicrophone: Bool, fps: Int = 60) throws {
+    init(url: URL, width: Int, height: Int, deviceAudio wantsDeviceAudio: Bool, microphone wantsMicrophone: Bool, meeting wantsMeeting: Bool = false,
+         fps: Int = 60) throws {
         let w = max(2, width & ~1), h = max(2, height & ~1)
         canvas = CGSize(width: w, height: h)
         try? FileManager.default.removeItem(at: url)
@@ -68,8 +71,9 @@ final class DeviceMovieWriter {
             return input
         }
         deviceAudio = wantsDeviceAudio ? audio("system", channels: 2) : nil
+        meeting = wantsMeeting ? audio("meeting", channels: 2) : nil
         microphone = wantsMicrophone ? audio("mic", channels: 1) : nil
-        audioRoles = (deviceAudio != nil ? ["system"] : []) + (microphone != nil ? ["mic"] : [])
+        audioRoles = (deviceAudio != nil ? ["system"] : []) + (meeting != nil ? ["meeting"] : []) + (microphone != nil ? ["mic"] : [])
     }
 
     func start(at pts: CMTime) throws {
@@ -109,7 +113,7 @@ final class DeviceMovieWriter {
     func appendAudio(_ sample: CMSampleBuffer, role: String) {
         let start = sample.presentationTimeStamp
         guard firstPTS.isValid, start >= firstPTS, writer.status == .writing,
-              let input = role == "mic" ? microphone : deviceAudio, input.isReadyForMoreMediaData else { return }
+              let input = role == "mic" ? microphone : role == "meeting" ? meeting : deviceAudio, input.isReadyForMoreMediaData else { return }
         // A device may restart its sound with an earlier time stamp; the writer only takes rising ones.
         if let end = audioEnd[role], CMTimeSubtract(end, start).seconds > 0.002 {
             skippedAudio += 1
@@ -142,6 +146,7 @@ final class DeviceMovieWriter {
         }
         video.markAsFinished()
         deviceAudio?.markAsFinished()
+        meeting?.markAsFinished()
         microphone?.markAsFinished()
         let last = CMTimeMaximum(end, lastPTS)
         writer.endSession(atSourceTime: last)
